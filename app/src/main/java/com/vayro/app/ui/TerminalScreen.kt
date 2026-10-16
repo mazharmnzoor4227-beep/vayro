@@ -1,0 +1,711 @@
+package com.vayro.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.vayro.app.ui.theme.AppThemeMode
+import com.vayro.app.ui.theme.PocketGreen
+import com.vayro.app.ui.theme.PocketOrange
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun TerminalScreen(
+    lines: List<TerminalOutputLine>,
+    isRunning: Boolean,
+    onRun: (String) -> Unit,
+    onInput: (String) -> Unit = {},
+    onInterrupt: (() -> Unit)? = null,
+    onClear: () -> Unit,
+    onToggleTheme: () -> Unit,
+    themeMode: AppThemeMode,
+    title: String = "Linux Terminal",
+    subtitle: String = "Ubuntu 24.04 · PRoot Sandbox",
+    liveOutput: String = "",
+    currentCommand: String? = null,
+    commandDraft: String? = null,
+    onCommandDraftConsumed: () -> Unit = {},
+    promptPath: String = "/workspace",
+    onStop: (() -> Unit)? = null,
+    showThemeAction: Boolean = false,
+    showQuickCommands: Boolean = true,
+    compactHeader: Boolean = false,
+    sessions: List<TerminalSessionTab> = emptyList(),
+    activeSessionId: String? = null,
+    onSelectSession: (String) -> Unit = {},
+    onNewSession: () -> Unit = {},
+    onCloseSession: (String) -> Unit = {},
+) {
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var commandInput by remember { mutableStateOf(TextFieldValue()) }
+    var commandHistory by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var historyIndex by rememberSaveable { mutableStateOf(-1) }
+    var escClearedBuffer by rememberSaveable { mutableStateOf("") }
+    var altActive by rememberSaveable { mutableStateOf(false) }
+    var ctrlActive by rememberSaveable { mutableStateOf(false) }
+    val terminalScrollState = rememberScrollState()
+    val inputFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val scope = rememberCoroutineScope()
+    val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}" 
+    val openTerminalKeyboard = {
+        inputFocusRequester.requestFocus()
+        scope.launch {
+            delay(80)
+            keyboardController?.show()
+        }
+    }
+    val submitCommand = {
+        if (commandInput.text.isNotBlank()) {
+            val submitted = commandInput.text
+            if (isRunning) {
+                onInput(submitted)
+            } else {
+                onRun(submitted)
+                commandHistory = (commandHistory + submitted).takeLast(50)
+                historyIndex = -1
+            }
+            commandInput = TextFieldValue()
+        }
+    }
+
+    LaunchedEffect(commandDraft) {
+        if (!commandDraft.isNullOrBlank()) {
+            commandInput = TextFieldValue(commandDraft, TextRange(commandDraft.length))
+            historyIndex = -1
+            onCommandDraftConsumed()
+        }
+    }
+
+    val displayedLines = remember(lines, searchQuery) {
+        if (searchQuery.isBlank()) lines
+        else lines.filter { it.command.contains(searchQuery, ignoreCase = true) || it.output.contains(searchQuery, ignoreCase = true) }
+    }
+
+    // Auto-scroll to bottom whenever scrollable content grows
+    LaunchedEffect(Unit) {
+        snapshotFlow { terminalScrollState.maxValue }
+            .collect { maxValue ->
+                terminalScrollState.scrollTo(maxValue)
+            }
+    }
+    // Also trigger scroll when key state changes (e.g. isRunning toggling)
+    LaunchedEffect(displayedLines.size, isRunning, commandInput.text.length) {
+        delay(100)
+        terminalScrollState.scrollTo(terminalScrollState.maxValue)
+    }
+
+    val quickCommands = listOf(
+        "uname -a",
+        "ls -la",
+        "pwd",
+        "node -v",
+        "python3 --version",
+        "df -h",
+        "free -m",
+        "claude --version",
+    )
+
+    Scaffold(
+        modifier = if (compactHeader) Modifier else Modifier.statusBarsPadding(),
+        contentWindowInsets = if (compactHeader) WindowInsets(0, 0, 0, 0) else ScaffoldDefaults.contentWindowInsets,
+        topBar = {
+            if (!compactHeader) {
+                TopAppBar(
+                    modifier = Modifier.padding(top = 8.dp),
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                        shape = RoundedCornerShape(9.dp),
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                                        shape = RoundedCornerShape(9.dp),
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Terminal,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(17.dp),
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column {
+                                Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                                Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { searchOpen = !searchOpen }) {
+                            Icon(Icons.Default.Search, contentDescription = "Search terminal output")
+                        }
+                        IconButton(onClick = onClear) {
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output")
+                        }
+                        if (showThemeAction) {
+                            IconButton(onClick = onToggleTheme) {
+                                Icon(
+                                    if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                    contentDescription = "Toggle theme",
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                )
+            }
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                // Medium: imePadding used to be dropped in compact-header
+                // mode, so the keyboard covered the input line there.
+                .imePadding(),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    sessions.forEach { session ->
+                        val isSelected = session.id == activeSessionId
+                        Surface(
+                            onClick = { onSelectSession(session.id) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
+                            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+                            modifier = Modifier.height(30.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (session.isRunning) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .background(PocketGreen, CircleShape),
+                                    )
+                                }
+                                Text(
+                                    text = session.title,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (sessions.size > 1) {
+                                    IconButton(
+                                        onClick = { onCloseSession(session.id) },
+                                        modifier = Modifier.size(18.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Close session",
+                                            modifier = Modifier.size(11.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (sessions.isNotEmpty()) {
+                        IconButton(
+                            onClick = onNewSession,
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "New terminal session",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
+                IconButton(onClick = onClear, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        Icons.Default.DeleteOutline,
+                        contentDescription = "Clear output",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (searchOpen) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                            decorationBox = { innerTextField ->
+                                if (searchQuery.isEmpty()) {
+                                    Text(
+                                        "Filter terminal output...",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    )
+                                }
+                                innerTextField()
+                            },
+                        )
+                        if (searchQuery.isNotEmpty()) {
+                            Text(
+                                "${displayedLines.size} matches",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(
+                            onClick = {
+                                searchQuery = ""
+                                searchOpen = false
+                            },
+                            modifier = Modifier.size(48.dp),
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Close search", modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
+            }
+            if (showQuickCommands && !keyboardVisible) {
+                // Quick command chips are useful in the standalone terminal, but
+                // project terminal space is reserved for the actual project session.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    quickCommands.forEach { cmd ->
+                        AssistChip(
+                            onClick = { if (isRunning) onInput(cmd) else onRun(cmd) },
+                            label = {
+                                Text(
+                                    cmd,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                )
+                            },
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+            }
+
+            val isDark = when (themeMode) {
+                AppThemeMode.DARK -> true
+                AppThemeMode.LIGHT -> false
+                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            val terminalBg = if (isDark) Color(0xFF090D14) else MaterialTheme.colorScheme.surface
+            val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
+            val commandTextColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
+            val outputTextColor = if (isDark) Color(0xFFC9D1D9) else MaterialTheme.colorScheme.onSurface
+            val emptyStateColor = if (isDark) Color(0xFF8B949E) else MaterialTheme.colorScheme.onSurfaceVariant
+
+            // Console output area
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                    .border(1.dp, if (isDark) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                color = terminalBg,
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(terminalScrollState)
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SelectionContainer {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (displayedLines.isEmpty()) {
+                                Text(
+                                    if (searchQuery.isNotEmpty()) "No matching terminal output found."
+                                    else "Vayro Terminal ready.\nType a bash command below or tap a quick command chip above.",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    color = emptyStateColor,
+                                )
+                            }
+
+                            displayedLines.forEach { item ->
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    TerminalCommandPrompt(promptPath = terminalPromptPath, command = item.command, isDark = isDark)
+                                    if (item.output.isNotEmpty()) {
+                                        Text(
+                                            text = sanitizeTerminalOutput(item.output),
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 12.sp,
+                                            lineHeight = 18.sp,
+                                            color = if (item.exitCode != 0) MaterialTheme.colorScheme.error else outputTextColor,
+                                            modifier = Modifier.padding(start = 8.dp),
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (isRunning && currentCommand != null) {
+                                TerminalCommandPrompt(promptPath = terminalPromptPath, command = currentCommand, isDark = isDark)
+                            }
+
+                            if (liveOutput.isNotBlank()) {
+                                Text(
+                                    sanitizeTerminalOutput(liveOutput),
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    lineHeight = 18.sp,
+                                    color = outputTextColor,
+                                )
+                            }
+
+                        }
+                    }
+                    run {
+                        // While a process is running, keep the input surface visually
+                        // empty until the user types. A permanent prompt/cursor here
+                        // changed the console height and made auto-scroll look like a
+                        // full terminal refresh on every blink.
+                        val prefix = if (isRunning) "" else "root@mhe:$terminalPromptPath# "
+                        val prefixVisualTransformation = remember(prefix, isDark) {
+                            VisualTransformation { text ->
+                                val transformed = buildAnnotatedString {
+                                    withStyle(SpanStyle(color = promptGreen, fontWeight = FontWeight.Bold)) {
+                                        append(prefix)
+                                    }
+                                    withStyle(SpanStyle(color = commandTextColor, fontWeight = FontWeight.SemiBold)) {
+                                        append(text.text)
+                                    }
+                                }
+                                val offsetMapping = object : OffsetMapping {
+                                    override fun originalToTransformed(offset: Int): Int =
+                                        (offset + prefix.length).coerceIn(0, prefix.length + text.length)
+
+                                    override fun transformedToOriginal(offset: Int): Int =
+                                        (offset - prefix.length).coerceIn(0, text.length)
+                                }
+                                TransformedText(transformed, offsetMapping)
+                            }
+                        }
+
+                        BasicTextField(
+                            value = commandInput,
+                            onValueChange = { next ->
+                                if (ctrlActive && next.text.length > commandInput.text.length) {
+                                    val inserted = next.text.substring(
+                                        commandInput.selection.start.coerceAtMost(next.text.length),
+                                        next.selection.end.coerceAtMost(next.text.length),
+                                    )
+                                    if (inserted.any { it.equals('c', ignoreCase = true) }) {
+                                        if (isRunning) {
+                                            onInterrupt?.invoke()
+                                        } else {
+                                            // A shell with no foreground process uses
+                                            // Ctrl+C to cancel the current command line.
+                                            commandInput = TextFieldValue()
+                                        }
+                                        ctrlActive = false
+                                    } else {
+                                        commandInput = next
+                                        ctrlActive = false
+                                    }
+                                } else {
+                                    // ALT only modifies the next arrow press;
+                                    // typing a plain character clears it so
+                                    // the highlight never goes stale.
+                                    if (altActive) altActive = false
+                                    commandInput = next
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(inputFocusRequester),
+                            singleLine = false,
+                            visualTransformation = prefixVisualTransformation,
+                            cursorBrush = SolidColor(promptGreen),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = commandTextColor,
+                            ),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(
+                                onSend = { submitCommand() },
+                                onDone = { submitCommand() },
+                                onGo = { submitCommand() },
+                            ),
+                        )
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
+            }
+
+            // Keyboard helper row. These operate on the command draft, so they are
+            // useful even when the phone keyboard does not expose terminal keys.
+            if (!keyboardVisible) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp)
+                        .padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    TerminalKeyButton("↑", "Previous command") {
+                        commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
+                            historyIndex = if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0)
+                            commandInput = TextFieldValue(it, TextRange(it.length))
+                        }
+                    }
+                    TerminalKeyButton("↓", "Next command") {
+                        if (historyIndex >= 0) {
+                            historyIndex = (historyIndex + 1).takeIf { it < commandHistory.size } ?: -1
+                            commandInput = TextFieldValue(commandHistory.getOrNull(historyIndex) ?: "", TextRange((commandHistory.getOrNull(historyIndex) ?: "").length))
+                        }
+                    }
+                    TerminalIconKeyButton(Icons.AutoMirrored.Filled.ArrowBack, "Move cursor left") {
+                        // Medium: ALT was a dead control (highlighted but
+                        // never consumed). It now modifies the arrows:
+                        // Alt+arrow moves by word, like a real terminal.
+                        val target = if (altActive) prevWordStart(commandInput.text, commandInput.selection.start)
+                            else (commandInput.selection.start - 1).coerceAtLeast(0)
+                        altActive = false
+                        commandInput = commandInput.copy(selection = TextRange(target))
+                    }
+                    TerminalIconKeyButton(Icons.AutoMirrored.Filled.ArrowForward, "Move cursor right") {
+                        val target = if (altActive) nextWordEnd(commandInput.text, commandInput.selection.end)
+                            else (commandInput.selection.end + 1).coerceAtMost(commandInput.text.length)
+                        altActive = false
+                        commandInput = commandInput.copy(selection = TextRange(target))
+                    }
+                    TerminalKeyButton("ALT", "Alt modifier; arrows move by word", active = altActive, fixedWidth = true) { altActive = !altActive }
+                    TerminalKeyButton("ESC", "Escape; press again on empty input to restore") {
+                        if (commandInput.text.isEmpty() && escClearedBuffer.isNotEmpty()) {
+                            commandInput = TextFieldValue(escClearedBuffer, TextRange(escClearedBuffer.length))
+                            escClearedBuffer = ""
+                        } else {
+                            escClearedBuffer = commandInput.text
+                            commandInput = TextFieldValue()
+                        }
+                    }
+                    TerminalKeyButton("CTRL", "Control modifier; press C to interrupt", active = ctrlActive, fixedWidth = true) {
+                        ctrlActive = !ctrlActive
+                        if (ctrlActive) openTerminalKeyboard()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * QA Medium: word-boundary helpers for the terminal ALT modifier.
+ * Alt+Left moves the cursor to the start of the previous word;
+ * Alt+Right moves it to the end of the next word — the same
+ * semantics as readline Alt+B / Alt+F in a real terminal.
+ * Pure functions so the movement is unit-testable.
+ */
+internal fun prevWordStart(text: String, cursor: Int): Int {
+    var i = cursor.coerceIn(0, text.length)
+    while (i > 0 && text[i - 1].isWhitespace()) i--
+    while (i > 0 && !text[i - 1].isWhitespace()) i--
+    return i
+}
+
+internal fun nextWordEnd(text: String, cursor: Int): Int {
+    var i = cursor.coerceIn(0, text.length)
+    while (i < text.length && text[i].isWhitespace()) i++
+    while (i < text.length && !text[i].isWhitespace()) i++
+    return i
+}
+
+@Composable
+private fun TerminalKeyButton(
+    label: String,
+    description: String,
+    active: Boolean = false,
+    fixedWidth: Boolean = false,
+    onClick: () -> Unit,
+) {
+    androidx.compose.material3.OutlinedButton(
+        onClick = onClick,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+        modifier = Modifier.heightIn(min = 48.dp).then(if (fixedWidth) Modifier.width(78.dp) else Modifier),
+        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+            containerColor = if (active) PocketOrange.copy(alpha = 0.18f) else Color.Transparent,
+            contentColor = if (active) PocketOrange else MaterialTheme.colorScheme.onSurface,
+        ),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (active) PocketOrange else MaterialTheme.colorScheme.outlineVariant,
+        ),
+    ) {
+        Text(
+            if (active) "$label ✓" else label,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun TerminalIconKeyButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+        Icon(icon, contentDescription = description, modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
+private fun TerminalCommandPrompt(promptPath: String, command: String, isDark: Boolean = true) {
+    val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
+    val commandColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
+    val promptText = remember(promptPath, command, isDark) {
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = promptGreen, fontWeight = FontWeight.Bold)) {
+                append("root@mhe:$promptPath# ")
+            }
+            withStyle(SpanStyle(color = commandColor, fontWeight = FontWeight.SemiBold)) {
+                append(command)
+            }
+        }
+    }
+    Text(
+        text = promptText,
+        modifier = Modifier.fillMaxWidth(),
+        fontFamily = FontFamily.Monospace,
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
+        softWrap = true,
+    )
+}

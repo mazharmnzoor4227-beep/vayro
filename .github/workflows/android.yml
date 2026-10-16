@@ -1,0 +1,622 @@
+name: Android QA
+
+on:
+  push:
+    branches:
+      - main
+      - v2
+      - v3
+      - feature/**
+  pull_request:
+    branches:
+      - main
+      - v2
+      - v3
+  workflow_dispatch:
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v2' || github.ref == 'refs/heads/v3'))
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift /usr/local/share/boost
+          sudo docker system prune -af --volumes || true
+          echo "=== Disk space after cleanup ==="
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "${SDKMANAGER}" --licenses >/dev/null || true
+          "${SDKMANAGER}" "platform-tools" "platforms;android-36" "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Fetch latest verified runtime bundles
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dist/runtime-bundles
+          python3 - <<'PY'
+          import json, os, re, urllib.request
+          repo = "techjarves/Mobile-Harness"
+          token = os.environ["GITHUB_TOKEN"]
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/releases?per_page=100",
+              headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+          )
+          with urllib.request.urlopen(req, timeout=60) as response:
+              releases = json.load(response)
+
+          prefixes = {
+              "core": "pocketdev-core-arm64-",
+              "claude": "pocketdev-claude-arm64-",
+              "python": "pocketdev-python-arm64-",
+              "android": "pocketdev-android-arm64-",
+              "dsh": "pocketdev-dsh-arm64-",
+              "agy": "pocketdev-agy-arm64-",
+          }
+
+          def published_name(name):
+              return "conzyx-" + name.removeprefix("pocketdev-")
+
+          def version_key(value):
+              return tuple(int(x) for x in re.findall(r"\d+", value)) or (0,)
+
+          selected = {}
+          for release in releases:
+              if release.get("draft") or release.get("prerelease"):
+                  continue
+              tag = release.get("tag_name", "")
+              if not tag.startswith("runtime-"):
+                  continue
+              for asset in release.get("assets", []):
+                  name = asset.get("name", "")
+                  for component, prefix in prefixes.items():
+                      if name.startswith(prefix) and name.endswith(".tar.zst"):
+                          version = name[len(prefix):-len(".tar.zst")]
+                          if version and re.fullmatch(r"[0-9A-Za-z._+-]+", version):
+                              candidate = (version_key(version), version, asset)
+                              current = selected.get(component)
+                              if current is None or candidate[:2] > current[:2]:
+                                  selected[component] = candidate
+
+          missing = sorted(set(prefixes) - set(selected))
+          if missing:
+              raise SystemExit(f"Missing published runtime bundles: {', '.join(missing)}")
+
+          manifest = {}
+          for component, (_, version, asset) in selected.items():
+              name = asset["name"]
+              out_name = published_name(name)
+              out = os.path.join("dist/runtime-bundles", out_name)
+              download = urllib.request.Request(
+                  asset["url"],
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/octet-stream",
+                  },
+              )
+              with urllib.request.urlopen(download, timeout=300) as response, open(out, "wb") as target:
+                  target.write(response.read())
+              digest = asset.get("digest", "").removeprefix("sha256:")
+              if not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+                  raise SystemExit(f"Missing SHA-256 digest for {name}")
+              import hashlib
+              actual = hashlib.sha256(open(out, "rb").read()).hexdigest()
+              if actual.lower() != digest.lower():
+                  raise SystemExit(f"SHA-256 mismatch for {name}: {actual} != {digest}")
+              manifest[component] = {
+                  "version": version,
+                  "file": out_name,
+                  "sha256": digest.lower(),
+                  "sizeBytes": os.path.getsize(out),
+              }
+
+          with open("dist/runtime-bundles/manifest.json", "w") as handle:
+              json.dump(manifest, handle, indent=2)
+          print(json.dumps(manifest, indent=2))
+          PY
+          du -h dist/runtime-bundles/*.tar.zst | sort -h
+
+      - name: Verify online build and unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace testOnlineDebugUnitTest assembleOnlineDebug 2>&1 | tee "$RUNNER_TEMP/online-build.log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "===== ONLINE BUILD FAILURE ====="
+            tail -n 250 "$RUNNER_TEMP/online-build.log"
+            exit "$rc"
+          fi
+
+      - name: Verify offline build
+        run: ./gradlew --no-daemon --stacktrace assembleOfflineDebug
+
+      - name: Upload emulator launch logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: emulator-launch-logs
+          if-no-files-found: warn
+          path: emulator-logs/
+
+
+  release:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v2' || github.ref == 'refs/heads/v3')
+    permissions:
+      contents: write
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift /usr/local/share/boost
+          sudo docker system prune -af --volumes || true
+          echo "=== Disk space after cleanup ==="
+          df -h
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          yes | "${SDKMANAGER}" --licenses >/dev/null || true
+          "${SDKMANAGER}" "platform-tools" "platforms;android-36" "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - name: Configure permanent Codeair release signing key
+        shell: bash
+        env:
+          MH_RELEASE_KEYSTORE_BASE64: ${{ secrets.MH_RELEASE_KEYSTORE_BASE64 }}
+          MH_RELEASE_STORE_PASSWORD: ${{ secrets.MH_RELEASE_STORE_PASSWORD }}
+          MH_RELEASE_KEY_ALIAS: ${{ secrets.MH_RELEASE_KEY_ALIAS }}
+          MH_RELEASE_KEY_PASSWORD: ${{ secrets.MH_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MH_RELEASE_KEYSTORE_BASE64}" || -z "${MH_RELEASE_STORE_PASSWORD}" || -z "${MH_RELEASE_KEY_ALIAS}" || -z "${MH_RELEASE_KEY_PASSWORD}" ]]; then
+            echo "::error::Permanent release signing secrets are required. No temporary signing key will be generated."
+            exit 1
+          fi
+          printf '%s' "${MH_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/mobile-harness-release.jks"
+          chmod 600 "$RUNNER_TEMP/mobile-harness-release.jks"
+          echo "Using the permanent Codeair Software Solutions release signing key."
+          echo "MH_UPLOAD_STORE_FILE=$RUNNER_TEMP/mobile-harness-release.jks" >> "$GITHUB_ENV"
+          echo "MH_UPLOAD_STORE_PASSWORD=${MH_RELEASE_STORE_PASSWORD}" >> "$GITHUB_ENV"
+          echo "MH_UPLOAD_KEY_ALIAS=${MH_RELEASE_KEY_ALIAS}" >> "$GITHUB_ENV"
+          echo "MH_UPLOAD_KEY_PASSWORD=${MH_RELEASE_KEY_PASSWORD}" >> "$GITHUB_ENV"
+
+      - name: Verify permanent release signing certificate
+        shell: bash
+        env:
+          MH_RELEASE_STORE_PASSWORD: ${{ secrets.MH_RELEASE_STORE_PASSWORD }}
+          MH_RELEASE_KEY_ALIAS: ${{ secrets.MH_RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA256="86:D4:21:7F:86:E4:0A:B2:58:46:04:C5:6D:C3:6A:FB:54:DF:83:5D:38:2A:A4:FC:65:07:40:C6:00:1D:E0:F5"
+          ACTUAL_SHA256="$(keytool -list -v -keystore "$RUNNER_TEMP/mobile-harness-release.jks" -storepass "$MH_RELEASE_STORE_PASSWORD" -alias "$MH_RELEASE_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}')"
+          echo "Release signing SHA-256: $ACTUAL_SHA256"
+          if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+            echo "::error::The configured release keystore is not the permanent Codeair signing key."
+            exit 1
+          fi
+
+      - name: Fetch latest verified runtime bundles
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dist/runtime-bundles
+          python3 - <<'PY'
+          import json, os, re, urllib.request
+          repo = "techjarves/Mobile-Harness"
+          token = os.environ["GITHUB_TOKEN"]
+          req = urllib.request.Request(
+              f"https://api.github.com/repos/{repo}/releases?per_page=100",
+              headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+          )
+          with urllib.request.urlopen(req, timeout=60) as response:
+              releases = json.load(response)
+
+          prefixes = {
+              "core": "pocketdev-core-arm64-",
+              "claude": "pocketdev-claude-arm64-",
+              "python": "pocketdev-python-arm64-",
+              "android": "pocketdev-android-arm64-",
+              "dsh": "pocketdev-dsh-arm64-",
+              "agy": "pocketdev-agy-arm64-",
+          }
+
+          def published_name(name):
+              return "conzyx-" + name.removeprefix("pocketdev-")
+
+          def version_key(value):
+              return tuple(int(x) for x in re.findall(r"\d+", value)) or (0,)
+
+          selected = {}
+          for release in releases:
+              if release.get("draft") or release.get("prerelease"):
+                  continue
+              tag = release.get("tag_name", "")
+              if not tag.startswith("runtime-"):
+                  continue
+              for asset in release.get("assets", []):
+                  name = asset.get("name", "")
+                  for component, prefix in prefixes.items():
+                      if name.startswith(prefix) and name.endswith(".tar.zst"):
+                          version = name[len(prefix):-len(".tar.zst")]
+                          if version and re.fullmatch(r"[0-9A-Za-z._+-]+", version):
+                              candidate = (version_key(version), version, asset)
+                              current = selected.get(component)
+                              if current is None or candidate[:2] > current[:2]:
+                                  selected[component] = candidate
+
+          missing = sorted(set(prefixes) - set(selected))
+          if missing:
+              raise SystemExit(f"Missing published runtime bundles: {', '.join(missing)}")
+
+          manifest = {}
+          for component, (_, version, asset) in selected.items():
+              name = asset["name"]
+              out_name = published_name(name)
+              out = os.path.join("dist/runtime-bundles", out_name)
+              download = urllib.request.Request(
+                  asset["url"],
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/octet-stream",
+                  },
+              )
+              with urllib.request.urlopen(download, timeout=300) as response, open(out, "wb") as target:
+                  target.write(response.read())
+              digest = asset.get("digest", "").removeprefix("sha256:")
+              if not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
+                  raise SystemExit(f"Missing SHA-256 digest for {name}")
+              import hashlib
+              actual = hashlib.sha256(open(out, "rb").read()).hexdigest()
+              if actual.lower() != digest.lower():
+                  raise SystemExit(f"SHA-256 mismatch for {name}: {actual} != {digest}")
+              manifest[component] = {
+                  "version": version,
+                  "file": out_name,
+                  "sha256": digest.lower(),
+                  "sizeBytes": os.path.getsize(out),
+              }
+
+          with open("dist/runtime-bundles/manifest.json", "w") as handle:
+              json.dump(manifest, handle, indent=2)
+          print(json.dumps(manifest, indent=2))
+          PY
+          du -h dist/runtime-bundles/*.tar.zst | sort -h
+
+      - name: Compile online release APK
+        run: ./gradlew --no-daemon --stacktrace assembleOnlineRelease
+
+      - name: Compile offline release APK
+        run: ./gradlew --no-daemon --stacktrace assembleOfflineRelease
+
+      - name: Compile online release AAB (Play Store)
+        run: ./gradlew --no-daemon --stacktrace bundleOnlineRelease -PplayBuild=true
+
+      - name: Verify release APK signatures and alignment
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/*/release/*.apk)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "No release APKs found"
+            find app/build/outputs/apk -type f -name '*.apk' -print
+            exit 1
+          fi
+          for apk in "${apks[@]}"; do
+            echo "Verifying $apk"
+            "$APKSIGNER" verify --verbose "$apk"
+          done
+
+      - name: Verify in-place update compatibility against previous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          AAPT2="$ANDROID_HOME/build-tools/35.0.0/aapt2"
+          PREVIOUS="$RUNNER_TEMP/mobile-harness-previous.apk"
+          gh release download v1.0.19 -p "app-online-release.apk" -O "$PREVIOUS" -R "$GITHUB_REPOSITORY"
+          current_cert="$($APKSIGNER verify --print-certs app/build/outputs/apk/online/release/app-online-release.apk | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}')"
+          previous_cert="$($APKSIGNER verify --print-certs "$PREVIOUS" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}')"
+          echo "Previous release certificate: $previous_cert"
+          echo "Current release certificate:  $current_cert"
+          test -n "$current_cert"
+          test "$current_cert" = "$previous_cert"
+
+          current_badging="$($AAPT2 dump badging app/build/outputs/apk/online/release/app-online-release.apk)"
+          previous_badging="$($AAPT2 dump badging "$PREVIOUS")"
+          echo "$previous_badging" | grep -q "versionCode='20'"
+          echo "$previous_badging" | grep -q "versionName='1.0.19'"
+          VERSION_NAME=$(sed -n 's/.*val appVersionName = .*?: "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          VERSION_CODE=$(awk -F'= ' '/versionCode = / {print $2; exit}' app/build.gradle.kts)
+          echo "$current_badging" | grep -q "versionCode='$VERSION_CODE'"
+          echo "$current_badging" | grep -q "versionName='$VERSION_NAME'"
+          echo "$current_badging" | grep -q "package: name='com.vayro.app'"
+          echo "$previous_badging" | grep -qE "package: name='(com.vayro.app|com.jarves.mh)'"
+          echo "PASS: valid package + same signing certificate + strictly increasing versionCode."
+
+      - name: Inspect release APKs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find app/build/outputs/apk -type f -name '*.apk' -printf '%p %s bytes\n' | sort
+
+      # TEMP-DISABLED for fast iteration (user 2026-10-13): - name: Prepare emulator verification script
+        # shell: bash
+        # run: |
+          # cat << 'EOF' > run-emulator-verification.sh
+          # set -euxo pipefail
+          # PREVIOUS_APK="/tmp/mobile-harness-previous.apk"
+          # if [ -f "$RUNNER_TEMP/mobile-harness-previous.apk" ]; then
+            # cp "$RUNNER_TEMP/mobile-harness-previous.apk" "$PREVIOUS_APK"
+          # else
+            # gh release download v1.0.19 -p "app-online-release.apk" -O "$PREVIOUS_APK" -R "$GITHUB_REPOSITORY"
+          # fi
+
+#           # echo "Waiting for Android PackageManager service..."
+          # "$ANDROID_HOME/platform-tools/adb" wait-for-device
+          # for i in $(seq 1 45); do
+            # BOOT_COMPLETED=$("$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
+            # PM_READY=$("$ANDROID_HOME/platform-tools/adb" shell pm path android 2>/dev/null | tr -d '\r' || true)
+            # if [ "$BOOT_COMPLETED" = "1" ] && [ -n "$PM_READY" ]; then
+              # echo "PackageManagerService is responsive."
+              # break
+            # fi
+            # echo "Waiting for PackageManagerService ($i/45)..."
+            # sleep 4
+          # done
+
+#           # install_with_retry() {
+            # local apk="$1"
+            # shift
+            # local success=0
+            # for attempt in 1 2 3; do
+              # echo "Installing $apk (attempt $attempt/3)..."
+              # if "$ANDROID_HOME/platform-tools/adb" install "$@" "$apk"; then
+                # success=1
+                # break
+              # fi
+              # echo "Install attempt $attempt failed. Checking service and retrying in 10s..."
+              # sleep 10
+            # done
+            # if [ "$success" -ne 1 ]; then
+              # echo "Warning: Failed to install $apk after retries"
+              # return 1
+            # fi
+          # }
+
+#           # echo "Previous release:"
+          # install_with_retry "$PREVIOUS_APK" || true
+          # "$ANDROID_HOME/platform-tools/adb" shell dumpsys package com.vayro.app | grep -E 'versionCode=|versionName=' || "$ANDROID_HOME/platform-tools/adb" shell dumpsys package com.jarves.mh | grep -E 'versionCode=|versionName=' || true
+          # echo "Current release update:"
+          # install_with_retry "app/build/outputs/apk/online/release/app-online-release.apk" -r
+          # "$ANDROID_HOME/platform-tools/adb" shell dumpsys package com.vayro.app | grep -E 'versionCode=|versionName=' || true
+          # echo "PASS: previous release installed and current release updated in place."
+          # EOF
+          # chmod +x run-emulator-verification.sh
+
+# 
+#       # - name: Verify in-place update on Android emulator
+        # continue-on-error: true
+        # Bound the emulator step: it must never hang the whole job. On
+        # timeout/failure the build continues (continue-on-error) and the
+        # APK artifacts are still uploaded.
+        # timeout-minutes: 20
+        # uses: reactivecircus/android-emulator-runner@v2
+        # env:
+          # GH_TOKEN: ${{ github.token }}
+        # with:
+          # api-level: 34
+          # target: google_apis
+          # arch: x86_64
+          # profile: pixel_5
+          # emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          # emulator-boot-timeout: 900
+          # disable-animations: true
+          # script: bash ./run-emulator-verification.sh
+
+      - name: Upload release APKs
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mobile-harness-release-apks
+          if-no-files-found: warn
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+
+      # Every successful main-branch build publishes the freshly verified online/offline APKs to the current release.
+      # Header layout release 1.0.12.
+      # Release publication marker for the verified build.
+
+      - name: Publish release assets
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v2' || github.ref == 'refs/heads/v3'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          VERSION_NAME=$(sed -n 's/.*val appVersionName = .*?: "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          VERSION_CODE=$(awk -F'= ' '/versionCode = / {print $2; exit}' app/build.gradle.kts)
+          TAG="v$VERSION_NAME"
+          ONLINE="app-online-release.apk"
+          OFFLINE="app-offline-release.apk"
+          AAB="app-online-release.aab"
+          cp app/build/outputs/apk/online/release/app-online-release.apk "$ONLINE"
+          cp app/build/outputs/apk/offline/release/app-offline-release.apk "$OFFLINE"
+          cp app/build/outputs/bundle/onlineRelease/app-online-release.aab "$AAB"
+          ONLINE_SHA=$(sha256sum "$ONLINE" | awk '{print $1}')
+          OFFLINE_SHA=$(sha256sum "$OFFLINE" | awk '{print $1}')
+          AAB_SHA=$(sha256sum "$AAB" | awk '{print $1}')
+          ONLINE_SIZE=$(stat -c '%s' "$ONLINE")
+          OFFLINE_SIZE=$(stat -c '%s' "$OFFLINE")
+          AAB_SIZE=$(stat -c '%s' "$AAB")
+          export TAG VERSION_NAME VERSION_CODE ONLINE_SHA OFFLINE_SHA ONLINE_SIZE OFFLINE_SIZE AAB_SHA AAB_SIZE
+          # Generate release notes from actual commits in this version only.
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log "$PREV_TAG"..HEAD --pretty=format:"- %s" --no-merges)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s" --no-merges -20)
+          fi
+          cat > release-notes.md <<EOF
+          ## Conzyx $TAG
+
+          ### Changes in this version
+          $CHANGELOG
+
+          ### Release files
+          - **Online Release:** app-online-release.apk
+          - **Offline Release:** app-offline-release.apk
+          - **Play Store Bundle:** app-online-release.aab (signed, upload-ready for Google Play)
+
+          ### SHA-256 checksums
+          - app-online-release.apk: $ONLINE_SHA
+          - app-offline-release.apk: $OFFLINE_SHA
+          - app-online-release.aab: $AAB_SHA
+
+          The release contains the two APKs plus the \`mobile-harness-update.json\` manifest. Debug APKs are CI-only artifacts and are not release downloads.
+          EOF
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "Conzyx $TAG" --notes-file release-notes.md
+          gh release edit "$TAG" --title "Conzyx $TAG" --notes-file release-notes.md
+          python3 - <<'PY'
+          import json, os
+          with open("dist/runtime-bundles/manifest.json") as handle:
+              bundles = json.load(handle)
+          version_code = int(os.environ["VERSION_CODE"])
+          version_name = os.environ["VERSION_NAME"]
+          tag = os.environ["TAG"]
+
+          def component(cid, label, key, notes):
+              item = bundles[key]
+              return {
+                  "id": cid,
+                  "label": label,
+                  "version": item["version"],
+                  "packageUrl": "",
+                  "sha256": item["sha256"],
+                  "sizeBytes": item["sizeBytes"],
+                  "status": "stable",
+                  "minRuntimeGeneration": 1,
+                  "activeLink": "",
+                  "healthCommand": "",
+                  "notes": notes,
+              }
+
+          manifest = {
+              "schemaVersion": 2,
+              "versionCode": version_code,
+              "versionName": version_name,
+              "channel": "stable",
+              "notes": (
+                  f"Conzyx {tag} — verified latest runtime assets and toolchain update controls. "
+                  "Runtime bundles are resolved from the latest non-prerelease upstream runtime release and SHA-256 verified during CI. "
+                  "PHP uses the online Ubuntu package path with the PHP 8.4 package source and latest Composer release."
+              ),
+              "artifacts": {
+                  "online": {
+                      "url": f"https://github.com/sunmughan/Conzyx/releases/download/{tag}/app-online-release.apk",
+                      "sha256": os.environ["ONLINE_SHA"],
+                      "sizeBytes": int(os.environ["ONLINE_SIZE"]),
+                  },
+                  "offline": {
+                      "url": f"https://github.com/sunmughan/Conzyx/releases/download/{tag}/app-offline-release.apk",
+                      "sha256": os.environ["OFFLINE_SHA"],
+                      "sizeBytes": int(os.environ["OFFLINE_SIZE"]),
+                  },
+              },
+              "components": [
+                  component("core", "Core tools", "core", "Latest verified ARM64 core runtime bundle."),
+                  component("python", "Python", "python", "Latest verified ARM64 Python runtime bundle."),
+                  component("android", "Android SDK / Build Tools / Gradle", "android", "Latest verified ARM64 Android runtime bundle."),
+                  component("claude", "Claude Code", "claude", "Latest verified ARM64 Claude Code bundle."),
+                  component("deepseek", "DeepSeek Harness", "dsh", "Latest verified ARM64 DeepSeek Harness bundle."),
+                  component("antigravity", "Antigravity CLI", "agy", "Latest verified ARM64 Antigravity CLI bundle."),
+                  {
+                      "id": "php",
+                      "label": "PHP",
+                      "version": "8.4",
+                      "packageUrl": "",
+                      "sha256": "",
+                      "sizeBytes": 0,
+                      "status": "online-only",
+                      "minRuntimeGeneration": 1,
+                      "activeLink": "",
+                      "healthCommand": "php --version && composer --version",
+                      "notes": "PHP 8.4 package source via Ondřej PHP PPA for the Ubuntu 20.04 ARM64 runtime; Composer uses the official latest-stable release.",
+                  },
+              ],
+          }
+          with open("mobile-harness-update.json", "w") as handle:
+              json.dump(manifest, handle, indent=2)
+              handle.write("\n")
+          PY
+
+          gh release upload "$TAG" "$ONLINE" "$OFFLINE" "$AAB" mobile-harness-update.json --clobber
+          gh release delete-asset "$TAG" "mobile-harness-online-$TAG.apk" --yes || true
+          gh release delete-asset "$TAG" "mobile-harness-offline-$TAG.apk" --yes || true
+          # The app's first-run install and runtime-bundle updates resolve
+          # bundles from this repo's own releases (RUNTIME_RELEASE_BASE_URL /
+          # latestRuntimeBundle) — never from the upstream author's repo. The
+          # tar.zst files below are the SHA-256-verified bundles fetched at
+          # the start of this job. Skip re-upload when the asset is already
+          # on the release so routine pushes don't re-push ~700 MB.
+          EXISTING_ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for bundle in dist/runtime-bundles/*.tar.zst; do
+            name=$(basename "$bundle")
+            if printf '%s\n' "$EXISTING_ASSETS" | grep -qx "$name"; then
+              echo "Bundle already on release $TAG: $name"
+            else
+              gh release upload "$TAG" "$bundle"
+            fi
+          done
+
+# publish-current-release

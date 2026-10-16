@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <!-- The main source set registers .runtime.MheMessagingService for the
+             same MESSAGING_EVENT action, which delivered every push twice in
+             the online flavor. The online-specific service below is the more
+             complete handler (data payloads, messageId dedup, deep-link
+             routes), so the main one is removed here. -->
+        <service
+            android:name=".runtime.MheMessagingService"
+            tools:node="remove" />
+        <service
+            android:name=".runtime.MobileHarnessFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="remote-events" />
+    </application>
+</manifest>

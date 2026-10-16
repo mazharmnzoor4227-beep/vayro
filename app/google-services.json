@@ -1,0 +1,63 @@
+{
+  "project_info": {
+    "project_number": "249079131159",
+    "project_id": "codeair-apps",
+    "storage_bucket": "codeair-apps.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:249079131159:android:55417b14ee77d1284a4052",
+        "android_client_info": {
+          "package_name": "com.vayro.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "249079131159-ciqj8rgataa8vtd2onv45km6f4j7cppt.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.vayro.app",
+            "certificate_hash": "b4af9fff33b505f859d16b73c79e5e4046a032db"
+          }
+        },
+        {
+          "client_id": "249079131159-hj5qult21csb8q3otnriel363j6j8m14.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.vayro.app",
+            "certificate_hash": "44297ec24e8504148a36dd9311e1852301e263e7"
+          }
+        },
+        {
+          "client_id": "249079131159-vfal5mggn20hrvs763u6g058qa54nt69.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.vayro.app",
+            "certificate_hash": "45dc6bf85e9e1b8862f110b186ba36af309fd3c1"
+          }
+        },
+        {
+          "client_id": "249079131159-kjeg6nr3unpfnbt3gn9pm28vv97cdb83.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2WTminot_AR087gGnUVwjvirP5lo2CCs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "249079131159-kjeg6nr3unpfnbt3gn9pm28vv97cdb83.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <exclude domain="sharedpref" path="pocket_secrets.xml" />
+        <exclude domain="sharedpref" path="antigravity_auth_store.xml" />
+        <exclude domain="file" path="mcp/" />
+        <exclude domain="file" path="runtime/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="pocket_secrets.xml" />
+        <exclude domain="sharedpref" path="antigravity_auth_store.xml" />
+        <exclude domain="file" path="mcp/" />
+        <exclude domain="file" path="runtime/" />
+    </device-transfer>
+</data-extraction-rules>
