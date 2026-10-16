@@ -202,7 +202,7 @@ jobs:
           yes | "${SDKMANAGER}" --licenses >/dev/null || true
           "${SDKMANAGER}" "platform-tools" "platforms;android-36" "ndk;26.1.10909125" "cmake;3.22.1"
 
-      - name: Configure permanent Codeair release signing key
+      - name: Configure permanent Vayro release signing key
         shell: bash
         env:
           MH_RELEASE_KEYSTORE_BASE64: ${{ secrets.MH_RELEASE_KEYSTORE_BASE64 }}
@@ -361,26 +361,31 @@ jobs:
           set -euo pipefail
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
           AAPT2="$ANDROID_HOME/build-tools/35.0.0/aapt2"
-          PREVIOUS="$RUNNER_TEMP/mobile-harness-previous.apk"
-          gh release download v1.0.19 -p "app-online-release.apk" -O "$PREVIOUS" -R "$GITHUB_REPOSITORY"
-          current_cert="$($APKSIGNER verify --print-certs app/build/outputs/apk/online/release/app-online-release.apk | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}')"
-          previous_cert="$($APKSIGNER verify --print-certs "$PREVIOUS" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}')"
+          CURRENT="app/build/outputs/apk/online/release/app-online-release.apk"
+          # First Vayro release: nothing published yet, nothing to compare against.
+          PREV_TAG="$(gh release list -R "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // ""')"
+          if [[ -z "$PREV_TAG" ]]; then
+            echo "No previous Vayro release found; skipping update-compatibility comparison."
+            exit 0
+          fi
+          PREVIOUS="$RUNNER_TEMP/vayro-previous.apk"
+          gh release download "$PREV_TAG" -p "app-online-release.apk" -O "$PREVIOUS" -R "$GITHUB_REPOSITORY"
+          current_cert="$("$APKSIGNER" verify --print-certs "$CURRENT" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}')"
+          previous_cert="$("$APKSIGNER" verify --print-certs "$PREVIOUS" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}')"
           echo "Previous release certificate: $previous_cert"
           echo "Current release certificate:  $current_cert"
           test -n "$current_cert"
           test "$current_cert" = "$previous_cert"
-
-          current_badging="$($AAPT2 dump badging app/build/outputs/apk/online/release/app-online-release.apk)"
-          previous_badging="$($AAPT2 dump badging "$PREVIOUS")"
-          echo "$previous_badging" | grep -q "versionCode='20'"
-          echo "$previous_badging" | grep -q "versionName='1.0.19'"
-          VERSION_NAME=$(sed -n 's/.*val appVersionName = .*?: "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
-          VERSION_CODE=$(awk -F'= ' '/versionCode = / {print $2; exit}' app/build.gradle.kts)
-          echo "$current_badging" | grep -q "versionCode='$VERSION_CODE'"
-          echo "$current_badging" | grep -q "versionName='$VERSION_NAME'"
+          current_badging="$("$AAPT2" dump badging "$CURRENT")"
+          previous_badging="$("$AAPT2" dump badging "$PREVIOUS")"
           echo "$current_badging" | grep -q "package: name='com.vayro.app'"
-          echo "$previous_badging" | grep -qE "package: name='(com.vayro.app|com.jarves.mh)'"
-          echo "PASS: valid package + same signing certificate + strictly increasing versionCode."
+          echo "$previous_badging" | grep -q "package: name='com.vayro.app'"
+          prev_code="$(printf '%s' "$previous_badging" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)"
+          curr_code="$(printf '%s' "$current_badging" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)"
+          echo "Previous versionCode: $prev_code | Current versionCode: $curr_code"
+          test -n "$prev_code" && test -n "$curr_code"
+          test "$curr_code" -gt "$prev_code"
+          echo "PASS: same package + same signing certificate + increasing versionCode."
 
       - name: Inspect release APKs
         shell: bash
@@ -507,7 +512,7 @@ jobs:
             CHANGELOG=$(git log --pretty=format:"- %s" --no-merges -20)
           fi
           cat > release-notes.md <<EOF
-          ## Conzyx $TAG
+          ## Vayro $TAG
 
           ### Changes in this version
           $CHANGELOG
@@ -525,8 +530,8 @@ jobs:
           The release contains the two APKs plus the \`mobile-harness-update.json\` manifest. Debug APKs are CI-only artifacts and are not release downloads.
           EOF
           gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "Conzyx $TAG" --notes-file release-notes.md
-          gh release edit "$TAG" --title "Conzyx $TAG" --notes-file release-notes.md
+            gh release create "$TAG" --title "Vayro $TAG" --notes-file release-notes.md
+          gh release edit "$TAG" --title "Vayro $TAG" --notes-file release-notes.md
           python3 - <<'PY'
           import json, os
           with open("dist/runtime-bundles/manifest.json") as handle:
@@ -557,18 +562,18 @@ jobs:
               "versionName": version_name,
               "channel": "stable",
               "notes": (
-                  f"Conzyx {tag} — verified latest runtime assets and toolchain update controls. "
+                  f"Vayro {tag} — verified latest runtime assets and toolchain update controls. "
                   "Runtime bundles are resolved from the latest non-prerelease upstream runtime release and SHA-256 verified during CI. "
                   "PHP uses the online Ubuntu package path with the PHP 8.4 package source and latest Composer release."
               ),
               "artifacts": {
                   "online": {
-                      "url": f"https://github.com/sunmughan/Conzyx/releases/download/{tag}/app-online-release.apk",
+                      "url": f"https://github.com/mazharmnzoor4227-beep/vayro/releases/download/{tag}/app-online-release.apk",
                       "sha256": os.environ["ONLINE_SHA"],
                       "sizeBytes": int(os.environ["ONLINE_SIZE"]),
                   },
                   "offline": {
-                      "url": f"https://github.com/sunmughan/Conzyx/releases/download/{tag}/app-offline-release.apk",
+                      "url": f"https://github.com/mazharmnzoor4227-beep/vayro/releases/download/{tag}/app-offline-release.apk",
                       "sha256": os.environ["OFFLINE_SHA"],
                       "sizeBytes": int(os.environ["OFFLINE_SIZE"]),
                   },
