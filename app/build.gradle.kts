@@ -27,11 +27,11 @@ val hasUploadSigning = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { !it.isNullOrBlank() }
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.11"
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.12"
 val runtimeReleaseBaseUrl =
-    "https://github.com/sunmughan/Conzyx/releases/download/v$appVersionName"
+    "https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v$appVersionName"
 val appUpdateManifestUrl =
-    "https://github.com/sunmughan/Conzyx/releases/latest/download/mobile-harness-update.json"
+    "https://github.com/mazharmnzoor4227-beep/vayro/releases/latest/download/mobile-harness-update.json"
 val runtimeBundleDir = rootProject.layout.projectDirectory.dir("dist/runtime-bundles")
 val generatedRuntimeAssets = layout.buildDirectory.dir("generated/runtime-assets")
 
@@ -86,7 +86,7 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 49
+        versionCode = 50
         versionName = appVersionName
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
 

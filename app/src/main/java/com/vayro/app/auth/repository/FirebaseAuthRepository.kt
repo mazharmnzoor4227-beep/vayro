@@ -33,7 +33,22 @@ class FirebaseAuthRepository(
     private val context: Context,
 ) : AuthRepository {
 
-    private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+    // Firebase can be unavailable when its bundled config is missing or does
+    // not match this build (e.g. a placeholder google-services.json). Resolve
+    // it defensively: a Firebase failure must degrade the app to signed-out
+    // (guest) mode instead of crashing the process during first composition.
+    private val authOrNull: FirebaseAuth? by lazy {
+        runCatching { FirebaseAuth.getInstance() }
+            .onFailure { AppCrashLogger.logThrowable("FirebaseAuth unavailable; continuing signed-out", it) }
+            .getOrNull()
+    }
+
+    // Operation sites run inside runCatching and surface this as a normal
+    // sign-in error; only the init path below must never throw.
+    private val auth: FirebaseAuth
+        get() = authOrNull
+            ?: throw IllegalStateException("Sign-in is unavailable right now. Please continue as guest.")
+
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
@@ -43,7 +58,11 @@ class FirebaseAuthRepository(
         get() = _authState.value.currentUser
 
     init {
-        auth.addAuthStateListener { firebaseAuth ->
+        val resolvedAuth = authOrNull
+        if (resolvedAuth == null) {
+            _authState.value = AuthState.Unauthenticated
+        } else {
+            resolvedAuth.addAuthStateListener { firebaseAuth ->
             val firebaseUser = firebaseAuth.currentUser
             if (firebaseUser == null) {
                 _authState.value = AuthState.Unauthenticated
@@ -54,6 +73,7 @@ class FirebaseAuthRepository(
                 } else {
                     AuthState.Authenticated(appUser)
                 }
+            }
             }
         }
     }

@@ -38,6 +38,8 @@ class MobileHarnessApplication : Application() {
             FirebaseApp.initializeApp(this)
             FirebaseCrashlytics.getInstance().isCrashlyticsCollectionEnabled =
                 AppCrashLogger.isCrashReportingEnabled
+        }.onFailure {
+            AppCrashLogger.logThrowable("Firebase init failed; continuing without Firebase", it)
         }
         // (FCM needs no local token persistence: the PushTokenStore that
         // used to save the registration token here was removed — nothing
