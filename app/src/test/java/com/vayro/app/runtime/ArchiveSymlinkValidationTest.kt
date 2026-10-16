@@ -28,15 +28,27 @@ class ArchiveSymlinkValidationTest {
     }
 
     @Test
-    fun absoluteLinkTargetIsRejected() {
+    fun absoluteLinkTargetEscapingRootIsRejected() {
         val root = root()
-        assertRejected(root, File(root, "evil"), "/etc/passwd", "absolute")
+        assertRejected(root, File(root, "evil"), "/../../etc/passwd", "escapes")
     }
 
     @Test
-    fun absoluteLinkTargetWithDoubleSlashIsRejected() {
+    fun absoluteLinkTargetWithDoubleSlashEscapingRootIsRejected() {
         val root = root()
-        assertRejected(root, File(root, "evil"), "//etc/passwd", "absolute")
+        assertRejected(root, File(root, "evil"), "//../../etc/passwd", "escapes")
+    }
+
+    @Test
+    fun absoluteLinkTargetsInsideRootAreAccepted() {
+        // A standard Linux rootfs is full of absolute links (for example
+        // /bin -> usr/bin). Inside the guest root those targets are
+        // root-relative, so they must validate, not be rejected.
+        val root = root()
+        File(root, "usr/bin").mkdirs()
+        validateArchiveSymlinkTarget(root, File(root, "bin"), "/usr/bin")
+        validateArchiveSymlinkTarget(root, File(root, "etc_link"), "/etc/passwd")
+        validateArchiveSymlinkTarget(root, File(root, "sh"), "//usr/bin/sh")
     }
 
     @Test
