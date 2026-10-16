@@ -217,7 +217,7 @@ jobs:
           fi
           printf '%s' "${MH_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/mobile-harness-release.jks"
           chmod 600 "$RUNNER_TEMP/mobile-harness-release.jks"
-          echo "Using the permanent Codeair Software Solutions release signing key."
+          echo "Using the permanent Vayro release signing key."
           echo "MH_UPLOAD_STORE_FILE=$RUNNER_TEMP/mobile-harness-release.jks" >> "$GITHUB_ENV"
           echo "MH_UPLOAD_STORE_PASSWORD=${MH_RELEASE_STORE_PASSWORD}" >> "$GITHUB_ENV"
           echo "MH_UPLOAD_KEY_ALIAS=${MH_RELEASE_KEY_ALIAS}" >> "$GITHUB_ENV"
@@ -230,11 +230,11 @@ jobs:
           MH_RELEASE_KEY_ALIAS: ${{ secrets.MH_RELEASE_KEY_ALIAS }}
         run: |
           set -euo pipefail
-          EXPECTED_SHA256="86:D4:21:7F:86:E4:0A:B2:58:46:04:C5:6D:C3:6A:FB:54:DF:83:5D:38:2A:A4:FC:65:07:40:C6:00:1D:E0:F5"
+          EXPECTED_SHA256="52:69:A5:A5:69:03:83:BC:72:84:A0:DF:A0:8F:21:00:62:CD:D8:C6:2A:F0:39:2C:2C:A5:82:CC:49:E4:16:F8"
           ACTUAL_SHA256="$(keytool -list -v -keystore "$RUNNER_TEMP/mobile-harness-release.jks" -storepass "$MH_RELEASE_STORE_PASSWORD" -alias "$MH_RELEASE_KEY_ALIAS" | awk -F': ' '/SHA256:/{print $2; exit}')"
           echo "Release signing SHA-256: $ACTUAL_SHA256"
           if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
-            echo "::error::The configured release keystore is not the permanent Codeair signing key."
+            echo "::error::The configured release keystore is not the permanent Vayro signing key."
             exit 1
           fi
 
