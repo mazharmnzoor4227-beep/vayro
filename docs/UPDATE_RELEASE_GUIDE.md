@@ -44,12 +44,12 @@ Mobile Harness Extended is distributed in two distinct flavors (`runtimeDelivery
 
 ## 2. Managing Updates on a Private GitHub Repository
 
-When your source repository (`sunmughan/Conzyx`) is **Private**, GitHub returns **HTTP 404** to unauthenticated download requests. Three production-grade strategies are supported:
+When your source repository (`mazharmnzoor4227-beep/vayro`) is **Private**, GitHub returns **HTTP 404** to unauthenticated download requests. Three production-grade strategies are supported:
 
 ### Strategy A: Direct GitHub Releases API with Personal Access Token (Internal Team / Testers)
 - In the app, navigate to **Settings → App updates & release channel**.
 - Enter:
-  - **Manifest / API URL**: `https://api.github.com/repos/sunmughan/Conzyx/releases/latest`
+  - **Manifest / API URL**: `https://api.github.com/repos/mazharmnzoor4227-beep/vayro/releases/latest`
   - **Private Repository Token**: A fine-grained GitHub Personal Access Token (PAT) with `Contents: Read-only` permission on `Conzyx`.
 - `AppUpdater` connects via `Authorization: Bearer <token>`, fetches release assets, follows the AWS S3 redirect safely without leaking credentials, and downloads the APK.
 
@@ -61,9 +61,9 @@ To distribute updates to users without requiring them to enter a GitHub token or
 #### 1. Deploy the Cloudflare Worker Script:
 ```javascript
 // Cloudflare Worker: updates.yourdomain.workers.dev
-const GITHUB_REPO = "sunmughan/Conzyx";
+const GITHUB_REPO = "mazharmnzoor4227-beep/vayro";
 // Set GITHUB_TOKEN in Cloudflare Worker Environment Variables (Secrets)
-// Token needs: Contents: Read-only on sunmughan/Conzyx
+// Token needs: Contents: Read-only on mazharmnzoor4227-beep/vayro
 
 export default {
   async fetch(request, env) {
@@ -141,16 +141,16 @@ export default {
 ---
 
 ### Strategy C: Dual-Repository Mirror (Private Source + Public Release Binaries)
-1. Keep the source code repository (`sunmughan/Conzyx`) strictly private.
-2. Create an empty public repository (e.g. `sunmughan/Mobile-Harness-Releases`).
-3. In `.github/workflows/android.yml`, add a release step that uploads the compiled APKs and `mobile-harness-update.json` to the public releases repository using `gh release upload --repo sunmughan/Mobile-Harness-Releases`.
+1. Keep the source code repository (`mazharmnzoor4227-beep/vayro`) strictly private.
+2. Create an empty public repository (e.g. `mazharmnzoor4227-beep/vayro`).
+3. In `.github/workflows/android.yml`, add a release step that uploads the compiled APKs and `mobile-harness-update.json` to the public releases repository using `gh release upload --repo mazharmnzoor4227-beep/vayro`.
 
 ---
 
 ## 3. Cryptographic Verification & Tamper Protection
 
 Every downloaded APK must pass three mandatory security checks before `AndroidAppInstaller` is invoked:
-1. **Package ID Integrity**: The APK's package name in `AndroidManifest.xml` must match `com.codeair.mhe`.
+1. **Package ID Integrity**: The APK's package name in `AndroidManifest.xml` must match `com.vayro.app`.
 2. **SHA-256 Checksum Match**: The file hash must exactly match the checksum specified in `mobile-harness-update.json`.
 3. **Permanent Release Certificate Verification**:
    - `AppUpdater.verifyApk()` extracts the APK's signing certificate and compares its SHA-256 digest with the currently installed app's signing key:

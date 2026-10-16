@@ -187,6 +187,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Set up Java 17
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -368,6 +369,15 @@ jobs:
             echo "No previous Vayro release found; skipping update-compatibility comparison."
             exit 0
           fi
+          # Re-run safety: if the latest release IS the version this run is
+          # about to publish, there is no older release to compare against —
+          # skip instead of failing the strictly-increasing versionCode check.
+          VERSION_NAME=$(sed -n 's/.*val appVersionName = .*?: "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          TAG="v$VERSION_NAME"
+          if [[ "$PREV_TAG" = "$TAG" ]]; then
+            echo "Latest release $PREV_TAG is the version this run publishes; skipping update-compatibility comparison."
+            exit 0
+          fi
           PREVIOUS="$RUNNER_TEMP/vayro-previous.apk"
           gh release download "$PREV_TAG" -p "app-online-release.apk" -O "$PREVIOUS" -R "$GITHUB_REPOSITORY"
           current_cert="$("$APKSIGNER" verify --print-certs "$CURRENT" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}')"
@@ -392,80 +402,6 @@ jobs:
         run: |
           set -euxo pipefail
           find app/build/outputs/apk -type f -name '*.apk' -printf '%p %s bytes\n' | sort
-
-      # TEMP-DISABLED for fast iteration (user 2026-10-13): - name: Prepare emulator verification script
-        # shell: bash
-        # run: |
-          # cat << 'EOF' > run-emulator-verification.sh
-          # set -euxo pipefail
-          # PREVIOUS_APK="/tmp/mobile-harness-previous.apk"
-          # if [ -f "$RUNNER_TEMP/mobile-harness-previous.apk" ]; then
-            # cp "$RUNNER_TEMP/mobile-harness-previous.apk" "$PREVIOUS_APK"
-          # else
-            # gh release download v1.0.19 -p "app-online-release.apk" -O "$PREVIOUS_APK" -R "$GITHUB_REPOSITORY"
-          # fi
-
-#           # echo "Waiting for Android PackageManager service..."
-          # "$ANDROID_HOME/platform-tools/adb" wait-for-device
-          # for i in $(seq 1 45); do
-            # BOOT_COMPLETED=$("$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
-            # PM_READY=$("$ANDROID_HOME/platform-tools/adb" shell pm path android 2>/dev/null | tr -d '\r' || true)
-            # if [ "$BOOT_COMPLETED" = "1" ] && [ -n "$PM_READY" ]; then
-              # echo "PackageManagerService is responsive."
-              # break
-            # fi
-            # echo "Waiting for PackageManagerService ($i/45)..."
-            # sleep 4
-          # done
-
-#           # install_with_retry() {
-            # local apk="$1"
-            # shift
-            # local success=0
-            # for attempt in 1 2 3; do
-              # echo "Installing $apk (attempt $attempt/3)..."
-              # if "$ANDROID_HOME/platform-tools/adb" install "$@" "$apk"; then
-                # success=1
-                # break
-              # fi
-              # echo "Install attempt $attempt failed. Checking service and retrying in 10s..."
-              # sleep 10
-            # done
-            # if [ "$success" -ne 1 ]; then
-              # echo "Warning: Failed to install $apk after retries"
-              # return 1
-            # fi
-          # }
-
-#           # echo "Previous release:"
-          # install_with_retry "$PREVIOUS_APK" || true
-          # "$ANDROID_HOME/platform-tools/adb" shell dumpsys package com.vayro.app | grep -E 'versionCode=|versionName=' || "$ANDROID_HOME/platform-tools/adb" shell dumpsys package com.jarves.mh | grep -E 'versionCode=|versionName=' || true
-          # echo "Current release update:"
-          # install_with_retry "app/build/outputs/apk/online/release/app-online-release.apk" -r
-          # "$ANDROID_HOME/platform-tools/adb" shell dumpsys package com.vayro.app | grep -E 'versionCode=|versionName=' || true
-          # echo "PASS: previous release installed and current release updated in place."
-          # EOF
-          # chmod +x run-emulator-verification.sh
-
-# 
-#       # - name: Verify in-place update on Android emulator
-        # continue-on-error: true
-        # Bound the emulator step: it must never hang the whole job. On
-        # timeout/failure the build continues (continue-on-error) and the
-        # APK artifacts are still uploaded.
-        # timeout-minutes: 20
-        # uses: reactivecircus/android-emulator-runner@v2
-        # env:
-          # GH_TOKEN: ${{ github.token }}
-        # with:
-          # api-level: 34
-          # target: google_apis
-          # arch: x86_64
-          # profile: pixel_5
-          # emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
-          # emulator-boot-timeout: 900
-          # disable-animations: true
-          # script: bash ./run-emulator-verification.sh
 
       - name: Upload release APKs
         continue-on-error: true
@@ -620,8 +556,47 @@ jobs:
             if printf '%s\n' "$EXISTING_ASSETS" | grep -qx "$name"; then
               echo "Bundle already on release $TAG: $name"
             else
+              # Remove any stale previous-generation bundle of this same
+              # component (same prefix up to and including "-arm64-") so old
+              # ~800 MB generations do not accumulate on the release.
+              prefix="${name%%-arm64-*}-arm64-"
+              while IFS= read -r existing; do
+                if [[ "$existing" != "$name" && "$existing" == "$prefix"* ]]; then
+                  echo "Deleting stale bundle asset from a previous generation: $existing"
+                  gh release delete-asset "$TAG" "$existing" --yes || true
+                fi
+              done <<< "$EXISTING_ASSETS"
               gh release upload "$TAG" "$bundle"
             fi
           done
+
+      - name: Verify published release completeness
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v2' || github.ref == 'refs/heads/v3'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NAME=$(sed -n 's/.*val appVersionName = .*?: "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          TAG="v$VERSION_NAME"
+          ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          echo "Assets on release $TAG:"
+          printf '%s\n' "$ASSETS"
+          MISSING=""
+          for required in app-online-release.apk app-offline-release.apk app-online-release.aab mobile-harness-update.json; do
+            if ! printf '%s\n' "$ASSETS" | grep -qx "$required"; then
+              MISSING="$MISSING $required"
+            fi
+          done
+          for prefix in conzyx-core- conzyx-python- conzyx-android- conzyx-claude- conzyx-dsh- conzyx-agy-; do
+            if ! printf '%s\n' "$ASSETS" | grep -q "^$prefix"; then
+              MISSING="$MISSING ${prefix}*.tar.zst"
+            fi
+          done
+          if [[ -n "$MISSING" ]]; then
+            echo "::error::Release $TAG is incomplete; missing:$MISSING"
+            exit 1
+          fi
+          echo "PASS: release $TAG contains both APKs, the AAB, the update manifest, and all six runtime bundles."
 
 # publish-current-release

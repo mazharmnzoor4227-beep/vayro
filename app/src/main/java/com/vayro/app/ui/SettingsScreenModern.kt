@@ -1295,7 +1295,7 @@ private fun EnvironmentUpdateCenter() {
                             connection.readTimeout = 12_000
                             connection.instanceFollowRedirects = true
                             connection.setRequestProperty("Accept", "application/json")
-                            connection.setRequestProperty("User-Agent", "Mobile-Harness/" + BuildConfig.VERSION_NAME)
+                            connection.setRequestProperty("User-Agent", "Vayro/" + BuildConfig.VERSION_NAME)
                             val code = connection.responseCode
                             if (code in 200..299) {
                                 val text = connection.inputStream.bufferedReader().use { it.readText() }

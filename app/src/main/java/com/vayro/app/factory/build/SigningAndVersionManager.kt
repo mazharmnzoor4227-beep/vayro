@@ -43,7 +43,7 @@ object SigningAndVersionManager {
             "-keyalg", "RSA",
             "-keysize", "2048",
             "-validity", "10000",
-            "-dname", "CN=Vayro, OU=App Factory, O=Codeair Software Solutions"
+            "-dname", "CN=Vayro, OU=App Factory, O=Vayro"
         )
         try {
             val process = ProcessBuilder(cmd)

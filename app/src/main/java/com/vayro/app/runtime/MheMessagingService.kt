@@ -14,7 +14,7 @@ import com.google.firebase.messaging.RemoteMessage
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Receives Firebase Cloud Messages for the codeair-apps project.
+ * Receives Firebase Cloud Messages for this app.
  *
  * - onMessageReceived: shows a system notification for
  *   notification-payload messages AND data-only messages (a data payload

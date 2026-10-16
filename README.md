@@ -2,7 +2,7 @@
 
 <img src="docs/conzyx-icon.png" alt="Conzyx logo" width="120"/>
 
-# Conzyx
+# Vayro
 
 ### A desktop-class AI software engineering workstation for Android
 
@@ -12,8 +12,8 @@ Run a real Linux development environment, command multi-agent AI engineering tea
 
 <br/>
 
-[![Release v3.2.10](https://img.shields.io/badge/Release-v3.2.10-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/sunmughan/Conzyx/releases/tag/v3.2.10)
-[![CI](https://img.shields.io/github/actions/workflow/status/sunmughan/Conzyx/android.yml?branch=v3&style=flat-square&label=CI)](https://github.com/sunmughan/Conzyx/actions)
+[![Release v3.2.13](https://img.shields.io/badge/Release-v3.2.13-F28C52?style=flat-square&logo=github&logoColor=white)](https://github.com/mazharmnzoor4227-beep/vayro/releases/tag/v3.2.13)
+[![CI](https://img.shields.io/github/actions/workflow/status/mazharmnzoor4227-beep/vayro/android.yml?branch=main&style=flat-square&label=CI)](https://github.com/mazharmnzoor4227-beep/vayro/actions)
 [![Android 9+](https://img.shields.io/badge/Android-9%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](#-system-requirements)
 [![ARM64](https://img.shields.io/badge/CPU-ARM64-5B8DEF?style=flat-square)](#-system-requirements)
 [![Kotlin 2.1](https://img.shields.io/badge/Kotlin-2.1.0-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
@@ -22,8 +22,8 @@ Run a real Linux development environment, command multi-agent AI engineering tea
 
 <br/>
 
-[**Download Online APK**](https://github.com/sunmughan/Conzyx/releases/download/v3.2.10/app-online-release.apk) &nbsp;·&nbsp;
-[**Download Offline APK**](https://github.com/sunmughan/Conzyx/releases/download/v3.2.10/app-offline-release.apk) &nbsp;·&nbsp;
+[**Download Online APK**](https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v3.2.13/app-online-release.apk) &nbsp;·&nbsp;
+[**Download Offline APK**](https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v3.2.13/app-offline-release.apk) &nbsp;·&nbsp;
 [**Pitch Deck (PDF)**](docs/Conzyx-Pitch-Deck.pdf) &nbsp;·&nbsp;
 [**Installation**](#-installation) &nbsp;·&nbsp;
 [**Build from Source**](#-building-from-source) &nbsp;·&nbsp;
@@ -61,7 +61,7 @@ The app ships in two editions:
 | **Online** | ~150 MB | Lightweight. Downloads Linux runtime stacks on demand from verified releases. Best for devices with limited storage. |
 | **Offline** | ~1.2 GB | Fully bundled. All toolchains (core, Python, Android SDK, Claude Code, DeepSeek, Antigravity) ship inside the APK. Works without network after install. |
 
-Both editions share the same application ID (`com.codeair.mhe`) and the same feature set; only the runtime delivery differs.
+Both editions share the same application ID (`com.vayro.app`) and the same feature set; only the runtime delivery differs.
 
 ---
 
@@ -179,7 +179,7 @@ The app runs 100% in rootless userspace. No root, no custom ROM, no special perm
 
 ## 📲 Installation
 
-1. Go to the [v3.2.10 release page](https://github.com/sunmughan/Conzyx/releases/tag/v3.2.10).
+1. Go to the [v3.2.13 release page](https://github.com/mazharmnzoor4227-beep/vayro/releases/tag/v3.2.13).
 2. Download the edition you want:
    - `app-online-release.apk` - lightweight, downloads runtimes on demand
    - `app-offline-release.apk` - everything bundled, works offline after install
@@ -223,7 +223,7 @@ Key versions used by the project: Android Gradle Plugin `8.13.2`, Kotlin `2.1.0`
 <summary><b>Clone</b></summary>
 
 ```bash
-git clone https://github.com/sunmughan/Conzyx.git
+git clone https://github.com/mazharmnzoor4227-beep/vayro.git
 cd Conzyx
 git checkout v3
 git submodule update --init --recursive
@@ -298,7 +298,7 @@ The offline flavor bundles Linux runtime archives (`conzyx-*-arm64-*.tar.zst`). 
 The project uses Firebase for authentication, push notifications, and crash reporting.
 
 1. Create a project in the [Firebase console](https://console.firebase.google.com/).
-2. Add an Android app with package name `com.codeair.mhe`.
+2. Add an Android app with package name `com.vayro.app`.
 3. Download `google-services.json` and place it at **`app/google-services.json`** (this exact path; the `com.google.gms.google-services` Gradle plugin reads it from there).
 4. The plugin is already applied in `app/build.gradle.kts`; no further Gradle changes are needed.
 
@@ -364,7 +364,7 @@ Conzyx/
 │   ├── build.gradle.kts          # App module: flavors, signing, Firebase, versions
 │   ├── google-services.json      # Firebase config (replace with your own)
 │   └── src/main/
-│       ├── java/com/codeair/mhe/
+│       ├── java/com/vayro/app/
 │       │   ├── agent/            # Multi-agent team runtime, DAG dispatch, roles
 │       │   ├── auth/             # Firebase Auth identity, Google/GitHub sign-in
 │       │   ├── cloud/            # Cloud hybrid execution client and orchestration
@@ -397,7 +397,7 @@ Conzyx/
 
 ```
 +-------------------------------------------------------------------+
-|              Conzyx (v3.2.10)                      |
+|              Conzyx (v3.2.13)                      |
 |                                                                    |
 |  +------------------+  +-----------------+  +------------------+   |
 |  | Mobile IDE       |  | Visual DevTools |  | Android App      |   |

@@ -276,7 +276,7 @@ class FirebaseAuthRepository(
                 message.contains("operation is not allowed", ignoreCase = true) ||
                 message.contains("provider is disabled", ignoreCase = true) ||
                 message.contains("OPERATION_NOT_ALLOWED", ignoreCase = true) ->
-                "Sign-in provider is disabled in Firebase console for project 'codeair-tech'. Go to Firebase Console → Authentication → Sign-in method and enable 'Email/Password' and 'Google'."
+                "This sign-in method is not available right now. Please continue as guest or try again later."
             throwable is FirebaseAuthInvalidCredentialsException -> {
                 if (message.contains("badly formatted", ignoreCase = true)) {
                     "The email address is badly formatted."

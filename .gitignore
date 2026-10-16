@@ -77,3 +77,13 @@ release-dist/
 
 # Release notes markdown files (release notes are published to GitHub Releases directly)
 release-notes*.md
+
+# Source packages literally named "build" (app-factory code generators).
+# The generic build/ pattern above would silently swallow NEW source files
+# in these directories (the existing files are only safe because they were
+# force-tracked once). Re-include the directories and everything inside them
+# so sources here are never ignored; real Gradle output dirs stay ignored.
+!app/src/main/java/com/vayro/app/factory/build/
+!app/src/main/java/com/vayro/app/factory/build/**
+!app/src/test/java/com/vayro/app/factory/build/
+!app/src/test/java/com/vayro/app/factory/build/**

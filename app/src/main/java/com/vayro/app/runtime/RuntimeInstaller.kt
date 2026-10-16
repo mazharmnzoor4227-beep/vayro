@@ -1037,9 +1037,9 @@ class RuntimeInstaller(private val context: Context) {
         }
 
         val prefix = when (id) {
-            "core" -> "mhe-core-arm64-"
-            "python" -> "mhe-python-arm64-"
-            "android" -> "mhe-android-arm64-"
+            "core" -> "conzyx-core-arm64-"
+            "python" -> "conzyx-python-arm64-"
+            "android" -> "conzyx-android-arm64-"
             else -> return null
         }
 
@@ -2923,7 +2923,7 @@ printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",
             "Accept",
             if (url.startsWith("https://api.github.com/")) "application/vnd.github+json" else "application/json",
         )
-        connection.setRequestProperty("User-Agent", "Mobile-Harness")
+        connection.setRequestProperty("User-Agent", "Vayro")
         if (url.startsWith("https://api.github.com/")) {
             connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
         }

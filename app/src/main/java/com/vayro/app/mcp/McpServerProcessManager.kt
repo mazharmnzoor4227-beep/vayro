@@ -285,7 +285,7 @@ class McpServerSession(
 
     private fun performHandshake(): Boolean {
         val proc = process ?: return false
-        val req = McpProtocol.initializeRequest("mobile-harness", "3.0")
+        val req = McpProtocol.initializeRequest("vayro", "3.0")
         val deadline = clock() + ioTimeoutMs
         proc.writeLine(req.toString())
         while (true) {
