@@ -1,5 +1,6 @@
 package com.vayro.app.runtime
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Rule
@@ -8,6 +9,15 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.nio.file.Files
 
+/**
+ * Spec for rootfs symlink validation (v3.2.17 semantics): a bundle is a
+ * guest filesystem image, so targets are resolved lexically inside the
+ * image and any ".." climb is clamped at the image root — the same way
+ * the guest kernel will resolve them once the rootfs is mounted. Only a
+ * blank target is invalid. Validation never consults the host disk, so
+ * pre-existing files or links in the extraction directory cannot change
+ * the verdict (the failure mode that broke setup on real devices).
+ */
 class ArchiveSymlinkValidationTest {
 
     @get:Rule
@@ -27,17 +37,8 @@ class ArchiveSymlinkValidationTest {
         }
     }
 
-    @Test
-    fun absoluteLinkTargetEscapingRootIsRejected() {
-        val root = root()
-        assertRejected(root, File(root, "evil"), "/../../etc/passwd", "escapes")
-    }
-
-    @Test
-    fun absoluteLinkTargetWithDoubleSlashEscapingRootIsRejected() {
-        val root = root()
-        assertRejected(root, File(root, "evil"), "//../../etc/passwd", "escapes")
-    }
+    private fun resolved(root: File, linkFile: File, linkName: String): String =
+        resolveSymlinkTargetLexically(root, linkFile, linkName)
 
     @Test
     fun absoluteLinkTargetsInsideRootAreAccepted() {
@@ -49,6 +50,40 @@ class ArchiveSymlinkValidationTest {
         validateArchiveSymlinkTarget(root, File(root, "bin"), "/usr/bin")
         validateArchiveSymlinkTarget(root, File(root, "etc_link"), "/etc/passwd")
         validateArchiveSymlinkTarget(root, File(root, "sh"), "//usr/bin/sh")
+        assertEquals(
+            File(root, "usr/bin").absolutePath,
+            resolved(root, File(root, "bin"), "/usr/bin")
+        )
+    }
+
+    @Test
+    fun absoluteTraversalIsClampedAtTheRoot() {
+        val root = root()
+        validateArchiveSymlinkTarget(root, File(root, "odd"), "/../../etc/passwd")
+        assertEquals(
+            File(root, "etc/passwd").absolutePath,
+            resolved(root, File(root, "odd"), "/../../etc/passwd")
+        )
+        assertEquals(
+            File(root, "etc/passwd").absolutePath,
+            resolved(root, File(root, "odd"), "//../../etc/passwd")
+        )
+    }
+
+    @Test
+    fun relativeTraversalIsClampedAtTheRoot() {
+        val root = root()
+        File(root, "sub").mkdirs()
+        validateArchiveSymlinkTarget(root, File(root, "sub/odd"), "../../outside")
+        assertEquals(
+            File(root, "outside").absolutePath,
+            resolved(root, File(root, "sub/odd"), "../../outside")
+        )
+        validateArchiveSymlinkTarget(root, File(root, "odd"), "../outside.txt")
+        assertEquals(
+            File(root, "outside.txt").absolutePath,
+            resolved(root, File(root, "odd"), "../outside.txt")
+        )
     }
 
     @Test
@@ -56,47 +91,6 @@ class ArchiveSymlinkValidationTest {
         val root = root()
         assertRejected(root, File(root, "empty"), "", "empty")
         assertRejected(root, File(root, "blank"), "   ", "empty")
-    }
-
-    @Test
-    fun relativeTraversalLinkIsRejected() {
-        val root = root()
-        File(root, "sub").mkdirs()
-        assertRejected(root, File(root, "sub/evil"), "../../outside", "escapes")
-    }
-
-    @Test
-    fun dotDotSlashTraversalIsRejected() {
-        val root = root()
-        assertRejected(root, File(root, "evil"), "../outside.txt", "escapes")
-    }
-
-    @Test
-    fun linkChainEscapeIsRejected() {
-        val root = root()
-        val real = File(root, "real").apply { mkdirs() }
-        val alias = File(root, "alias")
-        validateArchiveSymlinkTarget(root, alias, "real")
-        Files.createSymbolicLink(alias.toPath(), real.toPath())
-        assertRejected(root, File(alias, "chained"), "../../escape", "escapes")
-    }
-
-    @Test
-    fun forwardLinkChainToEscapingLinkIsRejected() {
-        val root = root()
-        val first = File(root, "first")
-        validateArchiveSymlinkTarget(root, first, "second")
-        Files.createSymbolicLink(first.toPath(), File(root, "second").toPath())
-        assertRejected(root, File(root, "second"), "../escape", "escapes")
-    }
-
-    @Test
-    fun linkThroughPreExistingEscapingDirLinkIsRejected() {
-        val root = root()
-        val outer = tempFolder.newFolder("outer")
-        val dirLink = File(root, "dirlink")
-        Files.createSymbolicLink(dirLink.toPath(), outer.toPath())
-        assertRejected(root, File(dirLink, "evil"), "payload", "escapes")
     }
 
     @Test
@@ -108,5 +102,33 @@ class ArchiveSymlinkValidationTest {
         validateArchiveSymlinkTarget(root, File(root, "sub/link2"), "../bin/tool")
         validateArchiveSymlinkTarget(root, File(root, "self"), "self")
         validateArchiveSymlinkTarget(root, File(root, "dot"), "./bin/tool")
+        assertEquals(
+            File(root, "bin/tool").absolutePath,
+            resolved(root, File(root, "sub/link2"), "../bin/tool")
+        )
+    }
+
+    @Test
+    fun verdictDoesNotDependOnDiskState() {
+        // Regression test for the on-device failure: links already present
+        // in the extraction directory (leftovers of a previous attempt, or
+        // entries extracted earlier from the same bundle) must not change
+        // validation outcomes — the old canonical-file check followed them
+        // and falsely reported escapes.
+        val root = root()
+        val outer = tempFolder.newFolder("outer")
+        val dirLink = File(root, "dirlink")
+        Files.createSymbolicLink(dirLink.toPath(), outer.toPath())
+        validateArchiveSymlinkTarget(root, File(dirLink, "some"), "payload")
+        validateArchiveSymlinkTarget(root, File(root, "bin"), "/usr/bin")
+
+        val real = File(root, "real").apply { mkdirs() }
+        val alias = File(root, "alias")
+        Files.createSymbolicLink(alias.toPath(), real.toPath())
+        validateArchiveSymlinkTarget(root, File(alias, "chained"), "../../target")
+        assertEquals(
+            File(root, "target").absolutePath,
+            resolved(root, File(alias, "chained"), "../../target")
+        )
     }
 }

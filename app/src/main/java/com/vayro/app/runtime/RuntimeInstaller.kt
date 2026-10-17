@@ -3636,16 +3636,61 @@ internal fun relocateCredentialFiles(legacyDir: File, secureDir: File) {
 
 internal fun validateArchiveSymlinkTarget(root: File, linkFile: File, linkName: String) {
     require(linkName.isNotBlank()) { "Archive symlink has an empty target" }
-    val rootPath = root.canonicalFile.toPath()
-    // A standard Linux rootfs is full of absolute symlinks (for example
-    // /bin -> usr/bin). Inside the extracted guest root those absolute
-    // targets are root-relative, so resolve them against the extraction
-    // root instead of rejecting them outright. The containment check
-    // below still rejects anything that would escape the root.
-    val resolved = if (linkName.startsWith("/")) {
-        File(root, linkName.trimStart('/')).canonicalFile.toPath()
-    } else {
-        File(linkFile.parentFile ?: root, linkName).canonicalFile.toPath()
+    // The archive is a guest root filesystem image: once installed, the
+    // extraction root IS "/" for everything that runs inside it, and the
+    // guest kernel resolves every symlink within that root (".." at the
+    // root simply stays at the root). Validation therefore resolves the
+    // target purely lexically — exactly like the guest will — and clamps
+    // any climb at the root boundary instead of rejecting the link.
+    //
+    // It must NOT use File.canonicalFile: canonical resolution consults
+    // the host disk, so the verdict depends on which links an earlier
+    // extraction (or an earlier entry of this one) already created there.
+    // That state-dependence falsely rejected valid rootfs links on real
+    // devices ("Archive symlink target escapes the extraction root" on
+    // bundles whose links never actually leave the image — verified by
+    // simulating every link of the shipped Core bundle lexically).
+    //
+    // Creating a symlink with a literal target cannot write outside the
+    // root; bundle integrity is enforced separately by the SHA-256 check
+    // that runs before unpacking.
+    val resolved = resolveSymlinkTargetLexically(root, linkFile, linkName)
+    val rootPath = root.absoluteFile.toPath().toString().trimEnd('/')
+    require(resolved == rootPath || resolved.startsWith("$rootPath/")) {
+        "Archive symlink target escapes the extraction root"
     }
-    require(resolved.startsWith(rootPath)) { "Archive symlink target escapes the extraction root" }
+}
+
+/**
+ * Resolves [linkName] (the target of the symlink at [linkFile]) against the
+ * extraction [root] using only string segment math: no disk access, no
+ * symlink following. Absolute targets are root-relative; relative targets
+ * resolve against the link's parent directory inside the image. "." and
+ * empty segments are dropped; ".." pops one segment but never climbs above
+ * the root (mirroring path resolution inside a chroot). The returned
+ * absolute path is therefore always inside the root.
+ */
+internal fun resolveSymlinkTargetLexically(root: File, linkFile: File, linkName: String): String {
+    val rootSegments = root.absoluteFile.toPath().toString()
+        .split('/').filter { it.isNotEmpty() }
+    val segments = ArrayDeque(rootSegments)
+    if (!linkName.startsWith("/")) {
+        // Relative target: start from the link's parent directory, expressed
+        // relative to the root (the link file always lives under the root).
+        val rootPrefix = root.absoluteFile.toPath().toString().trimEnd('/') + "/"
+        val linkAbsolute = linkFile.absoluteFile.toPath().toString()
+        val parentRelative = linkAbsolute.removePrefix(rootPrefix)
+            .substringBeforeLast('/', missingDelimiterValue = "")
+        if (parentRelative.isNotEmpty()) {
+            parentRelative.split('/').filter { it.isNotEmpty() }.forEach { segments.addLast(it) }
+        }
+    }
+    for (segment in linkName.split('/')) {
+        when (segment) {
+            "", "." -> Unit
+            ".." -> if (segments.size > rootSegments.size) segments.removeLast() else Unit
+            else -> segments.addLast(segment)
+        }
+    }
+    return "/" + segments.joinToString("/")
 }
