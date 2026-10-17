@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "102265044308-drtdv8snv0k3hhg2e2bc7q89dum121b1.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.vayro.app",
+            "certificate_hash": "8f51c609a8e4498d26a6bf919a90dc32cd051b77"
+          }
+        },
+        {
           "client_id": "102265044308-0f8akv8jkk1i8nftkbs7pu2rdu44haiq.apps.googleusercontent.com",
           "client_type": 3
         }
