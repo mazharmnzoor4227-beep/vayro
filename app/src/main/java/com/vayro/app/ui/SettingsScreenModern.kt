@@ -45,17 +45,23 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Nightlight
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PrivacyTip
@@ -64,12 +70,15 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.filled.Waves
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -135,6 +144,7 @@ import com.vayro.app.runtime.EnvironmentComponentState
 import com.vayro.app.runtime.EnvironmentManifestComponent
 import com.vayro.app.runtime.EnvironmentUpdateManager
 import com.vayro.app.runtime.RuntimeInstaller
+import com.vayro.app.ui.theme.AppColorTheme
 import com.vayro.app.ui.theme.AppThemeMode
 import com.vayro.app.ui.theme.PocketGreen
 import com.vayro.app.ui.theme.PocketOrange
@@ -167,6 +177,7 @@ fun SettingsScreen(
     onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
     onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
     onSetThemeMode: (AppThemeMode) -> Unit,
+    onSetColorTheme: (AppColorTheme) -> Unit = {},
     onPing: () -> Unit,
     onClearTerminal: () -> Unit,
     getSavedApiKey: (ProviderKind) -> String,
@@ -370,15 +381,37 @@ fun SettingsScreen(
             item {
                 SettingsAccordion(
                     title = "Appearance",
-                    subtitle = when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },
+                    subtitle = if (state.colorTheme != AppColorTheme.NONE) {
+                        "${state.colorTheme.displayName} color theme"
+                    } else when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },
                     icon = Icons.Default.Tune,
                     expanded = expanded == SettingsSection.APPEARANCE,
                     onClick = { toggle(SettingsSection.APPEARANCE) },
                 ) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ModernThemeChoice("Dark", Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
-                        ModernThemeChoice("Light", Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
-                        ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                        ModernThemeChoice("Dark", Icons.Default.DarkMode, state.colorTheme == AppColorTheme.NONE && state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
+                        ModernThemeChoice("Light", Icons.Default.LightMode, state.colorTheme == AppColorTheme.NONE && state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
+                        ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.colorTheme == AppColorTheme.NONE && state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
+                    }
+                    Text(
+                        "Color theme",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    AppColorTheme.selectable.chunked(4).forEach { rowThemes ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowThemes.forEach { theme ->
+                                ModernColorThemeChoice(
+                                    theme = theme,
+                                    icon = colorThemeIcon(theme),
+                                    selected = state.colorTheme == theme,
+                                    onClick = { onSetColorTheme(theme) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            repeat(4 - rowThemes.size) { Spacer(Modifier.weight(1f)) }
+                        }
                     }
                 }
             }
@@ -1605,6 +1638,51 @@ private fun SelectionDot(selected: Boolean) {
         contentAlignment = Alignment.Center,
     ) {
         if (selected) Box(Modifier.size(9.dp).background(PocketOrange, CircleShape))
+    }
+}
+
+private fun colorThemeIcon(theme: AppColorTheme): ImageVector = when (theme) {
+    AppColorTheme.KODEX_LIME -> Icons.Default.FlashOn
+    AppColorTheme.SOFT_LIME -> Icons.Default.Spa
+    AppColorTheme.MONO -> Icons.Default.Contrast
+    AppColorTheme.PAPER -> Icons.Default.Description
+    AppColorTheme.OCEAN -> Icons.Default.Waves
+    AppColorTheme.VIOLET -> Icons.Default.Nightlight
+    AppColorTheme.AMBER -> Icons.Default.LocalFireDepartment
+    AppColorTheme.TEAL -> Icons.Default.WaterDrop
+    AppColorTheme.NONE -> Icons.Default.Palette
+}
+
+/**
+ * Color-theme picker box: same surface, shape and selected treatment as
+ * [ModernThemeChoice], plus three dots previewing the theme's own
+ * background / surface / primary colors.
+ */
+@Composable
+private fun ModernColorThemeChoice(theme: AppColorTheme, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val scheme = theme.colorScheme
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) PocketOrange.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(vertical = 11.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, theme.displayName, Modifier.size(20.dp), tint = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(5.dp))
+            Text(theme.displayName, fontSize = 11.sp, maxLines = 1, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(scheme.background, scheme.surface, scheme.primary).forEach { dotColor ->
+                    Box(
+                        Modifier
+                            .size(9.dp)
+                            .background(dotColor, CircleShape)
+                            .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+                    )
+                }
+            }
+        }
     }
 }
 

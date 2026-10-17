@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
 
             setContent {
                 val state by vm.state.collectAsStateWithLifecycle()
-                PocketTheme(themeMode = state.themeMode) {
+                PocketTheme(themeMode = state.themeMode, colorTheme = state.colorTheme) {
                     PocketDevApp(vm)
                 }
             }

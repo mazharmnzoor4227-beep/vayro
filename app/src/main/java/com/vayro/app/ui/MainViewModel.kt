@@ -234,6 +234,7 @@ data class AppUiState(
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
     val activeApiKeyName: String? = null,
     val themeMode: com.vayro.app.ui.theme.AppThemeMode = com.vayro.app.ui.theme.AppThemeMode.DARK,
+    val colorTheme: com.vayro.app.ui.theme.AppColorTheme = com.vayro.app.ui.theme.AppColorTheme.NONE,
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val apiPingMessage: String? = null,
     val projects: List<Project> = emptyList(),
@@ -737,6 +738,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             geminiApiModel = geminiApiStore.apiModel,
             themeMode = runCatching { com.vayro.app.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.vayro.app.ui.theme.AppThemeMode.DARK),
+            colorTheme = runCatching { com.vayro.app.ui.theme.AppColorTheme.valueOf(preferences.colorTheme.uppercase()) }
+                .getOrDefault(com.vayro.app.ui.theme.AppColorTheme.NONE),
             projects = initialProjects,
             activeProject = initialActiveProject,
             workspaceVisible = isWarmReady && initialActiveProject != null,
@@ -1267,8 +1270,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setThemeMode(mode: com.vayro.app.ui.theme.AppThemeMode) {
+        // Picking a mode hands palette control back to the base Kodex
+        // schemes, so any selected color theme is cleared.
         preferences.themeMode = mode.name.lowercase()
-        _state.update { it.copy(themeMode = mode) }
+        preferences.colorTheme = com.vayro.app.ui.theme.AppColorTheme.NONE.name.lowercase()
+        _state.update { it.copy(themeMode = mode, colorTheme = com.vayro.app.ui.theme.AppColorTheme.NONE) }
+    }
+
+    /** Color theme: persists the choice; the palette applies immediately via the theme root. */
+    fun setColorTheme(theme: com.vayro.app.ui.theme.AppColorTheme) {
+        preferences.colorTheme = theme.name.lowercase()
+        _state.update { it.copy(colorTheme = theme) }
     }
 
     // ---- Milestone 1: security domain moved to SecurityCoordinator. ----

@@ -2,11 +2,13 @@ package com.vayro.app.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
@@ -16,22 +18,36 @@ import androidx.compose.ui.text.font.FontWeight
 import com.vayro.app.R
 import androidx.core.view.WindowCompat
 
-val PocketOrange = Color(0xFFA7FE28)
-val PocketBlue = Color(0xFF8EA8FF)
-val PocketGreen = Color(0xFF69D69E)
+// Raw brand colors. The public Pocket* tokens below resolve through
+// LocalPocketAccents so a selected color theme recolors every call site;
+// these constants are the unthemed (default) values and the building blocks
+// of the base schemes.
+internal val BrandLime = Color(0xFFA7FE28)
+internal val BrandBlue = Color(0xFF8EA8FF)
+internal val BrandGreen = Color(0xFF69D69E)
+
+val PocketOrange: Color
+    @Composable get() = LocalPocketAccents.current.accent
+
+val PocketBlue: Color
+    @Composable get() = LocalPocketAccents.current.info
+
+val PocketGreen: Color
+    @Composable get() = LocalPocketAccents.current.success
+
 val PocketBackground = Color(0xFF0B0E14)
 val PocketSurface = Color(0xFF131821)
 val PocketSurfaceVariant = Color(0xFF1B222D)
 val PocketOutline = Color(0xFF2A3240)
 
 private val DarkColors = darkColorScheme(
-    primary = PocketOrange,
+    primary = BrandLime,
     onPrimary = Color(0xFF1A2600),
     primaryContainer = Color(0xFF2C4210),
     onPrimaryContainer = Color(0xFFE6FFB8),
-    secondary = PocketBlue,
+    secondary = BrandBlue,
     onSecondary = Color(0xFF001F58),
-    tertiary = PocketGreen,
+    tertiary = BrandGreen,
     onTertiary = Color(0xFF00391E),
     background = PocketBackground,
     onBackground = Color(0xFFE6EDF3),
@@ -92,11 +108,30 @@ val AppTypography = Typography(
 enum class AppThemeMode { SYSTEM, DARK, LIGHT }
 
 @Composable
-fun PocketTheme(themeMode: AppThemeMode = AppThemeMode.SYSTEM, content: @Composable () -> Unit) {
-    val isDark = when (themeMode) {
-        AppThemeMode.DARK -> true
-        AppThemeMode.LIGHT -> false
-        AppThemeMode.SYSTEM -> isSystemInDarkTheme()
+fun PocketTheme(
+    themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    colorTheme: AppColorTheme = AppColorTheme.NONE,
+    content: @Composable () -> Unit,
+) {
+    // A selected color theme carries its own full palette and brightness and
+    // wins over the mode row; with no color theme (NONE) the Dark / Light /
+    // System mode drives the base Kodex schemes exactly as before.
+    val systemDark = isSystemInDarkTheme()
+    val isDark: Boolean
+    val colorScheme: ColorScheme
+    val accents: PocketAccentPalette
+    if (colorTheme != AppColorTheme.NONE) {
+        isDark = colorTheme.isDark
+        colorScheme = colorTheme.colorScheme
+        accents = colorTheme.accents
+    } else {
+        isDark = when (themeMode) {
+            AppThemeMode.DARK -> true
+            AppThemeMode.LIGHT -> false
+            AppThemeMode.SYSTEM -> systemDark
+        }
+        colorScheme = if (isDark) DarkColors else LightColors
+        accents = PocketAccentPalette(accent = BrandLime, success = BrandGreen, info = BrandBlue)
     }
 
     // Sync the system status/navigation bar icons with the ACTUAL app theme.
@@ -113,9 +148,11 @@ fun PocketTheme(themeMode: AppThemeMode = AppThemeMode.SYSTEM, content: @Composa
         }
     }
 
-    MaterialTheme(
-        colorScheme = if (isDark) DarkColors else LightColors,
-        typography = AppTypography,
-        content = content,
-    )
+    CompositionLocalProvider(LocalPocketAccents provides accents) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = AppTypography,
+            content = content,
+        )
+    }
 }
