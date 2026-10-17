@@ -1,7 +1,9 @@
 package com.vayro.app.ui.coordinators
 
+import com.vayro.app.data.AppPreferences
 import com.vayro.app.factory.blueprint.AppFactoryBlueprintEngine
 import com.vayro.app.factory.build.AppBuildOrchestrator
+import com.vayro.app.factory.build.GitHubCiBuildRunner
 import com.vayro.app.factory.build.PlayStorePreparationEngine
 import com.vayro.app.factory.build.SigningAndVersionManager
 import com.vayro.app.factory.generators.AndroidComposeGenerator
@@ -14,10 +16,16 @@ import com.vayro.app.factory.model.AppBlueprint
 import com.vayro.app.factory.model.AppFramework
 import com.vayro.app.factory.model.BuildArtifactType
 import com.vayro.app.factory.model.BuildMode
+import com.vayro.app.factory.model.BuildResult
 import com.vayro.app.factory.model.VersionBumpType
 import com.vayro.app.model.Project
+import com.vayro.app.network.GitHubClient
+import com.vayro.app.runtime.RuntimeInstaller
+import com.vayro.app.ui.GitHubAuthStatus
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * App Factory domain coordinator (Milestone 1).
@@ -35,6 +43,10 @@ class AppFactoryCoordinator(
     private val host: CoordinatorHost,
     private val workspaceRootFor: (Project) -> File,
     private val refreshProjectFiles: () -> Unit,
+    private val installer: RuntimeInstaller,
+    private val gitHubClient: GitHubClient,
+    private val preferences: AppPreferences,
+    private val gitHubTokenProvider: () -> String,
 ) {
     fun generateAppFactoryBlueprint(
         prompt: String,
@@ -133,12 +145,16 @@ class AppFactoryCoordinator(
                 )
             }
             try {
-                val result = AppBuildOrchestrator.runBuild(
-                    projectDir = projectDir,
-                    blueprint = bp,
-                    artifactType = artifactType,
-                    buildMode = buildMode
-                )
+                val result = if (buildMode == BuildMode.GITHUB_ACTIONS) {
+                    runGitHubCiBuild(bp, artifactType, projectDir)
+                } else {
+                    AppBuildOrchestrator.runBuild(
+                        projectDir = projectDir,
+                        blueprint = bp,
+                        artifactType = artifactType,
+                        buildMode = buildMode
+                    )
+                }
                 host.updateState {
                     it.copy(
                         appFactoryBuilding = false,
@@ -156,6 +172,49 @@ class AppFactoryCoordinator(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * One-tap GitHub CI build: verifies the GitHub connection, then runs the
+     * full push → Actions run → artifact download pipeline in
+     * [GitHubCiBuildRunner]. Without a connected GitHub account the build
+     * stops immediately with one clear instruction.
+     */
+    private suspend fun runGitHubCiBuild(
+        bp: AppBlueprint,
+        artifactType: BuildArtifactType,
+        projectDir: File,
+    ): BuildResult {
+        val login = host.state().githubLogin?.takeIf(String::isNotBlank) ?: preferences.githubLogin
+        val connected = host.state().githubAuthStatus == GitHubAuthStatus.CONNECTED && login.isNotBlank()
+        val token = if (connected) withContext(Dispatchers.IO) { gitHubTokenProvider() } else ""
+        if (!connected || token.isBlank()) {
+            val message = "GitHub is not connected. Connect GitHub first (Home → GitHub → Connect GitHub), then tap Build with GitHub CI again."
+            return BuildResult(
+                success = false,
+                artifactType = artifactType,
+                buildMode = BuildMode.GITHUB_ACTIONS,
+                logs = listOf("Starting build: ${artifactType.displayName} via GitHub Actions CI...", "ERROR: $message"),
+                errorMessage = message,
+            )
+        }
+        val runner = GitHubCiBuildRunner(
+            installer = installer,
+            gitHubClient = gitHubClient,
+            cacheDir = host.appContext.cacheDir,
+        )
+        return withContext(Dispatchers.IO) {
+            runner.build(
+                projectDir = projectDir,
+                blueprint = bp,
+                artifactType = artifactType,
+                login = login,
+                token = token,
+                onLog = { line ->
+                    host.updateState { it.copy(appFactoryLogs = it.appFactoryLogs + line) }
+                },
+            )
         }
     }
 

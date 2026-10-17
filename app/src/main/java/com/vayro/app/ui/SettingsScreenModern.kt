@@ -199,6 +199,7 @@ fun SettingsScreen(
     onClearDebugUpdateManifestUrl: () -> Unit = {},
     onToggleAutoUpdateToolsAndSkills: (Boolean) -> Unit = {},
     onUpdateAllToolsAndSkills: () -> Unit = {},
+    onToggleFreeMode: (Boolean) -> Unit = {},
     onOpenPrivacyPolicy: () -> Unit = {},
     authViewModel: AuthViewModel? = null,
     onNavigateToAuth: () -> Unit = {},
@@ -449,6 +450,36 @@ fun SettingsScreen(
                                 LinearProgressIndicator(
                                     modifier = Modifier.fillMaxWidth().height(4.dp),
                                     color = PocketOrange,
+                                )
+                            }
+                        }
+                    }
+
+                    // Free Mode Card: narrows every agent/provider picker to free options.
+                    Surface(
+                        shape = RoundedCornerShape(13.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                                    Text("Free Mode", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                    Text(
+                                        "Show only free agents and free-tier API providers. Paid options stay hidden while Free Mode is on.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = state.freeModeEnabled,
+                                    onCheckedChange = onToggleFreeMode,
                                 )
                             }
                         }

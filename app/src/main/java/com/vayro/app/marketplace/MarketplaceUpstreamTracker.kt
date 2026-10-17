@@ -11,9 +11,17 @@ val CURATED_PRESEED_IDS: Set<String> = setOf(
     "catalog-skill-desigma",
     "catalog-skill-flick",
     "catalog-skill-app-store-screenshots",
+    "catalog-skill-ux-ui-agent-skills",
+    "catalog-skill-gsap-skills",
+    "catalog-skill-typography-system",
+    "catalog-skill-awesome-gamedev-agent-skills",
+    "catalog-skill-game-ui-mobile-friendly-design",
 )
 
-const val CURATED_SEED_VERSION = 1
+// v2 (v3.2.24): the design & game skill pack was added to CURATED_PRESEED_IDS;
+// the bump makes already-seeded installs pick up the new ids (pendingSeedIds
+// still skips anything already installed).
+const val CURATED_SEED_VERSION = 2
 
 fun parseGitHubRepo(installUrl: String): Pair<String, String>? {
     val trimmed = installUrl.trim().removeSuffix("/").removeSuffix(".git")

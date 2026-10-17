@@ -317,6 +317,7 @@ data class AppUiState(
     val selectedDevStacks: Set<DevStack> = emptySet(),
     val installedDevStacks: Set<DevStack> = emptySet(),
     val autoUpdateToolsAndSkills: Boolean = true,
+    val freeModeEnabled: Boolean = false,
     val autoUpdatingToolsOrSkills: Boolean = false,
     val toolsAutoUpdateMessage: String? = null,
     val devStackInstalling: DevStack? = null,
@@ -748,6 +749,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             githubLogin = preferences.githubLogin.takeIf(String::isNotBlank),
             skills = skillManager.installed(),
             autoUpdateToolsAndSkills = preferences.autoUpdateToolsAndSkills,
+            freeModeEnabled = preferences.freeModeEnabled,
             selectedDevStacks = preferences.selectedDevStacks.mapNotNull { name ->
                 runCatching { DevStack.valueOf(name) }.getOrNull()
             }.toSet() + DevStack.WEB,
@@ -1027,6 +1029,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             host = coordinatorHost,
             workspaceRootFor = { project -> projectWorkspaceRoot(project) },
             refreshProjectFiles = { refreshProjectFiles() },
+            installer = installer,
+            gitHubClient = gitHubClient,
+            preferences = preferences,
+            gitHubTokenProvider = { resolveGitHubToken() },
         )
     private val gitCoordinator =
         com.vayro.app.ui.coordinators.GitCoordinator(
@@ -2836,39 +2842,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val root = projectWorkspaceRoot(project)
-                    val rootPath = root.canonicalFile.toPath()
                     val output = getApplication<Application>().contentResolver.openOutputStream(uri)
                         ?: error("The selected location could not be opened")
-                    output.buffered().use { stream ->
-                        ZipOutputStream(stream).use { zip ->
-                            zip.putNextEntry(ZipEntry("${project.slug}/"))
-                            zip.closeEntry()
-                            root.walkTopDown()
-                                .onEnter { directory ->
-                                    if (directory == root) {
-                                        true
-                                    } else {
-                                        val relative = directory.relativeTo(root).invariantSeparatorsPath
-                                        !isExportExcludedPath(relative) &&
-                                            !Files.isSymbolicLink(directory.toPath()) &&
-                                            runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
-                                    }
-                                }
-                                .drop(1)
-                                .filter { file ->
-                                    !Files.isSymbolicLink(file.toPath()) &&
-                                        runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false) &&
-                                        !isExportExcludedPath(file.relativeTo(root).invariantSeparatorsPath)
-                                }
-                                .forEach { file ->
-                                    val relative = file.relativeTo(root).invariantSeparatorsPath
-                                    val entryName = "${project.slug}/$relative" + if (file.isDirectory) "/" else ""
-                                    zip.putNextEntry(ZipEntry(entryName).apply { time = file.lastModified() })
-                                    if (file.isFile) file.inputStream().buffered().use { it.copyTo(zip) }
-                                    zip.closeEntry()
-                                }
-                        }
-                    }
+                    output.buffered().use { stream -> writeProjectZip(project, root, stream) }
                 }
             }
             _state.update {
@@ -2878,6 +2854,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         onFailure = { error -> "Export failed: ${error.message ?: "Unknown error"}" },
                     ),
                 )
+            }
+        }
+    }
+
+    /** Writes [project]'s workspace tree as a ZIP (rooted at the project slug) to [stream]. */
+    private fun writeProjectZip(project: Project, root: File, stream: java.io.OutputStream) {
+        val rootPath = root.canonicalFile.toPath()
+        ZipOutputStream(stream).use { zip ->
+            zip.putNextEntry(ZipEntry("${project.slug}/"))
+            zip.closeEntry()
+            root.walkTopDown()
+                .onEnter { directory ->
+                    if (directory == root) {
+                        true
+                    } else {
+                        val relative = directory.relativeTo(root).invariantSeparatorsPath
+                        !isExportExcludedPath(relative) &&
+                            !Files.isSymbolicLink(directory.toPath()) &&
+                            runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
+                    }
+                }
+                .drop(1)
+                .filter { file ->
+                    !Files.isSymbolicLink(file.toPath()) &&
+                        runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false) &&
+                        !isExportExcludedPath(file.relativeTo(root).invariantSeparatorsPath)
+                }
+                .forEach { file ->
+                    val relative = file.relativeTo(root).invariantSeparatorsPath
+                    val entryName = "${project.slug}/$relative" + if (file.isDirectory) "/" else ""
+                    zip.putNextEntry(ZipEntry(entryName).apply { time = file.lastModified() })
+                    if (file.isFile) file.inputStream().buffered().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+        }
+    }
+
+    /**
+     * Zips the active project into the app cache and opens the Android share
+     * sheet for the archive (FileProvider authority `${applicationId}.files`,
+     * cache path configured in res/xml/file_paths.xml).
+     */
+    fun shareActiveProject() {
+        val current = _state.value
+        val project = current.activeProject ?: return
+        if (current.isRunning || current.projectTerminalRunning) {
+            _state.update { it.copy(toastMessage = "Stop the running task before sharing") }
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val app = getApplication<Application>()
+                    val root = projectWorkspaceRoot(project)
+                    val shareDir = File(app.cacheDir, "shared").apply { mkdirs() }
+                    val zipFile = File(shareDir, "${project.slug}.zip")
+                    zipFile.outputStream().buffered().use { stream -> writeProjectZip(project, root, stream) }
+                    val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", zipFile)
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_SUBJECT, "${project.name} (project ZIP)")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    val chooser = Intent.createChooser(send, "Share project (ZIP)").apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    app.startActivity(chooser)
+                }
+            }
+            result.onFailure { error ->
+                _state.update { it.copy(toastMessage = "Share failed: ${error.message ?: "Unknown error"}") }
             }
         }
     }
@@ -5121,6 +5169,12 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
 
     fun toggleAutoUpdateToolsAndSkills(enabled: Boolean) =
         skillsCoordinator.toggleAutoUpdateToolsAndSkills(enabled)
+
+    /** Free Mode: persists the choice and narrows agent/provider pickers to free options. */
+    fun setFreeModeEnabled(enabled: Boolean) {
+        preferences.freeModeEnabled = enabled
+        _state.update { it.copy(freeModeEnabled = enabled) }
+    }
 
     fun autoUpdateToolsAndSkills(force: Boolean = false) =
         skillsCoordinator.autoUpdateToolsAndSkills(force)

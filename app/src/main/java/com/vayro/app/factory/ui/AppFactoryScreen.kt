@@ -610,7 +610,7 @@ private fun BuildAutomationTab(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (selectedMode == BuildMode.ON_DEVICE) "Compile ${selectedArtifact.displayName}" else "Generate GitHub Actions CI")
+                    Text(if (selectedMode == BuildMode.ON_DEVICE) "Compile ${selectedArtifact.displayName}" else "Build with GitHub CI")
                 }
             }
         }
@@ -665,7 +665,7 @@ private fun BuildAutomationTab(
                         if (buildResult.ciWorkflowFile != null) {
                             Spacer(Modifier.height(8.dp))
                             Text("Generated Workflow: ${buildResult.ciWorkflowFile.name}", fontWeight = FontWeight.Medium, fontSize = 12.5.sp)
-                            Text("Push repo to trigger cloud build on GitHub Actions.", fontSize = 11.sp)
+                            Text("Cloud builds run on GitHub Actions.", fontSize = 11.sp)
                         }
                     }
                 }

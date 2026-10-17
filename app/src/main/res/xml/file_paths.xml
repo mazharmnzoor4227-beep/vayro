@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="shared_install" path="shared/install/" />
     <files-path name="shared_open" path="shared/open/" />
+    <cache-path name="shared_cache" path="shared/" />
 </paths>

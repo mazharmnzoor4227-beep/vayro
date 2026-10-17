@@ -94,6 +94,122 @@ open class GitHubClient {
         return GitHubAccount(json.getString("login"), json.optString("avatar_url"))
     }
 
+    /** Returns the repository, or null when GitHub reports it does not exist (404). */
+    open fun getRepository(token: String, repoFullName: String): GitHubRepository? {
+        return try {
+            val item = getJson("https://api.github.com/repos/$repoFullName", token) as JSONObject
+            val owner = item.optJSONObject("owner")
+            GitHubRepository(
+                fullName = item.getString("full_name"),
+                cloneUrl = item.getString("clone_url"),
+                private = item.optBoolean("private"),
+                defaultBranch = item.optString("default_branch", "main"),
+                description = item.optString("description"),
+                updatedAt = item.optString("updated_at"),
+                ownerLogin = owner?.optString("login").orEmpty(),
+                ownerType = owner?.optString("type").orEmpty(),
+            )
+        } catch (e: IllegalStateException) {
+            if (e.message?.contains("Not Found") == true) null else throw e
+        }
+    }
+
+    /** Creates a repository under the authenticated user's account. */
+    open fun createRepository(
+        token: String,
+        name: String,
+        description: String = "",
+        private: Boolean = true,
+    ): GitHubRepository {
+        val payload = JSONObject().apply {
+            put("name", name)
+            put("description", description)
+            put("private", private)
+            put("auto_init", false)
+        }
+        val item = postJson("https://api.github.com/user/repos", token, payload) as JSONObject
+        val owner = item.optJSONObject("owner")
+        return GitHubRepository(
+            fullName = item.getString("full_name"),
+            cloneUrl = item.getString("clone_url"),
+            private = item.optBoolean("private", private),
+            defaultBranch = item.optString("default_branch", "main"),
+            description = item.optString("description", description),
+            updatedAt = item.optString("updated_at"),
+            ownerLogin = owner?.optString("login").orEmpty(),
+            ownerType = owner?.optString("type").orEmpty(),
+        )
+    }
+
+    /** Artifacts uploaded by one workflow run (the App Factory CI build's APK/AAB zip). */
+    open fun listRunArtifacts(token: String, repoFullName: String, runId: Long): List<GitHubArtifact> {
+        val json = getJson(
+            "https://api.github.com/repos/$repoFullName/actions/runs/$runId/artifacts?per_page=100",
+            token,
+        ) as? JSONObject ?: return emptyList()
+        return parseRunArtifacts(json)
+    }
+
+    /**
+     * Downloads an artifact's zip archive to [destination]. The API answers
+     * with a redirect to short-lived signed storage; the redirect is followed
+     * manually so the Authorization header is never sent to the storage host.
+     */
+    open fun downloadArtifactZip(token: String, repoFullName: String, artifactId: Long, destination: java.io.File) {
+        val endpoint = "https://api.github.com/repos/$repoFullName/actions/artifacts/$artifactId/zip"
+        val first = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 120_000
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/vnd.github+json")
+            if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
+            setRequestProperty("User-Agent", "Kodex-Android")
+        }
+        val status = first.responseCode
+        if (status in 200..299) {
+            // No redirect: stream straight from this authorized connection.
+            try {
+                destination.parentFile?.mkdirs()
+                first.inputStream.use { input ->
+                    destination.outputStream().buffered().use { output -> input.copyTo(output, bufferSize = 64 * 1024) }
+                }
+            } finally {
+                first.disconnect()
+            }
+            return
+        }
+        val downloadUrl = when {
+            status in 300..399 -> first.getHeaderField("Location")?.takeIf(String::isNotBlank)
+                ?: error("GitHub artifact download redirect had no location (HTTP $status)")
+            else -> {
+                val errorBody = first.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                error(githubErrorMessage(status, errorBody))
+            }
+        }
+        first.disconnect()
+        val connection = (URL(downloadUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 300_000
+            setRequestProperty("User-Agent", "Kodex-Android")
+        }
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                error(githubErrorMessage(code, errorBody))
+            }
+            destination.parentFile?.mkdirs()
+            connection.inputStream.use { input ->
+                destination.outputStream().buffered().use { output -> input.copyTo(output, bufferSize = 64 * 1024) }
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     fun repositories(token: String): List<GitHubRepository> {
         val result = LinkedHashMap<String, GitHubRepository>()
         var page = 1
@@ -832,4 +948,33 @@ open class GitHubClient {
 internal fun githubErrorMessage(status: Int, errorBody: String): String {
     val message = runCatching { JSONObject(errorBody).optString("message") }.getOrNull()
     return message?.takeIf(String::isNotBlank) ?: "GitHub returned HTTP $status"
+}
+
+/** Parses the `artifacts` wrapper object of the run-artifacts list endpoint. Extracted for unit tests. */
+internal fun parseRunArtifacts(json: JSONObject): List<GitHubArtifact> {
+    val array = json.optJSONArray("artifacts") ?: return emptyList()
+    return (0 until array.length()).map { i ->
+        val item = array.getJSONObject(i)
+        GitHubArtifact(
+            id = item.getLong("id"),
+            name = item.optString("name", ""),
+            sizeBytes = item.optLong("size_in_bytes", 0L),
+            archiveDownloadUrl = item.optString("archive_download_url", ""),
+            expired = item.optBoolean("expired", false),
+        )
+    }
+}
+
+/**
+ * Picks the artifact that should contain the built [extension] file ("apk"/"aab")
+ * from a CI run: non-expired first, preferring names that mention the extension.
+ * Extracted for unit tests.
+ */
+internal fun selectBuildArtifact(artifacts: List<GitHubArtifact>, extension: String): GitHubArtifact? {
+    val live = artifacts.filter { !it.expired }
+    if (live.isEmpty()) return null
+    val ext = extension.lowercase()
+    return live.firstOrNull { it.name.lowercase().endsWith("-$ext") }
+        ?: live.firstOrNull { it.name.lowercase().contains(ext) }
+        ?: live.first()
 }

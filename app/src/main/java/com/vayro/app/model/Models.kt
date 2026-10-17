@@ -145,6 +145,30 @@ fun providerProtocolForAgent(profile: ProviderProfile, agent: AgentKind): Provid
     }
 }
 
+/**
+ * Free Mode allowlists. There is no per-item cost metadata in the catalog, so
+ * these are conservative, explicit sets derived from the catalog itself:
+ * agents whose standard route needs no paid subscription or paid API key, and
+ * gateway providers with genuine free tiers / free models (NVIDIA NIM's own
+ * catalog subtitle advertises its free tier; OpenCode Zen and OpenRouter both
+ * serve free models). Everything else stays hidden while Free Mode is on.
+ */
+val FREE_MODE_AGENTS: Set<AgentKind> = setOf(
+    AgentKind.ANTIGRAVITY,
+    AgentKind.CLAUDE_CODE,
+    AgentKind.DEEPSEEK_HARNESS,
+)
+
+val FREE_MODE_PROVIDERS: Set<ProviderKind> = setOf(
+    ProviderKind.LLM_ROUTER,
+    ProviderKind.OPENCODE_ZEN,
+    ProviderKind.NVIDIA_NIM,
+)
+
+/** Agent choices for pickers, narrowed to [FREE_MODE_AGENTS] when Free Mode is on. */
+fun agentsForPicker(freeModeOnly: Boolean): List<AgentKind> =
+    AgentKind.entries.filter { !freeModeOnly || it in FREE_MODE_AGENTS }
+
 /** Provider choices shown for the selected coding agent. */
 fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
     AgentKind.DEEPSEEK_HARNESS -> ProviderKind.entries.filter { it in DEEPSEEK_HARNESS_PROVIDERS }
@@ -156,6 +180,10 @@ fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
     // Custom agent is pure bring-your-own-API: OpenAI-compatible and Claude-compatible endpoints only.
     AgentKind.CUSTOM -> listOf(ProviderKind.CUSTOM, ProviderKind.ANTHROPIC, ProviderKind.LLM_ROUTER)
 }
+
+/** [providersForAgent] narrowed to [FREE_MODE_PROVIDERS] when Free Mode is on. */
+fun providersForAgent(agent: AgentKind, freeModeOnly: Boolean): List<ProviderKind> =
+    providersForAgent(agent).filter { !freeModeOnly || it in FREE_MODE_PROVIDERS }
 
 data class ProviderProfile(
     val kind: ProviderKind,

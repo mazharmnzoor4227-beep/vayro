@@ -92,6 +92,11 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("github_login", "") ?: ""
         set(value) { preferences.edit().putString("github_login", value).commit() }
 
+    /** Free Mode: when on, agent and API-provider pickers show only free options. */
+    var freeModeEnabled: Boolean
+        get() = preferences.getBoolean("free_mode_enabled", false)
+        set(value) { preferences.edit().putBoolean("free_mode_enabled", value).commit() }
+
     fun saveAgentConversation(agent: AgentKind, projectId: String, chatId: String, conversationId: String?) {
         val key = agentConversationKey(agent, projectId, chatId)
         preferences.edit().apply {

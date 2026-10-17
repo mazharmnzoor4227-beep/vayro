@@ -105,6 +105,15 @@ data class CombinedStatus(
     val commitSha: String,
 )
 
+/** A downloadable artifact uploaded by a workflow run (e.g. the built APK zip). */
+data class GitHubArtifact(
+    val id: Long,
+    val name: String,
+    val sizeBytes: Long,
+    val archiveDownloadUrl: String,
+    val expired: Boolean,
+)
+
 data class GitHubWorkflowJob(
     val id: Long,
     val name: String,

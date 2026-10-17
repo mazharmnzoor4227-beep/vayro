@@ -112,6 +112,7 @@ import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
@@ -261,6 +262,7 @@ import com.vayro.app.model.ProjectChat
 import com.vayro.app.model.ProviderKind
 import com.vayro.app.model.ProviderProfile
 import com.vayro.app.model.inferredDshApiForUrl
+import com.vayro.app.model.agentsForPicker
 import com.vayro.app.model.providersForAgent
 import com.vayro.app.model.ToolRequest
 import com.vayro.app.model.WorkspaceEntry
@@ -526,6 +528,7 @@ fun PocketDevApp(
             onSelectAgent = viewModel::chooseOnboardingAgent,
             onToggleTheme = viewModel::toggleTheme,
             themeMode = state.themeMode,
+            freeModeEnabled = state.freeModeEnabled,
         )
         state.startupStage == StartupStage.READY && !state.backgroundSetupComplete ->
             BackgroundTaskSetupScreen(
@@ -574,6 +577,7 @@ fun PocketDevApp(
             onTerminalCancel = viewModel::cancelProjectTerminalCommand,
             onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
             onExportProject = viewModel::exportActiveProject,
+            onShareProject = viewModel::shareActiveProject,
             onAddAttachments = viewModel::addChatAttachments,
             onRemoveAttachment = viewModel::removePendingAttachment,
             onOpenAttachment = viewModel::openChatAttachment,
@@ -657,6 +661,7 @@ private fun AntigravityOnboardingScreen(
                 onSelectAgent(agent)
             },
             onDismiss = { showAgentPicker = false },
+            freeModeEnabled = state.freeModeEnabled,
         )
     }
     Scaffold(
@@ -1712,7 +1717,9 @@ private fun AgentSwitchSheet(
     selected: AgentKind,
     onSelect: (AgentKind) -> Unit,
     onDismiss: () -> Unit,
+    freeModeEnabled: Boolean = false,
 ) {
+    val pickerAgents = remember(freeModeEnabled) { agentsForPicker(freeModeEnabled) }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -1738,13 +1745,13 @@ private fun AgentSwitchSheet(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Column {
-                    AgentKind.entries.forEachIndexed { index, agent ->
+                    pickerAgents.forEachIndexed { index, agent ->
                         AgentChoiceRow(
                             agent = agent,
                             selected = agent == selected,
                             onClick = { onSelect(agent) },
                         )
-                        if (index != AgentKind.entries.lastIndex) {
+                        if (index != pickerAgents.lastIndex) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = 62.dp),
                                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
@@ -2600,6 +2607,7 @@ private fun RootScreenHost(
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
                     onToggleAutoUpdateToolsAndSkills = viewModel::toggleAutoUpdateToolsAndSkills,
+                    onToggleFreeMode = viewModel::setFreeModeEnabled,
                     onUpdateAllToolsAndSkills = { viewModel.autoUpdateToolsAndSkills(force = true) },
                     onOpenPrivacyPolicy = { showPrivacyPolicy = true },
                     authViewModel = authViewModel,
@@ -2726,6 +2734,7 @@ private fun ProviderSetupScreen(
     onSelectAgent: (AgentKind) -> Unit,
     onToggleTheme: (() -> Unit)? = null,
     themeMode: AppThemeMode = AppThemeMode.DARK,
+    freeModeEnabled: Boolean = false,
 ) {
     val context = LocalContext.current
     var step by rememberSaveable { mutableIntStateOf(initialStep) }
@@ -2744,6 +2753,7 @@ private fun ProviderSetupScreen(
                 onSelectAgent(agent)
             },
             onDismiss = { showAgentPicker = false },
+            freeModeEnabled = freeModeEnabled,
         )
     }
 
@@ -2804,6 +2814,7 @@ private fun ProviderSetupScreen(
                     },
                     onContinue = { step = 2 },
                     onChangeAgent = { showAgentPicker = true },
+                    freeModeEnabled = freeModeEnabled,
                 )
                 else -> ProviderCredentialsStep(
                     provider = selected,
@@ -2941,8 +2952,9 @@ private fun ProviderChoiceStep(
     onSelected: (ProviderKind) -> Unit,
     onContinue: () -> Unit,
     onChangeAgent: () -> Unit,
+    freeModeEnabled: Boolean = false,
 ) {
-    val visibleProviders = remember(agentKind) { providersForAgent(agentKind) }
+    val visibleProviders = remember(agentKind, freeModeEnabled) { providersForAgent(agentKind, freeModeEnabled) }
     Column(Modifier.fillMaxHeight()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -4767,6 +4779,7 @@ private fun WorkspaceScreen(
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
     onExportProject: (Uri) -> Unit,
+    onShareProject: () -> Unit,
     onAddAttachments: (List<Uri>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
@@ -5330,6 +5343,7 @@ private fun WorkspaceScreen(
                     onExport = {
                         exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
                     },
+                    onShareProject = onShareProject,
                     onBindFolder = { bindFolderLauncher.launch(null) },
                     onSetProjectRootDirectory = onSetProjectRootDirectory,
                     onCreateFile = onCreateFile,
@@ -5659,6 +5673,7 @@ private fun FilesTab(
     onOpenFile: (WorkspaceEntry) -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
     onExport: () -> Unit,
+    onShareProject: () -> Unit = {},
     onBindFolder: () -> Unit = {},
     onSetProjectRootDirectory: (String) -> Unit = {},
     onCreateFile: (String) -> Unit = {},
@@ -5753,6 +5768,7 @@ private fun FilesTab(
                         IconButton(onClick = onBindFolder) { Icon(Icons.Default.Folder, "Bind folder from device") }
                         if (!loading && files.any { !it.isDirectory }) {
                             IconButton(onClick = onExport) { Icon(Icons.Default.Download, "Export project as ZIP") }
+                            IconButton(onClick = onShareProject) { Icon(Icons.Default.Share, "Share project (ZIP)") }
                         }
                         IconButton(onClick = { showGitDialog = true }) {
                             Icon(Icons.Default.Code, "Git operations")

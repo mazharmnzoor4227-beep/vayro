@@ -28,8 +28,12 @@ object AppBuildOrchestrator {
         logs += "Building ${blueprint.name} (${artifactType.displayName}) via ${buildMode.displayName}..."
 
         if (buildMode == BuildMode.GITHUB_ACTIONS) {
-            val msg = "GitHub Actions CI build is not wired yet — push the project to a repo " +
-                "with the Kodex CI workflow, or use On-Device build."
+            // The full CI pipeline (GitHub sign-in check, repository push,
+            // run polling, artifact download) needs app services, so it runs
+            // from AppFactoryCoordinator — this pure entry point only reports
+            // that honestly instead of pretending to build.
+            val msg = "GitHub Actions CI builds run from the App Factory Build step: " +
+                "choose GitHub CI there and Kodex pushes the project, runs the build on GitHub, and downloads the finished file."
             logs += "ERROR: $msg"
             return BuildResult(
                 success = false,

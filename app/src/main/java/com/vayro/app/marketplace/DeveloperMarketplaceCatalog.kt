@@ -107,6 +107,54 @@ object DeveloperMarketplaceCatalog {
             installUrl = "https://github.com/ParthJadhav/app-store-screenshots",
             tags = listOf("screenshots", "app-store", "ai", "marketing"),
         ),
+        // Design & game skill pack (added 2026-10-17, v3.2.24): every repo
+        // below was verified reachable and confirmed to contain real
+        // SKILL.md files before listing.
+        MarketplaceItem(
+            id = "catalog-skill-ux-ui-agent-skills",
+            name = "ux-ui-agent-skills",
+            category = MarketplaceCategory.SKILLS,
+            author = "plugin87",
+            description = "Professional UI/UX design skills for agents: design tokens, components, and accessibility.",
+            installUrl = "https://github.com/plugin87/ux-ui-agent-skills",
+            tags = listOf("design", "ui", "ux", "accessibility"),
+        ),
+        MarketplaceItem(
+            id = "catalog-skill-gsap-skills",
+            name = "gsap-skills",
+            category = MarketplaceCategory.SKILLS,
+            author = "greensock",
+            description = "Official GSAP animation skills: timelines, scroll triggers, and text animation for web apps.",
+            installUrl = "https://github.com/greensock/gsap-skills",
+            tags = listOf("animation", "gsap", "web", "motion"),
+        ),
+        MarketplaceItem(
+            id = "catalog-skill-typography-system",
+            name = "typography-system",
+            category = MarketplaceCategory.SKILLS,
+            author = "vamsibatchu1",
+            description = "Google Fonts pairings and type systems for clean, readable app typography.",
+            installUrl = "https://github.com/vamsibatchu1/typography-system",
+            tags = listOf("fonts", "typography", "design"),
+        ),
+        MarketplaceItem(
+            id = "catalog-skill-awesome-gamedev-agent-skills",
+            name = "awesome-gamedev-agent-skills",
+            category = MarketplaceCategory.SKILLS,
+            author = "gamedev-skills",
+            description = "74 game development skills for Godot, Unity, Unreal, Phaser and more, including game UI/UX.",
+            installUrl = "https://github.com/gamedev-skills/awesome-gamedev-agent-skills",
+            tags = listOf("games", "godot", "unity", "ui"),
+        ),
+        MarketplaceItem(
+            id = "catalog-skill-game-ui-mobile-friendly-design",
+            name = "game-ui-mobile-friendly-design",
+            category = MarketplaceCategory.SKILLS,
+            author = "dungnotnull",
+            description = "Mobile game UI/UX and touch interaction design skill for phone-friendly game interfaces.",
+            installUrl = "https://github.com/dungnotnull/game-ui-mobile-friendly-design-agent-skill",
+            tags = listOf("games", "mobile", "ui", "touch"),
+        ),
 
         // Templates
         MarketplaceItem(

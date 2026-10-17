@@ -249,13 +249,13 @@ fun AgentScreen(
     var antigravityCode by rememberSaveable { mutableStateOf("") }
     var viewedAgent by rememberSaveable { mutableStateOf(state.agentKind) }
 
-    val orderedAgents = remember(state.primaryAgentKind) {
+    val orderedAgents = remember(state.primaryAgentKind, state.freeModeEnabled) {
         val primary = state.primaryAgentKind
         buildList {
             add(AgentKind.CUSTOM)
             if (primary != AgentKind.CUSTOM) add(primary)
             AgentKind.entries.forEach { if (it != AgentKind.CUSTOM && it != primary) add(it) }
-        }
+        }.filter { !state.freeModeEnabled || it in com.vayro.app.model.FREE_MODE_AGENTS }
     }
     val viewedAgentInstalled = viewedAgent == AgentKind.CUSTOM ||
         viewedAgent == state.agentKind ||
@@ -2040,7 +2040,7 @@ private fun AgentProviderCard(
     onDiscover: () -> Unit,
     onValidate: () -> Unit,
 ) {
-    val visibleKinds = remember(state.agentKind) { providersForAgent(state.agentKind) }
+    val visibleKinds = remember(state.agentKind, state.freeModeEnabled) { providersForAgent(state.agentKind, state.freeModeEnabled) }
     var connectionExpanded by rememberSaveable(selectedKind) { mutableStateOf(false) }
     // Keep this state across provider changes so selecting Custom API can
     // immediately reveal its required setup instead of resetting on recomposition.
