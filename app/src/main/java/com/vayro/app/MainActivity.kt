@@ -35,7 +35,9 @@ class MainActivity : ComponentActivity() {
             setContent {
                 val state by vm.state.collectAsStateWithLifecycle()
                 PocketTheme(themeMode = state.themeMode, colorTheme = state.colorTheme) {
-                    PocketDevApp(vm)
+                    com.vayro.app.license.LicenseGate {
+                        PocketDevApp(vm)
+                    }
                 }
             }
             AppCrashLogger.log("MainActivity.onCreate completed successfully")

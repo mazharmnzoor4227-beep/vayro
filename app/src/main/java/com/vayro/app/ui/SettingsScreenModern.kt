@@ -1127,6 +1127,36 @@ fun SettingsScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        androidx.compose.material.icons.Icons.Default.VpnKey,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("License", fontWeight = FontWeight.Medium)
+                        val licStore = remember { com.vayro.app.license.LicenseStore(context) }
+                        val licText = when {
+                            licStore.token == null -> "Not activated on this phone"
+                            licStore.expiresAt > 0 -> "Active · until " +
+                                java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault())
+                                    .format(java.util.Date(licStore.expiresAt))
+                            else -> "Active · Lifetime · this phone is licensed"
+                        }
+                        Text(
+                            licText,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(18.dp))
             }
         }
