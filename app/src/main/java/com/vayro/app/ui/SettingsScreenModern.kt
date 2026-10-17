@@ -1010,6 +1010,11 @@ fun SettingsScreen(
                         CONTRIBUTORS.forEach { contributor ->
                             ContributorCard(contributor)
                         }
+                        Text(
+                            "Built on the open-source Conzyx (Mobile Harness) project, used under the MIT License. Full license text ships with the app.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -1712,13 +1717,14 @@ private data class ContributorInfo(
 
 private val CONTRIBUTORS = listOf(
     ContributorInfo(
-        name = "Conzyx \u2014 Upstream Project",
-        role = "Kodex is built on the open-source Conzyx (Mobile Harness) project, used under the MIT License. Full license text ships with the app.",
-        handle = "@sunmughan/Conzyx",
-        avatarUrl = "https://github.com/sunmughan.png?size=256",
-        initials = "CX",
+        name = "Kodex",
+        role = "Kodex is developed and maintained by its owner. Get the latest builds, report issues and follow new work on GitHub \u2014 and connect on Instagram.",
+        handle = "@mazharmnzoor4227-beep",
+        avatarUrl = "https://github.com/mazharmnzoor4227-beep.png?size=256",
+        initials = "KX",
         links = listOf(
-            ContributorLink("GitHub", "https://github.com/sunmughan/Conzyx"),
+            ContributorLink("GitHub", "https://github.com/mazharmnzoor4227-beep/vayro"),
+            ContributorLink("Instagram", "https://www.instagram.com/mazhar_ansari34"),
         ),
     ),
 )
