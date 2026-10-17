@@ -28,6 +28,7 @@ class MainActivity : ComponentActivity() {
 
             val vm = ViewModelProvider(this)[MainViewModel::class.java]
             AppCrashLogger.log("MainActivity.onCreate: MainViewModel obtained")
+            com.vayro.app.diagnostics.Diagnostics.note("stage4-mainactivity-viewmodel-obtained")
 
             vm.handleNotificationRoute(notificationRoute)
             AppCrashLogger.log("MainActivity.onCreate: notification route handled")

@@ -45,6 +45,8 @@ class MobileHarnessApplication : Application() {
         // used to save the registration token here was removed — nothing
         // ever read it and no server ever received it. QA Medium.)
         AppCrashLogger.log("Application.onCreate completed")
+        com.vayro.app.diagnostics.Diagnostics.note("stage3-application-oncreate-completed")
+        com.vayro.app.diagnostics.Diagnostics.installCrashCapture()
         // Keep-alive: when the app goes to the background, start a lightweight
         // foreground service so aggressive OEM task killers do not freeze the
         // process. When the app returns to the foreground the service stops,
