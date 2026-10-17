@@ -2277,6 +2277,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         openProject(project)
     }
+    /**
+     * Opens a link from an agent chat message in the workspace Browser tab.
+     * Setting preview state is enough: the workspace watches it and switches
+     * to the Preview tab on its own.
+     */
+    fun openPreviewUrl(url: String) {
+        val target = url.trim()
+        if (target.isBlank()) return
+        _state.update { it.copy(previewReady = true, previewUrl = target) }
+    }
+
     fun consumeToast() = _state.update { it.copy(toastMessage = null) }
     fun showToast(message: String) = _state.update { it.copy(toastMessage = message) }
 

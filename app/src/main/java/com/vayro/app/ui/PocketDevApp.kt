@@ -2,10 +2,8 @@ package com.vayro.app.ui
 
 import android.Manifest
 import android.app.ActivityManager
-import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.Context
-import android.speech.RecognizerIntent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
@@ -242,6 +240,7 @@ import com.vayro.app.auth.ui.EmailVerificationDialog
 import com.vayro.app.model.ActivityItem
 import com.vayro.app.model.AgentKind
 import com.vayro.app.model.ChangeItem
+import com.vayro.app.chat.ChatLinkExtractor
 import com.vayro.app.model.ChatMessage
 import com.vayro.app.model.ChatAttachment
 import com.vayro.app.model.ExecutionMode
@@ -278,6 +277,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -288,6 +288,8 @@ import com.vayro.app.network.GitHubRepository
 import com.vayro.app.ui.theme.PocketBlue
 import com.vayro.app.ui.theme.PocketGreen
 import com.vayro.app.ui.theme.PocketOrange
+import com.vayro.app.ui.voice.VoiceInputBar
+import com.vayro.app.ui.voice.VoiceRecognizer
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -5319,6 +5321,7 @@ private fun WorkspaceScreen(
                         onTerminalOpened()
                         onTerminalPrepare(command)
                     },
+                    onOpenLink = viewModel?.let { vm -> { url: String -> vm.openPreviewUrl(url) } },
                     executionMode = state.executionMode,
                     onSelectExecutionMode = onSelectExecutionMode,
                     scratchpadItems = state.scratchpadItems,
@@ -6075,6 +6078,7 @@ private fun ChatTab(
     onOpenAttachment: (ChatAttachment) -> Unit,
     onSaveAttachment: (ChatAttachment) -> Unit = {},
     onRunInTerminal: (String) -> Unit,
+    onOpenLink: ((String) -> Unit)? = null,
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
@@ -6160,31 +6164,30 @@ private fun ChatTab(
 
     val context = LocalContext.current
 
-    val speechRecognizerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val spokenText = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-            if (!spokenText.isNullOrBlank()) {
-                prompt = if (prompt.isBlank()) spokenText else "$prompt $spokenText"
-                updateMentionQuery(prompt)
-            }
+    // Inline voice input: SpeechRecognizer runs in-app (see ui/voice), so the
+    // mic never opens the system speech dialog. The composer swaps to
+    // VoiceInputBar while a session is active.
+    val voiceRecognizer = remember { VoiceRecognizer(context) }
+    var voiceInputActive by remember { mutableStateOf(false) }
+    DisposableEffect(voiceRecognizer) {
+        onDispose { voiceRecognizer.release() }
+    }
+
+    fun beginVoiceSession() {
+        if (!voiceRecognizer.isAvailable()) {
+            Toast.makeText(context, "Voice recognition not supported on this device", Toast.LENGTH_SHORT).show()
+            return
         }
+        toolsOpen = false
+        voiceInputActive = true
+        voiceRecognizer.start()
     }
 
     val recordAudioLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { isGranted ->
         if (isGranted) {
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Kodex…")
-            }
-            try {
-                speechRecognizerLauncher.launch(intent)
-            } catch (e: ActivityNotFoundException) {
-                Toast.makeText(context, "Voice recognition not supported on this device", Toast.LENGTH_SHORT).show()
-            }
+            beginVoiceSession()
         } else {
             Toast.makeText(context, "Microphone permission is required for voice input", Toast.LENGTH_SHORT).show()
         }
@@ -6196,16 +6199,14 @@ private fun ChatTab(
         ) {
             recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
         } else {
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak to Kodex…")
-            }
-            try {
-                speechRecognizerLauncher.launch(intent)
-            } catch (e: ActivityNotFoundException) {
-                Toast.makeText(context, "Voice recognition not supported on this device", Toast.LENGTH_SHORT).show()
-            }
+            beginVoiceSession()
         }
+    }
+
+    fun appendSpokenText(spoken: String) {
+        if (spoken.isBlank()) return
+        prompt = if (prompt.isBlank()) spoken else "$prompt $spoken"
+        updateMentionQuery(prompt)
     }
     Column(Modifier.fillMaxSize().imePadding()) {
         AnimatedVisibility(
@@ -6330,6 +6331,7 @@ private fun ChatTab(
                             onRunInTerminal = onRunInTerminal,
                             onOpenAttachment = onOpenAttachment,
                             onSaveAttachment = onSaveAttachment,
+                            onOpenLink = onOpenLink,
                             onAddRoadmapComment = { stepId ->
                                 val stepTitle = message.roadmap?.steps?.firstOrNull { it.id == stepId }?.title ?: ""
                                 message.roadmap?.let { r ->
@@ -6574,7 +6576,30 @@ private fun ChatTab(
                     }
                 }
 
-                Surface(
+                if (voiceInputActive) {
+                    VoiceInputBar(
+                        recognizer = voiceRecognizer,
+                        onCancel = { voiceInputActive = false },
+                        onStop = { spoken ->
+                            appendSpokenText(spoken)
+                            voiceInputActive = false
+                        },
+                        onSend = { spoken ->
+                            val merged = listOf(prompt, spoken).filter { it.isNotBlank() }.joinToString(" ").trim()
+                            voiceInputActive = false
+                            if (merged.isNotBlank()) {
+                                onSend(merged)
+                                prompt = ""
+                                mentionQuery = null
+                            }
+                        },
+                        onError = { message ->
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            voiceInputActive = false
+                        },
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                } else Surface(
                     shape = RoundedCornerShape(26.dp),
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
@@ -7067,14 +7092,19 @@ private fun MessageBubble(
     onRunInTerminal: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onSaveAttachment: (ChatAttachment) -> Unit = {},
+    onOpenLink: ((String) -> Unit)? = null,
     onAddRoadmapComment: (stepId: String?) -> Unit = {},
     onApproveAndBuildRoadmap: () -> Unit = {},
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
+    // Links in agent replies get Copy/Open cards under the bubble (max 3).
+    val messageLinks = remember(message.id, message.text, message.fromUser) {
+        if (message.fromUser) emptyList() else ChatLinkExtractor.extract(message.text).take(3)
+    }
 
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.fromUser) Alignment.End else Alignment.Start) {
         Surface(
             color = if (message.fromUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(18.dp),
@@ -7172,6 +7202,80 @@ private fun MessageBubble(
                         modifier = Modifier.padding(start = 14.dp, top = 6.dp),
                     )
                 }
+            }
+        }
+        if (!isStreaming && messageLinks.isNotEmpty()) {
+            Column(
+                Modifier
+                    .fillMaxWidth(if (message.fromUser) .82f else .92f)
+                    .padding(top = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                messageLinks.forEach { url ->
+                    ChatLinkCard(url = url, onOpenLink = onOpenLink)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatLinkCard(
+    url: String,
+    onOpenLink: ((String) -> Unit)?,
+) {
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Link,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = PocketOrange,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = ChatLinkExtractor.ellipsizeMiddle(url, 44),
+                fontSize = 12.sp,
+                maxLines = 1,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = {
+                    clipboardManager.setText(AnnotatedString(url))
+                    Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                },
+            ) {
+                Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Copy", fontSize = 12.sp)
+            }
+            TextButton(
+                onClick = {
+                    if (onOpenLink != null) {
+                        onOpenLink(url)
+                    } else {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }.onFailure {
+                            Toast.makeText(context, "No app can open this link", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+            ) {
+                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Open", fontSize = 12.sp)
             }
         }
     }
