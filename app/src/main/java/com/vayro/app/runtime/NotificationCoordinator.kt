@@ -11,7 +11,7 @@ import com.vayro.app.MainActivity
 import com.vayro.app.R
 
 /**
- * Single Android notification policy for Vayro.
+ * Single Android notification policy for Kodex.
  *
  * Runtime events originate locally from the Android/Linux execution stack, so
  * system notifications do not depend on Firebase or a network connection.
@@ -33,7 +33,7 @@ object NotificationCoordinator {
                 "Running coding tasks",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Shows progress while Vayro is working in the background"
+                description = "Shows progress while Kodex is working in the background"
             },
         )
         manager.createNotificationChannel(
@@ -48,10 +48,10 @@ object NotificationCoordinator {
         manager.createNotificationChannel(
             NotificationChannel(
                 REMOTE_CHANNEL_ID,
-                "Vayro updates",
+                "Kodex updates",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = "Remote updates for Vayro projects and agent sessions"
+                description = "Remote updates for Kodex projects and agent sessions"
             },
         )
     }

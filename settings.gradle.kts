@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Vayro"
+rootProject.name = "Kodex"
 include(":app")

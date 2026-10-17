@@ -4,7 +4,7 @@ import com.vayro.app.core.result.OperationResult
 import java.io.File
 
 /**
- * Declared resource limits for the Vayro on-device environment
+ * Declared resource limits for the Kodex on-device environment
  * (Milestone 1: profiling/limits for low RAM, storage, and large projects).
  *
  * These budgets protect the app from exhausting a low-end device: operations

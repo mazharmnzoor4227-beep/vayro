@@ -2,7 +2,7 @@
 
 <img src="docs/conzyx-icon.png" alt="Conzyx logo" width="120"/>
 
-# Vayro
+# Kodex
 
 ### A desktop-class AI software engineering workstation for Android
 

@@ -31,7 +31,7 @@ object PlayStorePreparationEngine {
         val fullDescFile = File(listingDir, "full-description.txt").apply {
             writeText(
                 meta.fullDescription.ifBlank {
-                    "$appName\n\n${blueprint.description}\n\nBuilt with Vayro App Factory."
+                    "$appName\n\n${blueprint.description}\n\nBuilt with Kodex App Factory."
                 }.take(4000)
             )
         }

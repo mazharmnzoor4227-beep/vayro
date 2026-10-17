@@ -240,7 +240,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Text("Hello from Vayro Android App!")
+                Text("Hello from Kodex Android App!")
             }
         }
     }
@@ -255,7 +255,7 @@ class MainActivity : ComponentActivity() {
                     """{
   "name": "my-api",
   "version": "1.0.0",
-  "description": "Scaffolded with Vayro App Factory",
+  "description": "Scaffolded with Kodex App Factory",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -277,7 +277,7 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Hello from Vayro API!', timestamp: new Date() });
+  res.json({ message: 'Hello from Kodex API!', timestamp: new Date() });
 });
 
 app.listen(port, () => {
@@ -318,7 +318,7 @@ app.listen(port, () => {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vayro React App</title>
+    <title>Kodex React App</title>
   </head>
   <body>
     <div id="root"></div>
@@ -351,7 +351,7 @@ export default function App() {
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', padding: 32, textAlign: 'center' }}>
       <h1>⚡ React Web App</h1>
-      <p>Scaffolded on Android with Vayro App Factory.</p>
+      <p>Scaffolded on Android with Kodex App Factory.</p>
     </div>
   );
 }
@@ -364,7 +364,7 @@ export default function App() {
                     mainPy,
                     """from fastapi import FastAPI
 
-app = FastAPI(title="Vayro FastAPI")
+app = FastAPI(title="Kodex FastAPI")
 
 @app.get("/")
 def read_root():
@@ -389,7 +389,7 @@ pydantic>=2.7.0
                 SafeFileOps.atomicWriteText(
                     pubspec,
                     """name: mobile_harness_flutter
-description: A new Flutter project scaffolded by Vayro App Factory.
+description: A new Flutter project scaffolded by Kodex App Factory.
 version: 1.0.0+1
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -420,15 +420,15 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Vayro Flutter',
+      title: 'Kodex Flutter',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
       home: Scaffold(
-        appBar: AppBar(title: const Text('Vayro Flutter')),
+        appBar: AppBar(title: const Text('Kodex Flutter')),
         body: const Center(
-          child: Text('Scaffolded with Vayro App Factory!'),
+          child: Text('Scaffolded with Kodex App Factory!'),
         ),
       ),
     );
@@ -467,8 +467,8 @@ import { StyleSheet, Text, View } from 'react-native';
 export default function App() {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Vayro React Native</Text>
-      <Text>Scaffolded on Android with Vayro App Factory.</Text>
+      <Text style={styles.title}>Kodex React Native</Text>
+      <Text>Scaffolded on Android with Kodex App Factory.</Text>
       <StatusBar style="auto" />
     </View>
   );

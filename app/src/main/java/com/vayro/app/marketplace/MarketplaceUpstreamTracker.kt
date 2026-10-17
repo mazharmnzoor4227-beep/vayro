@@ -45,7 +45,7 @@ private fun githubApiGet(url: String): JSONObject? {
         connection = URL(url).openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000
         connection.readTimeout = 15_000
-        connection.setRequestProperty("User-Agent", "Vayro-Marketplace")
+        connection.setRequestProperty("User-Agent", "Kodex-Marketplace")
         connection.setRequestProperty("Accept", "application/vnd.github+json")
         connection.connect()
         if (connection.responseCode !in 200..299) return null

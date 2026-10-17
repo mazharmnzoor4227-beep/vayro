@@ -268,7 +268,7 @@ class GitHubWorkflowEngine(
                     )
                 }
             }
-            val commitMsg = "fix(#${issue.number}): ${issue.title}\n\nCloses #${issue.number}\nAutomated by Vayro Autonomous Workflow."
+            val commitMsg = "fix(#${issue.number}): ${issue.title}\n\nCloses #${issue.number}\nAutomated by Kodex Autonomous Workflow."
             val commitRes = guardedGit(GitOpKind.COMMIT, workingDir) {
                 gitController.commitDetailed(workingDir, commitMsg)
             }
@@ -302,7 +302,7 @@ class GitHubWorkflowEngine(
                         Resolves #${issue.number}.
 
                         ### Changes
-                        Autonomous implementation generated and verified by Vayro GitHub-Native Engine.
+                        Autonomous implementation generated and verified by Kodex GitHub-Native Engine.
                         - Root cause analyzed
                         - Automated tests verified
                     """.trimIndent()

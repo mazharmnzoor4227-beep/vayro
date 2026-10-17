@@ -94,10 +94,5 @@
         <property
             android:name="package_compatibility"
             android:value="package: name='com.vayro.app'" />
-        <provider
-            android:name=".diagnostics.DiagnosticsProvider"
-            android:authorities="${applicationId}.diagnostics"
-            android:exported="false"
-            android:initOrder="1000" />
     </application>
 </manifest>

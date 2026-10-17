@@ -280,7 +280,7 @@ open class GitHubClient {
             readTimeout = 30_000
             setRequestProperty("Accept", "application/vnd.github.v3.diff")
             if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("User-Agent", "Vayro-Android")
+            setRequestProperty("User-Agent", "Kodex-Android")
         }
         try {
             // Check the status BEFORE touching inputStream: on a 403/404/
@@ -625,7 +625,7 @@ open class GitHubClient {
             setRequestProperty("Content-Type", contentType)
             if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
-            setRequestProperty("User-Agent", "Vayro-Android")
+            setRequestProperty("User-Agent", "Kodex-Android")
             setFixedLengthStreamingMode(contentLength)
         }
         contentStream().use { input ->
@@ -699,7 +699,7 @@ open class GitHubClient {
             setRequestProperty("Accept", "application/vnd.github+json")
             if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
-            setRequestProperty("User-Agent", "Vayro-Android")
+            setRequestProperty("User-Agent", "Kodex-Android")
         }
         val status = connection.responseCode
         // Drain the stream so the connection can be reused; 204 carries no body.
@@ -724,7 +724,7 @@ open class GitHubClient {
             doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-            setRequestProperty("User-Agent", "Vayro-Android")
+            setRequestProperty("User-Agent", "Kodex-Android")
         }
         connection.outputStream.use { it.write(body) }
         return readResponse(connection) as JSONObject
@@ -741,7 +741,7 @@ open class GitHubClient {
             setRequestProperty("Content-Type", "application/json")
             if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
-            setRequestProperty("User-Agent", "Vayro-Android")
+            setRequestProperty("User-Agent", "Kodex-Android")
         }
         connection.outputStream.use { it.write(body) }
         return readResponse(connection)
@@ -758,7 +758,7 @@ open class GitHubClient {
             setRequestProperty("Content-Type", "application/json")
             if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
-            setRequestProperty("User-Agent", "Vayro-Android")
+            setRequestProperty("User-Agent", "Kodex-Android")
         }
         connection.outputStream.use { it.write(body) }
         return readResponse(connection)
@@ -775,7 +775,7 @@ open class GitHubClient {
             setRequestProperty("Content-Type", "application/json")
             if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
             setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
-            setRequestProperty("User-Agent", "Vayro-Android")
+            setRequestProperty("User-Agent", "Kodex-Android")
         }
         connection.outputStream.use { it.write(body) }
         return readResponse(connection)
@@ -797,7 +797,7 @@ open class GitHubClient {
                     setRequestProperty("Authorization", "Bearer $token")
                 }
                 setRequestProperty("X-GitHub-Api-Version", "2026-03-10")
-                setRequestProperty("User-Agent", "Vayro-Android")
+                setRequestProperty("User-Agent", "Kodex-Android")
             }
             val code = connection.responseCode
             if (HttpRetry.isRetryable(code) && attempt < HttpRetry.MAX_ATTEMPTS - 1) {

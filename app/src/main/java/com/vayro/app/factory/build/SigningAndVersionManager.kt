@@ -43,7 +43,7 @@ object SigningAndVersionManager {
             "-keyalg", "RSA",
             "-keysize", "2048",
             "-validity", "10000",
-            "-dname", "CN=Vayro, OU=App Factory, O=Vayro"
+            "-dname", "CN=Kodex, OU=App Factory, O=Kodex"
         )
         try {
             val process = ProcessBuilder(cmd)
@@ -93,7 +93,7 @@ object SigningAndVersionManager {
         if (original.contains("keystore.properties")) return true // already injected
         val snippet = """
             
-            // Injected by Vayro App Factory — release signing via keystore.properties
+            // Injected by Kodex App Factory — release signing via keystore.properties
             val keystoreProps = java.util.Properties().apply {
                 val propsFile = rootProject.file("keystore.properties")
                 if (propsFile.isFile) propsFile.inputStream().use(::load)
@@ -137,7 +137,7 @@ object SigningAndVersionManager {
         }
         props.setProperty("versionCode", newCode.toString())
         props.setProperty("versionName", newName)
-        propsFile.outputStream().use { props.store(it, "Managed by Vayro App Factory") }
+        propsFile.outputStream().use { props.store(it, "Managed by Kodex App Factory") }
         return newCode to newName
     }
 }

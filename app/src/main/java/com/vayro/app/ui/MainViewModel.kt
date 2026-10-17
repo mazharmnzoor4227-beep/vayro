@@ -795,7 +795,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             credentialStore = mcpCredentialStore,
         )
     init {
-        com.vayro.app.diagnostics.Diagnostics.note("stage5-vm-init1-entered")
         AppCrashLogger.log("MainViewModel.init entered")
         // GitHub's official CLI owns its OAuth credential. Remove credentials from
         // the retired custom OAuth implementation and discover the real CLI status.
@@ -1412,12 +1411,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        com.vayro.app.diagnostics.Diagnostics.note("stage6-vm-init2-entered")
         runtimeCoordinator.startSetupSnapshotCollection()
         viewModelScope.launch { claudeRuntime.events.collect(::onRuntimeEvent) }
-        com.vayro.app.diagnostics.Diagnostics.note("stage6b-before-bootstrap")
         runtimeCoordinator.startBootstrap()
-        com.vayro.app.diagnostics.Diagnostics.note("stage7-after-bootstrap")
     }
 
     // ---- Milestone 1: runtime domain moved to RuntimeCoordinator. ----

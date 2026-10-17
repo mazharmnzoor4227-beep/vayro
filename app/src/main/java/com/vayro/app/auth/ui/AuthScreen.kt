@@ -142,7 +142,7 @@ fun AuthScreen(
                 // App Branding Header
                 Image(
                     painter = painterResource(id = R.drawable.vayro_logo),
-                    contentDescription = "Vayro",
+                    contentDescription = "Kodex",
                     modifier = Modifier
                         .size(56.dp)
                         .clip(RoundedCornerShape(14.dp)),
@@ -151,7 +151,7 @@ fun AuthScreen(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "Vayro",
+                    text = "Kodex",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                 )

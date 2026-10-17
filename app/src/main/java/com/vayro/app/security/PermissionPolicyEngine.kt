@@ -56,7 +56,7 @@ data class SensitivePathResult(
 )
 
 /**
- * Vayro Granular Permission & Safety Engine.
+ * Kodex Granular Permission & Safety Engine.
  * Evaluates requests against active safety policies, sensitive-file boundaries,
  * dangerous command detectors, and emergency kill switches.
  */

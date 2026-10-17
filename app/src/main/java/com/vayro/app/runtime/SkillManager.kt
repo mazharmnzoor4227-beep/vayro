@@ -137,7 +137,7 @@ class SkillManager(
             connectTimeout = 10_000
             readTimeout = 15_000
             setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("User-Agent", "Vayro")
+            setRequestProperty("User-Agent", "Kodex")
         }
         return try {
             val status = connection.responseCode
@@ -186,7 +186,7 @@ class SkillManager(
             connectTimeout = 10_000
             readTimeout = 10_000
             setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("User-Agent", "Vayro")
+            setRequestProperty("User-Agent", "Kodex")
         }
         return try {
             if (connection.responseCode !in 200..299) return null
@@ -311,7 +311,7 @@ class SkillManager(
             connectTimeout = 10_000
             readTimeout = 15_000
             setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("User-Agent", "Vayro")
+            setRequestProperty("User-Agent", "Kodex")
         }
         return try {
             if (connection.responseCode !in 200..299) return null
@@ -546,7 +546,7 @@ class SkillManager(
             connectTimeout = 15_000
             readTimeout = 30_000
             requestMethod = "GET"
-            setRequestProperty("User-Agent", "Vayro")
+            setRequestProperty("User-Agent", "Kodex")
         }
         try {
             val status = connection.responseCode

@@ -337,7 +337,7 @@ class RuntimeCoordinator(
                     preferences.lastAppUpdateCheckMillis = System.currentTimeMillis()
                     if (force) {
                         host.updateState {
-                            it.copy(toastMessage = "Vayro is up to date (${BuildConfig.APP_VARIANT} · v${BuildConfig.VERSION_NAME})")
+                            it.copy(toastMessage = "Kodex is up to date (${BuildConfig.APP_VARIANT} · v${BuildConfig.VERSION_NAME})")
                         }
                     }
                 }
@@ -497,7 +497,7 @@ class RuntimeCoordinator(
         val message = if (isOffline) {
             "Connect to Wi-Fi or mobile data, then try again. Internet is required to finish the first-time setup."
         } else {
-            error.message?.take(300) ?: "Something went wrong while preparing Vayro. Please try again."
+            error.message?.take(300) ?: "Something went wrong while preparing Kodex. Please try again."
         }
         host.updateState {
             it.copy(

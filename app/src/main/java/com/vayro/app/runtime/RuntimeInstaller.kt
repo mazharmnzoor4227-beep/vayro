@@ -157,7 +157,7 @@ class RuntimeInstaller(private val context: Context) {
 
     /** Returns the already verified runtime without performing network or update checks. */
     fun installedRuntime(): InstalledRuntime {
-        check(isInstalled()) { "Core runtime setup is incomplete. Reopen Vayro to repair it." }
+        check(isInstalled()) { "Core runtime setup is incomplete. Reopen Kodex to repair it." }
         return InstalledRuntime(
             proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so"),
             rootfs = rootfs,
@@ -222,7 +222,7 @@ class RuntimeInstaller(private val context: Context) {
                 android.os.Build.SUPPORTED_ABIS,
                 System.getProperty("os.arch"),
             ),
-        ) { "Unsupported architecture: Vayro requires an ARM64 device or ARM64 emulator" }
+        ) { "Unsupported architecture: Kodex requires an ARM64 device or ARM64 emulator" }
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         require(proot.canExecute()) { "The embedded PRoot launcher is unavailable" }
 
@@ -1289,7 +1289,7 @@ class RuntimeInstaller(private val context: Context) {
         var source = file.readText()
         if (callAfter in source && importAfter in source) return
         check(callBefore in source && importBefore in source) {
-            "DeepSeek Harness $DSH_VERSION is not compatible with this Vayro build"
+            "DeepSeek Harness $DSH_VERSION is not compatible with this Kodex build"
         }
         source = source.replace(importBefore, importAfter).replace(callBefore, callAfter)
         file.writeText(source)
@@ -2923,7 +2923,7 @@ printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",
             "Accept",
             if (url.startsWith("https://api.github.com/")) "application/vnd.github+json" else "application/json",
         )
-        connection.setRequestProperty("User-Agent", "Vayro")
+        connection.setRequestProperty("User-Agent", "Kodex")
         if (url.startsWith("https://api.github.com/")) {
             connection.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
         }

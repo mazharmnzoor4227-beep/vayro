@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Wire protocol for the Vayro marketplace registry (Milestone 13).
+ * Wire protocol for the Kodex marketplace registry (Milestone 13).
  *
  * Everything in the marketplace is free: there are no prices, no sellers,
  * no orders, no entitlements and no payments anywhere in the app.

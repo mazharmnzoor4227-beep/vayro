@@ -53,7 +53,7 @@ class RuntimeExecutionService : Service() {
             val info = sessions.values.first()
             NotificationCoordinator.running(
                 context = this,
-                title = "Vayro is working",
+                title = "Kodex is working",
                 detail = info.detail,
                 canStop = canStop,
                 sessionId = sessions.keys.first(),
@@ -61,7 +61,7 @@ class RuntimeExecutionService : Service() {
         } else {
             NotificationCoordinator.running(
                 context = this,
-                title = "Vayro is working",
+                title = "Kodex is working",
                 detail = "${sessions.size} tasks running",
                 canStop = false,
                 sessionId = null,
@@ -91,7 +91,7 @@ class RuntimeExecutionService : Service() {
                 if (sessions.containsKey(sessionId)) {
                     notificationManager().notify(
                         sessionNotificationId(sessionId),
-                        NotificationCoordinator.running(this, "Vayro is working", "Stopping safely…", false, sessionId),
+                        NotificationCoordinator.running(this, "Kodex is working", "Stopping safely…", false, sessionId),
                     )
                 }
             }
@@ -103,7 +103,7 @@ class RuntimeExecutionService : Service() {
                     ?: "${info.agentName} is working in ${info.projectName}"
                 notificationManager().notify(
                     sessionNotificationId(sessionId),
-                    NotificationCoordinator.running(this, "Vayro is working", info.detail, canStop, sessionId),
+                    NotificationCoordinator.running(this, "Kodex is working", info.detail, canStop, sessionId),
                 )
                 refreshForegroundNotification()
             }
@@ -136,7 +136,7 @@ class RuntimeExecutionService : Service() {
                 sessions[sessionId] = info
                 notificationManager().notify(
                     sessionNotificationId(sessionId),
-                    NotificationCoordinator.running(this, "Vayro is working", info.detail, canStop, sessionId),
+                    NotificationCoordinator.running(this, "Kodex is working", info.detail, canStop, sessionId),
                 )
                 refreshForegroundNotification()
                 acquireLocks()

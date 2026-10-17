@@ -597,7 +597,7 @@ class AntigravityRuntimeBridge(
     }
 
     private fun geminiApiAgentSystemPrompt(projectSlug: String): String =
-        "You are the coding assistant inside the Vayro Android app. The active project workspace is " +
+        "You are the coding assistant inside the Kodex Android app. The active project workspace is " +
             "/workspace/$projectSlug. You have tools: run_shell to execute shell commands in the workspace, " +
             "read_file to read files, write_file to create or overwrite files, edit_file to make surgical " +
             "edits, and list_dir to explore directories. When the user asks for a code change, use the " +

@@ -69,7 +69,7 @@ class KeepAliveService : Service() {
                 "Background Service",
                 NotificationManager.IMPORTANCE_LOW,
             ).apply {
-                description = "Keeps Vayro alive while it is in the background"
+                description = "Keeps Kodex alive while it is in the background"
                 setShowBadge(false)
             }
         )
@@ -86,7 +86,7 @@ class KeepAliveService : Service() {
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Vayro")
+            .setContentTitle("Kodex")
             .setContentText("Running in background")
             .setContentIntent(openIntent)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)

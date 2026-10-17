@@ -1001,7 +1001,7 @@ fun SettingsScreen(
             item {
                 SettingsAccordion(
                     title = "Contributors",
-                    subtitle = "People building Vayro",
+                    subtitle = "People building Kodex",
                     icon = Icons.Default.Person,
                     expanded = expanded == SettingsSection.CONTRIBUTORS,
                     onClick = { toggle(SettingsSection.CONTRIBUTORS) },
@@ -1023,7 +1023,7 @@ fun SettingsScreen(
                         Icon(Icons.Default.Settings, null, Modifier.size(20.dp), tint = PocketOrange)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Vayro", fontWeight = FontWeight.SemiBold)
+                            Text("Kodex", fontWeight = FontWeight.SemiBold)
                             Text("Local AI coding workspace", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Text("v${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1295,7 +1295,7 @@ private fun EnvironmentUpdateCenter() {
                             connection.readTimeout = 12_000
                             connection.instanceFollowRedirects = true
                             connection.setRequestProperty("Accept", "application/json")
-                            connection.setRequestProperty("User-Agent", "Vayro/" + BuildConfig.VERSION_NAME)
+                            connection.setRequestProperty("User-Agent", "Kodex/" + BuildConfig.VERSION_NAME)
                             val code = connection.responseCode
                             if (code in 200..299) {
                                 val text = connection.inputStream.bufferedReader().use { it.readText() }
@@ -1713,7 +1713,7 @@ private data class ContributorInfo(
 private val CONTRIBUTORS = listOf(
     ContributorInfo(
         name = "Conzyx \u2014 Upstream Project",
-        role = "Vayro is built on the open-source Conzyx (Mobile Harness) project, used under the MIT License. Full license text ships with the app.",
+        role = "Kodex is built on the open-source Conzyx (Mobile Harness) project, used under the MIT License. Full license text ships with the app.",
         handle = "@sunmughan/Conzyx",
         avatarUrl = "https://github.com/sunmughan.png?size=256",
         initials = "CX",
@@ -2018,7 +2018,7 @@ private fun AccountSectionContent(
                         }
                     }
                     Text(
-                        "You are currently using Vayro in local guest mode. All your projects, tools, and code run privately on this device.",
+                        "You are currently using Kodex in local guest mode. All your projects, tools, and code run privately on this device.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

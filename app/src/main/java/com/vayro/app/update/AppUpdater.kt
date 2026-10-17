@@ -332,7 +332,7 @@ class AppUpdater(
         val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         val archive = context.packageManager.getPackageArchiveInfo(apk.absolutePath, flags)
             ?: error("Downloaded file is not a valid APK")
-        check(archive.packageName == context.packageName) { "Update package name does not match Vayro" }
+        check(archive.packageName == context.packageName) { "Update package name does not match Kodex" }
         val archiveVersion = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else archive.versionCode.toLong()
         check(archiveVersion == expectedVersionCode) { "Update version does not match its manifest" }
         val installed = context.packageManager.getPackageInfo(context.packageName, flags)

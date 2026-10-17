@@ -136,7 +136,7 @@ fun ProductOnboardingScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Vayro Tour",
+                    text = "Kodex Tour",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
