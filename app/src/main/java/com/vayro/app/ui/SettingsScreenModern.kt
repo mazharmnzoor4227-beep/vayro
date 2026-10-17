@@ -1134,7 +1134,7 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Icon(
-                        androidx.compose.material.icons.Icons.Default.VpnKey,
+                        androidx.compose.material.icons.Icons.Default.Lock,
                         contentDescription = null,
                         modifier = Modifier.size(20.dp),
                         tint = MaterialTheme.colorScheme.primary,
