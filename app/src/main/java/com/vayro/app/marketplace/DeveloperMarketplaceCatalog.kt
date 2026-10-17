@@ -67,42 +67,10 @@ object DeveloperMarketplaceCatalog {
 
     val curatedCatalog: List<MarketplaceItem> =
         McpBuiltInCatalogTemplates.map { it.toMarketplaceItem() } + listOf(
-        MarketplaceItem(
-            id = "catalog-skill-compose-architect",
-            name = "Jetpack Compose Architect",
-            category = MarketplaceCategory.SKILLS,
-            author = "Android Dev Community",
-            description = "Best practices, performance guidelines, and state hoisting for modern Android UI.",
-            installUrl = "https://github.com/pocketdev/skills-compose-architect",
-            tags = listOf("android", "compose", "ui", "kotlin"),
-        ),
-        MarketplaceItem(
-            id = "catalog-skill-devops-packager",
-            name = "DevOps & Docker Packager",
-            category = MarketplaceCategory.SKILLS,
-            author = "DevOps Labs",
-            description = "Multi-stage Dockerfiles, GitHub Actions workflows, and Linux container automation.",
-            installUrl = "https://github.com/pocketdev/skills-devops-packager",
-            tags = listOf("docker", "devops", "ci-cd", "containers"),
-        ),
-        MarketplaceItem(
-            id = "catalog-skill-nextjs-wizard",
-            name = "Next.js 15 Full-Stack Wizard",
-            category = MarketplaceCategory.SKILLS,
-            author = "React Core Community",
-            description = "Server components, server actions, route handlers, and SEO optimization for Next.js.",
-            installUrl = "https://github.com/pocketdev/skills-nextjs-wizard",
-            tags = listOf("react", "nextjs", "typescript", "fullstack"),
-        ),
-        MarketplaceItem(
-            id = "catalog-skill-rust-systems",
-            name = "Rust Memory & Systems Optimization",
-            category = MarketplaceCategory.SKILLS,
-            author = "Rust Foundation Contribs",
-            description = "Borrow checker mastery, zero-cost abstractions, and unsafe code auditing.",
-            installUrl = "https://github.com/pocketdev/skills-rust-systems",
-            tags = listOf("rust", "systems", "memory", "concurrency"),
-        ),
+        // NOTE (2026-10-17 audit): the four former pocketdev/skills-* listings
+        // were removed — those repositories return 404, so their Install
+        // buttons could only ever fail. Every GitHub listing that remains in
+        // this catalog was verified reachable (HTTP 200) in the same audit.
         MarketplaceItem(
             id = "catalog-skill-rea",
             name = "rea",
