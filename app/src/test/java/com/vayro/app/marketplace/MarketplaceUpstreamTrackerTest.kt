@@ -64,7 +64,16 @@ class MarketplaceUpstreamTrackerTest {
     fun `pendingSeedIds never returns ids that already have records`() {
         val installed = setOf("catalog-skill-rea", "catalog-skill-compose-architect")
         assertEquals(
-            setOf("catalog-skill-desigma", "catalog-skill-flick", "catalog-skill-app-store-screenshots"),
+            setOf(
+                "catalog-skill-desigma",
+                "catalog-skill-flick",
+                "catalog-skill-app-store-screenshots",
+                "catalog-skill-ux-ui-agent-skills",
+                "catalog-skill-gsap-skills",
+                "catalog-skill-typography-system",
+                "catalog-skill-awesome-gamedev-agent-skills",
+                "catalog-skill-game-ui-mobile-friendly-design",
+            ),
             pendingSeedIds(CURATED_PRESEED_IDS, installed),
         )
     }
@@ -80,13 +89,18 @@ class MarketplaceUpstreamTrackerTest {
     }
 
     @Test
-    fun `curated preseed set holds exactly the four expected ids`() {
+    fun `curated preseed set holds exactly the nine expected ids`() {
         assertEquals(
             setOf(
                 "catalog-skill-rea",
                 "catalog-skill-desigma",
                 "catalog-skill-flick",
                 "catalog-skill-app-store-screenshots",
+                "catalog-skill-ux-ui-agent-skills",
+                "catalog-skill-gsap-skills",
+                "catalog-skill-typography-system",
+                "catalog-skill-awesome-gamedev-agent-skills",
+                "catalog-skill-game-ui-mobile-friendly-design",
             ),
             CURATED_PRESEED_IDS,
         )
