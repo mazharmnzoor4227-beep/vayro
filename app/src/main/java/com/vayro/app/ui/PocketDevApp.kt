@@ -329,6 +329,11 @@ fun PocketDevApp(
     val authState by authViewModel.authState.collectAsStateWithLifecycle()
     val detectedPorts by viewModel.detectedLocalhostPorts.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    // Kodex: quietly check for a newer release at app start and post a
+    // notification when one exists (throttled inside UpdateNotifier).
+    LaunchedEffect(Unit) {
+        com.vayro.app.update.UpdateNotifier.checkAndNotify(context)
+    }
     val projectsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     var guestDismissedAuth by rememberSaveable { mutableStateOf(false) }
     var showAuthModal by rememberSaveable { mutableStateOf(false) }
