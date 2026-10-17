@@ -31,6 +31,12 @@ class LicenseStore(context: Context) {
         get() = prefs.getLong(KEY_LAST_OK, 0L)
         set(value) = prefs.edit().putLong(KEY_LAST_OK, value).apply()
 
+    /** When this phone last activated successfully. Used for a short settle
+     *  window right after activation, while server writes propagate. */
+    var activatedAt: Long
+        get() = prefs.getLong(KEY_ACTIVATED_AT, 0L)
+        set(value) = prefs.edit().putLong(KEY_ACTIVATED_AT, value).apply()
+
     /** Last enforcement mode seen from the server ("on"/"off"); used when offline. */
     var lastMode: String
         get() = prefs.getString(KEY_LAST_MODE, "off") ?: "off"
@@ -42,6 +48,7 @@ class LicenseStore(context: Context) {
             .remove(KEY_EXPIRES)
             .remove(KEY_TYPE)
             .remove(KEY_LAST_OK)
+            .remove(KEY_ACTIVATED_AT)
             .apply()
     }
 
@@ -59,6 +66,7 @@ class LicenseStore(context: Context) {
         private const val KEY_EXPIRES = "expires_at"
         private const val KEY_TYPE = "lic_type"
         private const val KEY_LAST_OK = "last_ok_at"
+        private const val KEY_ACTIVATED_AT = "activated_at"
         private const val KEY_LAST_MODE = "last_mode"
         private const val KEY_INSTALL_UUID = "install_uuid"
 

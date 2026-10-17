@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private sealed interface GateUi {
@@ -51,53 +52,23 @@ fun LicenseGate(content: @Composable () -> Unit) {
     var refreshKey by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(refreshKey) {
-        ui = GateUi.Checking
-        val device = DeviceId.hash(context)
-        val freshMode = LicenseClient.fetchMode()
-        if (freshMode != null) store.lastMode = freshMode
-        val mode = freshMode ?: store.lastMode
-        if (mode != "on") {
-            ui = GateUi.Open
-            return@LaunchedEffect
-        }
-        val token = store.token
-        if (token == null) {
-            ui = GateUi.NeedsActivation()
-            return@LaunchedEffect
-        }
-        val res = LicenseClient.check(device, token)
-        val now = System.currentTimeMillis()
-        ui = when {
-            res == null -> {
-                // Server unreachable: ride the grace window if we ever confirmed.
-                if (store.lastOkAt > 0 && now - store.lastOkAt <= LicenseStore.GRACE_MS) GateUi.Open
-                else GateUi.Locked(
-                    "Check your connection",
-                    "Connect this phone to the internet so your license can be checked, then tap Try again."
-                )
-            }
-            res.ok && res.status == "active" -> {
-                store.lastOkAt = now
-                store.expiresAt = res.expiresAt
-                store.licenseType = res.type
-                if (res.mode.isNotBlank()) store.lastMode = res.mode
-                GateUi.Open
-            }
-            res.status == "revoked" -> GateUi.Locked(
-                "License switched off",
-                "This license has been switched off by the seller. Contact your seller for help."
-            )
-            res.status == "expired" -> GateUi.Locked(
-                "License expired",
-                "Your license time is over. Contact your seller to renew it."
-            )
-            else -> {
-                if (store.lastOkAt > 0 && now - store.lastOkAt <= LicenseStore.GRACE_MS) GateUi.Open
-                else GateUi.Locked(
-                    "Check your connection",
-                    "Connect this phone to the internet so your license can be checked, then tap Try again."
-                )
-            }
+        if (ui !is GateUi.Open) ui = GateUi.Checking
+        ui = computeGateUi(store, DeviceId.hash(context))
+    }
+
+    // Silent re-check while the app is open: if the seller revokes or deletes
+    // the license (or switches the lock on), an already-open app must notice
+    // without waiting for a cold start. Only a changed verdict swaps the UI,
+    // so this never disturbs what the user is doing.
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            val v = computeGateUi(store, DeviceId.hash(context))
+            val cur = ui
+            val categoryChanged = (v is GateUi.Open) != (cur is GateUi.Open) ||
+                (v is GateUi.NeedsActivation) != (cur is GateUi.NeedsActivation) ||
+                (v is GateUi.Locked && cur is GateUi.Locked && v.title != cur.title)
+            if (categoryChanged) ui = v
         }
     }
 
@@ -128,6 +99,54 @@ fun LicenseGate(content: @Composable () -> Unit) {
                 store.clearLicense()
                 ui = GateUi.NeedsActivation()
             }) { Text("Use a different code") }
+        }
+    }
+}
+
+/** Right after activation the server's writes can take a few seconds to
+ *  settle everywhere; a "dead" verdict inside this window is shown as a
+ *  benign almost-ready screen instead of the seller lock. */
+private const val SETTLE_MS = 3L * 60 * 1000
+
+private suspend fun computeGateUi(store: LicenseStore, device: String): GateUi {
+    val freshMode = LicenseClient.fetchMode()
+    if (freshMode != null) store.lastMode = freshMode
+    val mode = freshMode ?: store.lastMode
+    if (mode != "on") return GateUi.Open
+    val token = store.token ?: return GateUi.NeedsActivation()
+    val res = LicenseClient.check(device, token)
+    val now = System.currentTimeMillis()
+    return when {
+        res == null -> {
+            // Server unreachable: ride the grace window if we ever confirmed.
+            if (store.lastOkAt > 0 && now - store.lastOkAt <= LicenseStore.GRACE_MS) GateUi.Open
+            else GateUi.Locked(
+                "Check your connection",
+                "Connect this phone to the internet so your license can be checked, then tap Try again."
+            )
+        }
+        res.ok && res.status == "active" -> {
+            store.lastOkAt = now
+            store.expiresAt = res.expiresAt
+            store.licenseType = res.type
+            if (res.mode.isNotBlank()) store.lastMode = res.mode
+            GateUi.Open
+        }
+        res.status == "expired" -> GateUi.Locked(
+            "License expired",
+            "Your license time is over. Contact your seller to renew it."
+        )
+        else -> {
+            // "revoked" or any other non-active answer: the license is gone on
+            // the server (switched off, deleted, or the phone was reset).
+            // No grace for this — grace is only for an unreachable server.
+            if (now - store.activatedAt < SETTLE_MS) GateUi.Locked(
+                "Almost there",
+                "Your license was just activated and is still being set up. Wait a few seconds, then tap Try again."
+            ) else GateUi.Locked(
+                "License switched off",
+                "This license has been switched off or removed by the seller. Contact your seller for help."
+            )
         }
     }
 }
@@ -206,6 +225,7 @@ private fun ActivationScreen(
                         res.ok && res.token != null -> {
                             store.token = res.token
                             store.expiresAt = res.expiresAt
+                            store.activatedAt = System.currentTimeMillis()
                             store.lastOkAt = System.currentTimeMillis()
                             if (res.mode.isNotBlank()) store.lastMode = res.mode
                             onActivated()
