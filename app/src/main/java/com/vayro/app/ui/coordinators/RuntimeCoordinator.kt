@@ -330,7 +330,17 @@ class RuntimeCoordinator(
                 is AppUpdater.AppUpdateCheckResult.Available -> {
                     preferences.lastAppUpdateCheckMillis = System.currentTimeMillis()
                     host.updateState {
-                        it.copy(appUpdate = result.info, appUpdateStatus = AppUpdateStatus.AVAILABLE, appUpdateError = null)
+                        it.copy(
+                            appUpdate = result.info,
+                            appUpdateStatus = AppUpdateStatus.AVAILABLE,
+                            appUpdateError = null,
+                            // A manual check must ALWAYS answer visibly: bump
+                            // the prompt nonce so the update dialog re-opens
+                            // even when this exact update was already in
+                            // state, and say so in a toast as well.
+                            appUpdatePromptNonce = if (force) System.currentTimeMillis() else it.appUpdatePromptNonce,
+                            toastMessage = if (force) "Kodex v${result.info.versionName} update available" else it.toastMessage,
+                        )
                     }
                 }
                 is AppUpdater.AppUpdateCheckResult.UpToDate -> {

@@ -3826,7 +3826,7 @@ private fun ProjectsScreen(
     val importFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) onImportFolder(uri)
     }
-    LaunchedEffect(state.appUpdate?.versionCode) {
+    LaunchedEffect(state.appUpdate?.versionCode, state.appUpdatePromptNonce) {
         if (state.appUpdate != null) showUpdateDialog = true
     }
     Scaffold(

@@ -359,6 +359,13 @@ data class AppUiState(
     val appUpdateDownloadedBytes: Long = 0L,
     val appUpdateTotalBytes: Long = -1L,
     val appUpdateError: String? = null,
+    /**
+     * Bumped on every MANUAL check that finds an update. The update dialog
+     * keys its show-effect on this nonce as well as the version: without it,
+     * re-checking while the same update is already in state changed nothing,
+     * so the dialog never re-opened and "Check now" looked dead.
+     */
+    val appUpdatePromptNonce: Long = 0L,
     val executionMode: ExecutionMode = ExecutionMode.UNIFIED,
     val activeRoadmap: ActiveRoadmap? = null,
     val scratchpadItems: List<ScratchpadItem> = emptyList(),
