@@ -1064,8 +1064,8 @@ fun SettingsScreen(
 
             item {
                 SettingsAccordion(
-                    title = "Contributors",
-                    subtitle = "People building Kodex",
+                    title = "Developer",
+                    subtitle = "The person behind Kodex",
                     icon = Icons.Default.Person,
                     expanded = expanded == SettingsSection.CONTRIBUTORS,
                     onClick = { toggle(SettingsSection.CONTRIBUTORS) },
