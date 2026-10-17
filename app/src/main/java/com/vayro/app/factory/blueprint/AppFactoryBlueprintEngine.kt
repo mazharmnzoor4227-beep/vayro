@@ -148,7 +148,7 @@ object AppFactoryBlueprintEngine {
     private fun sanitizePackageName(appName: String): String {
         val clean = appName.lowercase().replace(Regex("[^a-z0-9]"), "")
         val suffix = if (clean.length < 3) "app" else clean
-        return "com.pocketdev.$suffix"
+        return "com.kodex.$suffix"
     }
 
     private fun buildEcommerceSpec(): Triple<List<DataEntitySpec>, List<ApiEndpointSpec>, List<ScreenSpec>> {

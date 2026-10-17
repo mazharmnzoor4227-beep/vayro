@@ -38,8 +38,8 @@ class DeveloperMarketplaceCatalogTest {
         val postgresResults = DeveloperMarketplaceCatalog.search("PostgreSQL")
         assertTrue("Should find PostgreSQL item", postgresResults.any { it.name.contains("PostgreSQL") })
 
-        val dockerResults = DeveloperMarketplaceCatalog.search("docker")
-        assertTrue("Should find Docker item via description or tag", dockerResults.isNotEmpty())
+        val figmaResults = DeveloperMarketplaceCatalog.search("figma")
+        assertTrue("Should find Figma item via description or tag", figmaResults.isNotEmpty())
 
         val kotlinTagResults = DeveloperMarketplaceCatalog.search("kotlin")
         assertTrue("Should find Kotlin tagged items", kotlinTagResults.isNotEmpty())

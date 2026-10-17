@@ -35,7 +35,7 @@ class AppFactoryTest {
         assertTrue("Expected MenuItem entity", foodBlueprint.entities.any { it.name == "MenuItem" })
         assertTrue("Expected ExploreScreen", foodBlueprint.screens.any { it.name == "ExploreScreen" })
         assertTrue(foodBlueprint.endpoints.isNotEmpty())
-        assertTrue("Expected valid package name", foodBlueprint.packageName.startsWith("com.pocketdev."))
+        assertTrue("Expected valid package name", foodBlueprint.packageName.startsWith("com.kodex."))
         assertEquals(35, foodBlueprint.buildConfig.targetSdk)
 
         // 2. E-Commerce Detection
