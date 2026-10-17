@@ -48,6 +48,42 @@ object Diagnostics {
         }
     }
 
+    @Volatile
+    private var heartbeatStarted = false
+
+    /**
+     * Every 2 seconds, records where the main thread currently is (top stack
+     * frames). If the process later dies silently (native crash, system kill),
+     * the last heartbeat shows what the main thread was doing when it died;
+     * if the main thread is stuck, repeated identical heartbeats show the
+     * exact blocking call.
+     */
+    fun startHeartbeat() {
+        runCatching {
+            if (heartbeatStarted) return
+            heartbeatStarted = true
+            val mainThread = android.os.Looper.getMainLooper().thread
+            val worker = Thread {
+                var lastTop = ""
+                while (true) {
+                    runCatching {
+                        Thread.sleep(2000)
+                        val frames = mainThread.stackTrace.take(5).joinToString(" <- ") {
+                            "${it.className.substringAfterLast('.')}.${it.methodName}"
+                        }
+                        if (frames != lastTop) {
+                            lastTop = frames
+                            note("heartbeat main: $frames")
+                        }
+                    }
+                }
+            }
+            worker.isDaemon = true
+            worker.name = "vayro-diagnostics-heartbeat"
+            worker.start()
+        }
+    }
+
     fun note(stage: String) {
         runCatching {
             val stamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())

@@ -19,6 +19,7 @@ class DiagnosticsProvider : ContentProvider() {
             Diagnostics.start(ctx)
             Diagnostics.note("stage2-provider-oncreate")
             Diagnostics.installCrashCapture()
+            Diagnostics.startHeartbeat()
         }
         return true
     }

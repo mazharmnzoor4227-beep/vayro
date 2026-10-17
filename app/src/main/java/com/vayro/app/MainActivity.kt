@@ -14,9 +14,11 @@ import com.vayro.app.ui.theme.PocketTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.vayro.app.diagnostics.Diagnostics.note("stage4a-activity-entered")
         AppCrashLogger.log("MainActivity.onCreate entered")
         try {
             super.onCreate(savedInstanceState)
+            com.vayro.app.diagnostics.Diagnostics.note("stage4b-activity-super-done")
             AppCrashLogger.log("MainActivity.onCreate: super.onCreate completed")
 
             enableEdgeToEdge()
@@ -26,9 +28,10 @@ class MainActivity : ComponentActivity() {
                 ?: intent.getStringExtra(EXTRA_NOTIFICATION_ROUTE)
             AppCrashLogger.log("MainActivity.onCreate: notification route resolved=\${notificationRoute != null}")
 
+            com.vayro.app.diagnostics.Diagnostics.note("stage4c-before-viewmodel")
             val vm = ViewModelProvider(this)[MainViewModel::class.java]
             AppCrashLogger.log("MainActivity.onCreate: MainViewModel obtained")
-            com.vayro.app.diagnostics.Diagnostics.note("stage4-mainactivity-viewmodel-obtained")
+            com.vayro.app.diagnostics.Diagnostics.note("stage8-viewmodel-obtained")
 
             vm.handleNotificationRoute(notificationRoute)
             AppCrashLogger.log("MainActivity.onCreate: notification route handled")
