@@ -8,6 +8,8 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
@@ -76,6 +78,11 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = Color(0xFF57606A),
     outline = Color(0xFFD0D7DE),
     outlineVariant = Color(0xFFD8DEE4),
+)
+
+val JetBrainsMonoFontFamily = FontFamily(
+    Font(R.font.jetbrains_mono_regular, FontWeight.Normal),
+    Font(R.font.jetbrains_mono_semibold, FontWeight.SemiBold),
 )
 
 val InterFontFamily = FontFamily(
@@ -148,7 +155,16 @@ fun PocketTheme(
         }
     }
 
-    CompositionLocalProvider(LocalPocketAccents provides accents) {
+    // Kodex: text selection follows the app accent (lime), never the
+    // default system blue highlight, in every theme.
+    val selectionColors = TextSelectionColors(
+        handleColor = accents.accent,
+        backgroundColor = accents.accent.copy(alpha = 0.35f),
+    )
+    CompositionLocalProvider(
+        LocalPocketAccents provides accents,
+        LocalTextSelectionColors provides selectionColors,
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AppTypography,

@@ -21,6 +21,22 @@ class AgentChatController {
 
     companion object {
         const val MAX_ATTACHMENTS_PER_MESSAGE = 10
+
+        /**
+         * Kodex delivery contract: appended to every enriched chat prompt
+         * (all runtimes) and to the Gemini API system prompt, so a build
+         * request is planned, built and DELIVERED in the same turn.
+         */
+        const val DELIVERY_CONTRACT = """<delivery_contract>
+DELIVERY CONTRACT — whenever the user asks you to build, create, or update an app or a website, and the current mode allows making changes:
+1. Finish the whole job in ONE continuous turn: understand the request, make a short plan, build everything, verify the result, and deliver it in your final message. Never stop after only writing code, and never end with "tell me when to continue".
+2. Speed defaults: when GitHub is connected, prefer building with GitHub CI / GitHub Actions instead of slow on-device builds. Skip unit tests and Play Store listing preparation unless the user explicitly asks for them.
+3. Your FINAL message must contain the deliverable itself:
+   - Android app: the workspace-relative path of the built APK file, for example: app/build/outputs/apk/debug/app-debug.apk — the app turns that path into an Install/Share card automatically.
+   - Website: push the finished site to the connected GitHub account, enable GitHub Pages for that repository (GitHub API: POST /repos/{owner}/{repo}/pages with a JSON body {"source": {"branch": "<the branch you pushed>", "path": "/"}}), wait until it is live, and include the full https:// page URL in the final message — the app turns it into an openable link card automatically.
+4. If a build fails, fix the problem and retry — at most 2 automatic fix attempts. If it still fails, say plainly, in simple English, exactly where it stopped and what the error is. Never claim success without a real built file or a real live URL.
+5. Always reply in simple, easy English. Short sentences. Explain any technical word in one short line.
+</delivery_contract>"""
     }
 
     /**
@@ -122,6 +138,8 @@ CRITICAL INSTRUCTIONS FOR UNIFIED MODE PHASE 1:
             appendLine()
             appendLine(modeInstruction)
         }
+        appendLine()
+        appendLine(DELIVERY_CONTRACT)
         if (mentionedPaths.isNotEmpty()) {
             appendLine()
             appendLine("<mentioned_files>")

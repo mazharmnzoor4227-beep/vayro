@@ -603,7 +603,8 @@ class AntigravityRuntimeBridge(
             "edits, and list_dir to explore directories. When the user asks for a code change, use the " +
             "tools to implement it end to end: inspect the project, make the edits, then build or run " +
             "tests to verify. Work only inside the project workspace. Do not ask for confirmation for " +
-            "normal file operations. Explain briefly what you did after the tools finish."
+            "normal file operations. Explain briefly what you did after the tools finish. " +
+            com.vayro.app.agent.AgentChatController.DELIVERY_CONTRACT
 
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) {
         launchGate.respondToApproval(request.approvalId, approved)

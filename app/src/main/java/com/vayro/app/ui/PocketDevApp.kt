@@ -112,7 +112,12 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Factory
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -199,6 +204,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -331,8 +337,11 @@ fun PocketDevApp(
     val context = LocalContext.current
     // Kodex: quietly check for a newer release at app start and post a
     // notification when one exists (throttled inside UpdateNotifier).
+    // Same throttled pattern for runtime component updates: the result
+    // drives the in-app "Update available" banner on the root screens.
     LaunchedEffect(Unit) {
         com.vayro.app.update.UpdateNotifier.checkAndNotify(context)
+        com.vayro.app.update.ComponentUpdateNotifier.check(context)
     }
     val projectsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     var guestDismissedAuth by rememberSaveable { mutableStateOf(false) }
@@ -417,6 +426,7 @@ fun PocketDevApp(
             keystoreConfig = state.appFactoryKeystoreConfig,
             storeListingBundle = state.appFactoryStoreBundle,
             statusMessage = state.appFactoryMessage,
+            githubConnected = state.githubAuthStatus == GitHubAuthStatus.CONNECTED,
             onBack = { navigator.closeOverlay() },
             onGenerateBlueprint = { prompt, fw, mode, arch ->
                 viewModel.generateAppFactoryBlueprint(prompt, fw, mode, arch)
@@ -453,7 +463,53 @@ fun PocketDevApp(
     }
 
     if (navigator.showCloudHybridScreen) {
-        navigator.closeOverlay()
+        BackHandler(onBack = { navigator.closeOverlay() })
+        com.vayro.app.actions.ui.GitHubActionsBuildScreen(
+            coordinator = viewModel.githubActionsCoordinator,
+            onClose = { navigator.closeOverlay() },
+            onBuildLocal = {
+                navigator.closeOverlay()
+                navigator.openAppFactory()
+            },
+        )
+        return
+    }
+
+    if (navigator.showGitHubStudioScreen) {
+        BackHandler(onBack = { navigator.closeOverlay() })
+        LaunchedEffect(Unit) { viewModel.refreshGitStudio() }
+        com.vayro.app.git.ui.GitHubStudioScreen(
+            statusInfo = state.gitStatusInfo,
+            branches = state.gitBranches,
+            commits = state.gitCommits,
+            issues = state.gitIssues,
+            pullRequests = state.gitPullRequests,
+            workflowRuns = state.gitWorkflowRuns,
+            releases = state.gitReleases,
+            workflowState = state.gitWorkflowState,
+            connectedRepo = state.gitConnectedRepo,
+            rawDiffOutput = state.gitRawDiff,
+            onBack = { navigator.closeOverlay() },
+            onRefresh = { viewModel.refreshGitStudio() },
+            onStageFile = { path -> viewModel.gitStageFile(path) },
+            onStageAll = { viewModel.gitStageAll() },
+            onUnstageFile = { path -> viewModel.gitUnstageFile(path) },
+            onUnstageAll = { viewModel.gitUnstageAll() },
+            onDiscardFile = { path -> viewModel.gitDiscardFile(path) },
+            onDiscardAll = { viewModel.gitDiscardAll() },
+            onCommit = { message, amend, signOff -> viewModel.gitCommitDetailed(message, amend, signOff) },
+            onCreateBranch = { branch -> viewModel.gitCreateBranch(branch) },
+            onCheckoutBranch = { branch -> viewModel.gitCheckoutBranch(branch) },
+            onDeleteBranch = { branch -> viewModel.gitDeleteBranch(branch) },
+            onMergeBranch = { branch -> viewModel.gitMergeBranch(branch) },
+            onRebaseBranch = { upstream -> viewModel.gitRebaseBranch(upstream) },
+            onPush = { viewModel.gitPush() },
+            onPull = { viewModel.gitPull() },
+            onResetToCommit = { hash, mode -> viewModel.gitResetBranch(hash, mode) },
+            onCreateIssue = { title, body -> viewModel.createGitHubIssue(title, body) },
+            onMergePullRequest = { number, method -> viewModel.mergeGitHubPullRequest(number, method) },
+            onStartAutonomousWorkflow = { issue -> viewModel.startAutonomousIssueWorkflow(issue) },
+        )
         return
     }
 
@@ -643,6 +699,7 @@ fun PocketDevApp(
             onOpenAppFactory = { openStudio(OverlayScreen.APP_FACTORY) },
             onOpenTeamStudio = { openStudio(OverlayScreen.TEAM_STUDIO) },
             onOpenCloudHybrid = { openStudio(OverlayScreen.CLOUD_HYBRID) },
+            onOpenGitHubStudio = { navigator.openGitHubStudio() },
         )
     }
 }
@@ -2411,8 +2468,20 @@ private fun RootScreenHost(
     onOpenAppFactory: () -> Unit = {},
     onOpenTeamStudio: () -> Unit = {},
     onOpenCloudHybrid: () -> Unit = {},
+    onOpenGitHubStudio: () -> Unit = {},
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
+    // Kodex drawer shell: the side drawer is the single home for every
+    // section; Back from a section returns here with the drawer re-opened
+    // (inventory rule R1), and Back with the drawer open just closes it.
+    var drawerOpen by rememberSaveable { mutableStateOf(false) }
+    var skillsInitialTab by rememberSaveable { mutableIntStateOf(0) }
+    var skillsTabEpoch by rememberSaveable { mutableIntStateOf(0) }
+    BackHandler(enabled = drawerOpen) { drawerOpen = false }
+    BackHandler(enabled = !drawerOpen && screen != RootScreen.PROJECTS) {
+        screen = RootScreen.PROJECTS
+        drawerOpen = true
+    }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
     var showPrivacyPolicy by rememberSaveable { mutableStateOf(false) }
     val marketplaceInstalledIds by viewModel.marketplaceInstalledIds.collectAsStateWithLifecycle()
@@ -2430,23 +2499,27 @@ private fun RootScreenHost(
     } else {
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            bottomBar = {
-            if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                RootScreen.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = screen == tab,
-                        onClick = { screen = tab },
-                        icon = { Icon(tab.icon, contentDescription = tab.label) },
-                        label = { Text(tab.label, fontSize = 11.sp) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                        ),
-                    )
-                }
-            }
-        },
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            if (screen == RootScreen.PROJECTS) "Kodex" else screen.label,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { drawerOpen = true }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { viewModel.createQuickProject() }) {
+                            Icon(Icons.Default.Edit, contentDescription = "New chat")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+                )
+            },
     ) { padding ->
         val authState = authViewModel?.authState?.collectAsStateWithLifecycle()?.value ?: AuthState.Unauthenticated
         val authUiState = authViewModel?.uiState?.collectAsStateWithLifecycle()?.value
@@ -2460,6 +2533,43 @@ private fun RootScreenHost(
             )
         }
         Column(Modifier.fillMaxSize().padding(padding)) {
+            val componentUpdates = com.vayro.app.update.ComponentUpdateNotifier.updatesAvailable
+            if (componentUpdates.isNotEmpty() && screen != RootScreen.SETTINGS) {
+                val bannerText = "Update available for " + componentUpdates.first() +
+                    (if (componentUpdates.size > 1) " +" + (componentUpdates.size - 1) + " more" else "") +
+                    " — tap to install"
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { screen = RootScreen.SETTINGS },
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(14.dp),
+                ) {
+                    Row(
+                        Modifier.padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Default.SystemUpdate,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            bannerText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { com.vayro.app.update.ComponentUpdateNotifier.dismiss() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss")
+                        }
+                    }
+                }
+            }
             Box(Modifier.weight(1f).fillMaxWidth()) {
             when (screen) {
                 RootScreen.PROJECTS -> ProjectsScreen(
@@ -2525,7 +2635,7 @@ private fun RootScreenHost(
                     onSetGeminiApiModel = viewModel::setGeminiApiModel,
                     teamOrchestrator = viewModel.teamOrchestrator,
                 )
-                RootScreen.SKILLS -> SkillsScreen(
+                RootScreen.SKILLS -> key(skillsTabEpoch) { SkillsScreen(
                     installed = state.skills,
                     results = state.skillSearchResults,
                     busy = state.skillsBusy,
@@ -2564,7 +2674,8 @@ private fun RootScreenHost(
                     mcpRunTarget = state.mcpRunTarget,
                     mcpRunRunning = state.mcpRunRunning,
                     onClearMcpRunResult = viewModel::clearMcpRunResult,
-                )
+                    initialTab = skillsInitialTab,
+                ) }
                 RootScreen.MARKETPLACE -> MarketplaceScreen(
                     onBack = { screen = RootScreen.PROJECTS },
                     onInstallItem = { item -> viewModel.installMarketplaceItem(item) },
@@ -2630,6 +2741,57 @@ private fun RootScreenHost(
         }
     }
 }
+    if (drawerOpen) {
+        KodexDrawerOverlay(
+            state = state,
+            currentScreen = screen,
+            onClose = { drawerOpen = false },
+            onNewChat = {
+                drawerOpen = false
+                viewModel.createQuickProject()
+            },
+            onOpenProject = { project ->
+                drawerOpen = false
+                viewModel.openProject(project)
+            },
+            onSelectScreen = { target ->
+                screen = target
+                drawerOpen = false
+            },
+            onOpenSkills = {
+                skillsInitialTab = 0
+                skillsTabEpoch++
+                screen = RootScreen.SKILLS
+                drawerOpen = false
+            },
+            onOpenSkillsMcp = {
+                skillsInitialTab = 1
+                skillsTabEpoch++
+                screen = RootScreen.SKILLS
+                drawerOpen = false
+            },
+            onOpenAppFactory = {
+                drawerOpen = false
+                onOpenAppFactory()
+            },
+            onOpenTeamStudio = {
+                drawerOpen = false
+                onOpenTeamStudio()
+            },
+            onOpenGitHubBuild = {
+                drawerOpen = false
+                onOpenCloudHybrid()
+            },
+            onOpenGitHubStudio = {
+                drawerOpen = false
+                onOpenGitHubStudio()
+            },
+            onOpenTerminal = {
+                drawerOpen = false
+                showQuickTerminal = true
+            },
+        )
+    }
     if (showQuickTerminal) {
         QuickTerminalSheet(
             onDismiss = { showQuickTerminal = false },
@@ -5328,6 +5490,8 @@ private fun WorkspaceScreen(
                         onTerminalPrepare(command)
                     },
                     onOpenLink = viewModel?.let { vm -> { url: String -> vm.openPreviewUrl(url) } },
+                    onInstallApkPath = { path -> viewModel?.installBuiltApkByPath(path) },
+                    onShareApkPath = { path -> viewModel?.shareBuiltApkByPath(path) },
                     executionMode = state.executionMode,
                     onSelectExecutionMode = onSelectExecutionMode,
                     scratchpadItems = state.scratchpadItems,
@@ -6085,6 +6249,8 @@ private fun ChatTab(
     onSaveAttachment: (ChatAttachment) -> Unit = {},
     onRunInTerminal: (String) -> Unit,
     onOpenLink: ((String) -> Unit)? = null,
+    onInstallApkPath: (String) -> Unit = {},
+    onShareApkPath: (String) -> Unit = {},
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
@@ -6338,6 +6504,8 @@ private fun ChatTab(
                             onOpenAttachment = onOpenAttachment,
                             onSaveAttachment = onSaveAttachment,
                             onOpenLink = onOpenLink,
+                            onInstallApkPath = onInstallApkPath,
+                            onShareApkPath = onShareApkPath,
                             onAddRoadmapComment = { stepId ->
                                 val stepTitle = message.roadmap?.steps?.firstOrNull { it.id == stepId }?.title ?: ""
                                 message.roadmap?.let { r ->
@@ -7101,6 +7269,8 @@ private fun MessageBubble(
     onOpenLink: ((String) -> Unit)? = null,
     onAddRoadmapComment: (stepId: String?) -> Unit = {},
     onApproveAndBuildRoadmap: () -> Unit = {},
+    onInstallApkPath: (String) -> Unit = {},
+    onShareApkPath: (String) -> Unit = {},
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -7108,6 +7278,15 @@ private fun MessageBubble(
     // Links in agent replies get Copy/Open cards under the bubble (max 3).
     val messageLinks = remember(message.id, message.text, message.fromUser) {
         if (message.fromUser) emptyList() else ChatLinkExtractor.extract(message.text).take(3)
+    }
+    // Kodex delivery card: an APK path in the agent's final message becomes
+    // an Install/Share card (the delivery contract asks for the path).
+    val deliveredApkPath = remember(message.id, message.text, message.fromUser) {
+        if (message.fromUser) {
+            null
+        } else {
+            Regex("[A-Za-z0-9_./~-]+\.apk").find(message.text)?.value
+        }
     }
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.fromUser) Alignment.End else Alignment.Start) {
@@ -7221,6 +7400,16 @@ private fun MessageBubble(
                     ChatLinkCard(url = url, onOpenLink = onOpenLink)
                 }
             }
+        }
+        if (!isStreaming && deliveredApkPath != null) {
+            DeliveredApkCard(
+                apkPath = deliveredApkPath,
+                onInstall = onInstallApkPath,
+                onShare = onShareApkPath,
+                modifier = Modifier
+                    .fillMaxWidth(if (message.fromUser) .82f else .92f)
+                    .padding(top = 6.dp),
+            )
         }
     }
 }
@@ -7505,7 +7694,7 @@ private fun DiffLineRow(line: DiffLine) {
         text = "$oldNumber $newNumber  $marker ${line.text}",
         modifier = Modifier.fillMaxWidth().background(background).padding(horizontal = 8.dp, vertical = 2.dp),
         color = foreground,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
         fontSize = 11.sp,
         lineHeight = 16.sp,
         softWrap = false,
@@ -7543,3 +7732,317 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
         )
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Kodex side drawer (v3.2.31): ChatGPT/Claude-style menu that holds every
+// section in one place. Home stays chat-first; the drawer is an overlay, so
+// opening a section and pressing Back returns to Home with this drawer
+// re-opened at the same place (RootScreenHost owns that Back behaviour).
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun KodexDrawerOverlay(
+    state: AppUiState,
+    currentScreen: RootScreen,
+    onClose: () -> Unit,
+    onNewChat: () -> Unit,
+    onOpenProject: (Project) -> Unit,
+    onSelectScreen: (RootScreen) -> Unit,
+    onOpenSkills: () -> Unit,
+    onOpenSkillsMcp: () -> Unit,
+    onOpenAppFactory: () -> Unit,
+    onOpenTeamStudio: () -> Unit,
+    onOpenGitHubBuild: () -> Unit,
+    onOpenGitHubStudio: () -> Unit,
+    onOpenTerminal: () -> Unit,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    BackHandler(onBack = onClose)
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.5f))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = onClose,
+                ),
+        )
+        Surface(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .width(308.dp),
+            shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            shadowElevation = 24.dp,
+        ) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    BrandMark(compact = true)
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text("Kodex", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text(
+                            "Local AI coding workspace",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                KodexDrawerItem(
+                    icon = Icons.Default.Edit,
+                    label = "New Chat",
+                    selected = false,
+                    onClick = onNewChat,
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    placeholder = { Text("Search projects") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                )
+                val history = remember(state.projects, query) {
+                    state.projects
+                        .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+                        .sortedByDescending { it.updatedAtMillis }
+                        .take(8)
+                }
+                if (history.isNotEmpty()) {
+                    KodexDrawerSectionLabel("History")
+                    history.forEach { project ->
+                        KodexDrawerItem(
+                            icon = Icons.Default.History,
+                            label = project.name,
+                            selected = false,
+                            badge = project.formattedUpdatedAt,
+                            onClick = { onOpenProject(project) },
+                        )
+                    }
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+                KodexDrawerSectionLabel("Workspace")
+                KodexDrawerItem(
+                    icon = Icons.Default.SmartToy,
+                    label = "Providers & Agents",
+                    selected = currentScreen == RootScreen.AGENT,
+                    onClick = { onSelectScreen(RootScreen.AGENT) },
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Extension,
+                    label = "Skills",
+                    selected = false,
+                    onClick = onOpenSkills,
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Storefront,
+                    label = "Marketplace",
+                    selected = currentScreen == RootScreen.MARKETPLACE,
+                    onClick = { onSelectScreen(RootScreen.MARKETPLACE) },
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Hub,
+                    label = "Connectors · MCP",
+                    selected = false,
+                    onClick = onOpenSkillsMcp,
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Folder,
+                    label = "Projects / Files",
+                    selected = currentScreen == RootScreen.PROJECTS,
+                    onClick = { onSelectScreen(RootScreen.PROJECTS) },
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Factory,
+                    label = "App Factory",
+                    selected = false,
+                    onClick = onOpenAppFactory,
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Groups,
+                    label = "Team Studio",
+                    selected = false,
+                    onClick = onOpenTeamStudio,
+                )
+                KodexDrawerSectionLabel("Tools")
+                KodexDrawerItem(
+                    icon = Icons.Default.Terminal,
+                    label = "Terminal",
+                    selected = false,
+                    onClick = onOpenTerminal,
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.CloudQueue,
+                    label = "GitHub Build",
+                    selected = false,
+                    onClick = onOpenGitHubBuild,
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Code,
+                    label = "GitHub Studio",
+                    selected = false,
+                    onClick = onOpenGitHubStudio,
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+                KodexDrawerItem(
+                    icon = Icons.Default.Settings,
+                    label = "Settings",
+                    selected = currentScreen == RootScreen.SETTINGS,
+                    onClick = { onSelectScreen(RootScreen.SETTINGS) },
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun KodexDrawerSectionLabel(text: String) {
+    Text(
+        text,
+        modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+}
+
+@Composable
+private fun KodexDrawerItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    badge: String? = null,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        color = if (selected) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        } else {
+            Color.Transparent
+        },
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                icon,
+                contentDescription = label,
+                modifier = Modifier.size(20.dp),
+                tint = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                label,
+                fontSize = 14.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (badge != null) {
+                Text(
+                    badge,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// Kodex Delivered card (v3.2.31): shown under an agent message that reports
+// a built APK path — one tap Install or Share, no hunting through folders.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun DeliveredApkCard(
+    apkPath: String,
+    onInstall: (String) -> Unit,
+    onShare: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = modifier,
+    ) {
+        Column(
+            Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = PocketGreen,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Delivered", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+            Text(
+                apkPath.substringAfterLast('/'),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+            )
+            Text(
+                apkPath,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onInstall(apkPath) },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Install")
+                }
+                OutlinedButton(
+                    onClick = { onShare(apkPath) },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Share")
+                }
+            }
+        }
+    }
+}
+

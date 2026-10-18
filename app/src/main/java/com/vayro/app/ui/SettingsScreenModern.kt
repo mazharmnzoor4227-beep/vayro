@@ -1372,6 +1372,10 @@ private fun EnvironmentUpdateCenter() {
     var busyId by remember { mutableStateOf<String?>(null) }
     var updateJob by remember { mutableStateOf<Job?>(null) }
     var operationMessage by remember { mutableStateOf<String?>(null) }
+    // Kodex: real install progress (fraction + bytes come from
+    // RuntimeInstallProgress); shown as a live percentage while a
+    // component installs/updates, never a made-up number.
+    var operationProgress by remember { mutableStateOf<com.vayro.app.runtime.RuntimeInstallProgress?>(null) }
 
     fun refresh() {
         val updateManager = manager ?: run {
@@ -1481,6 +1485,22 @@ private fun EnvironmentUpdateCenter() {
         }
         message?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         operationMessage?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        operationProgress?.let { progress ->
+            if (!progress.indeterminate && progress.fraction > 0f) {
+                val pct = (progress.fraction * 100).toInt().coerceIn(0, 100)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LinearProgressIndicator(
+                        progress = { progress.fraction.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "$pct% — ${100 - pct}% left",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
 
         // Medium: the "Runtime resources" card + DevStack list used to be
         // rendered twice on this one screen — here and in the Developer
@@ -1526,6 +1546,7 @@ private fun EnvironmentUpdateCenter() {
                                                 manager?.update(component) { progress ->
                                                     withContext(Dispatchers.Main.immediate) {
                                                         operationMessage = progress.message
+                                                        operationProgress = progress
                                                     }
                                                 }
                                             }
@@ -1536,6 +1557,7 @@ private fun EnvironmentUpdateCenter() {
                                             else error.message ?: "Update failed."
                                         } finally {
                                             busyId = null
+                                            operationProgress = null
                                             refreshAfterEnvironmentAction()
                                         }
                                     }
@@ -1569,6 +1591,7 @@ private fun EnvironmentUpdateCenter() {
                                                     manager?.rollback(component) { progress ->
                                                         withContext(Dispatchers.Main.immediate) {
                                                             operationMessage = progress.message
+                                                            operationProgress = progress
                                                         }
                                                     }
                                                 }
@@ -1577,6 +1600,7 @@ private fun EnvironmentUpdateCenter() {
                                                 operationMessage = error.message ?: "Rollback unavailable."
                                             } finally {
                                                 busyId = null
+                                                operationProgress = null
                                                 refreshAfterEnvironmentAction()
                                             }
                                         }

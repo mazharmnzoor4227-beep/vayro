@@ -99,6 +99,7 @@ private fun successGreen(): Color =
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SkillsScreen(
+    initialTab: Int = 0,
     installed: List<SkillInfo>,
     results: List<SkillSearchResult>,
     busy: Boolean,
@@ -139,7 +140,7 @@ fun SkillsScreen(
     mcpRunRunning: Boolean = false,
     onClearMcpRunResult: () -> Unit = {},
 ) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var selectedTab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab) }
     var query by rememberSaveable { mutableStateOf("") }
     var githubUrl by rememberSaveable { mutableStateOf("") }
     var showAddCustomMcpDialog by rememberSaveable { mutableStateOf(false) }

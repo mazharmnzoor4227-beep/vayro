@@ -118,6 +118,7 @@ fun AppFactoryScreen(
     keystoreConfig: KeystoreConfig?,
     storeListingBundle: StoreListingBundle?,
     statusMessage: String?,
+    githubConnected: Boolean = false,
     onBack: () -> Unit,
     onGenerateBlueprint: (prompt: String, framework: AppFramework, mode: BuildMode, archetype: AppFactoryBlueprintEngine.Archetype?) -> Unit,
     onScaffoldProject: () -> Unit,
@@ -251,7 +252,7 @@ private fun BlueprintTab(
 ) {
     var promptText by rememberSaveable { mutableStateOf("") }
     var selectedFramework by remember { mutableStateOf(AppFramework.ANDROID_COMPOSE) }
-    var selectedBuildMode by remember { mutableStateOf(BuildMode.ON_DEVICE) }
+    var selectedBuildMode by remember { mutableStateOf(if (githubConnected) BuildMode.GITHUB_ACTIONS else BuildMode.ON_DEVICE) }
     var selectedArchetype by remember { mutableStateOf<AppFactoryBlueprintEngine.Archetype?>(null) }
 
     LazyColumn(
@@ -546,7 +547,7 @@ private fun BuildAutomationTab(
     onInstallApk: (File) -> Unit
 ) {
     var selectedArtifact by remember { mutableStateOf(BuildArtifactType.APK_DEBUG) }
-    var selectedMode by remember { mutableStateOf(BuildMode.ON_DEVICE) }
+    var selectedMode by remember { mutableStateOf(if (githubConnected) BuildMode.GITHUB_ACTIONS else BuildMode.ON_DEVICE) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

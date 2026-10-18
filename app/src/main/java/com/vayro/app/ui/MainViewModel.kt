@@ -545,6 +545,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         credentialStore = mcpCredentialStore,
     )
     val gitHubClient = com.vayro.app.network.GitHubClient()
+
+    /**
+     * Kodex: drives the GitHub Build (Cloud Hybrid) screen — dispatch a
+     * workflow on GitHub Actions and watch the run, so heavy builds stay
+     * off the phone. Built lazily from the same client/gateway the rest
+     * of the GitHub features use.
+     */
+    val githubActionsCoordinator by lazy {
+        com.vayro.app.actions.GitHubActionsDispatchCoordinator(
+            gitHubClient = gitHubClient,
+            workflowAutomation = com.vayro.app.git.automation.WorkflowAutomation(gitHubClient),
+            safetyGateway = safetyGateway,
+            ghAuthStatus = {
+                val snapshot = _state.value
+                (snapshot.githubAuthStatus == GitHubAuthStatus.CONNECTED) to snapshot.githubLogin
+            },
+            onStartDeviceFlow = { startGitHubLogin() },
+            scope = viewModelScope,
+        )
+    }
     val gitWorkflowEngine = com.vayro.app.git.workflow.GitHubWorkflowEngine(
         gitDomainController,
         gitHubClient,
@@ -5326,12 +5346,68 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
 
     fun buildAppFactoryApp(
         artifactType: com.vayro.app.factory.model.BuildArtifactType = com.vayro.app.factory.model.BuildArtifactType.APK_DEBUG,
-        buildMode: com.vayro.app.factory.model.BuildMode = com.vayro.app.factory.model.BuildMode.ON_DEVICE,
+        // Kodex speed default: build on GitHub CI when GitHub is connected
+        // (keeps heavy Gradle work off the phone); on-device stays a choice.
+        buildMode: com.vayro.app.factory.model.BuildMode = if (_state.value.githubAuthStatus == GitHubAuthStatus.CONNECTED) {
+            com.vayro.app.factory.model.BuildMode.GITHUB_ACTIONS
+        } else {
+            com.vayro.app.factory.model.BuildMode.ON_DEVICE
+        },
         targetDirectory: File? = null
     ) = appFactoryCoordinator.buildAppFactoryApp(artifactType, buildMode, targetDirectory)
 
     fun installBuiltApk(apkFile: File) =
         appFactoryCoordinator.installBuiltApk(apkFile)
+
+    /**
+     * Kodex delivery card: resolves an APK path the agent reported in chat
+     * (workspace-relative, or a guest /workspace/<slug>/ path) to the real
+     * file inside the active project's workspace.
+     */
+    private fun resolveReportedApk(path: String): File? {
+        val project = _state.value.activeProject ?: return null
+        val root = projectWorkspaceRoot(project)
+        val cleaned = path.trim().trim('`', '"', '\'', ',', ')')
+        val guestStripped = cleaned
+            .removePrefix("/workspace/${project.slug}/")
+            .removePrefix("workspace/${project.slug}/")
+        return listOf(File(cleaned), File(root, cleaned), File(root, guestStripped))
+            .firstOrNull { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+    }
+
+    fun installBuiltApkByPath(path: String) {
+        val apk = resolveReportedApk(path) ?: run {
+            _state.update { it.copy(toastMessage = "APK not found: $path") }
+            return
+        }
+        installBuiltApk(apk)
+    }
+
+    fun shareBuiltApkByPath(path: String) {
+        val apk = resolveReportedApk(path) ?: run {
+            _state.update { it.copy(toastMessage = "APK not found: $path") }
+            return
+        }
+        val context = getApplication<android.app.Application>()
+        runCatching {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.files",
+                apk,
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/vnd.android.package-archive"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(
+                Intent.createChooser(send, "Share ${apk.name}")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure {
+            _state.update { it.copy(toastMessage = "Could not share the APK.") }
+        }
+    }
 
     fun generateReleaseKeystore(
         targetDirectory: File? = null,
