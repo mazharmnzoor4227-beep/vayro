@@ -6298,6 +6298,7 @@ private fun ChatTab(
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "tools_toggle_rotation",
     )
+    val chatContext = LocalContext.current
     var showYouTubeDialog by rememberSaveable { mutableStateOf(false) }
     var showTikTokDialog by rememberSaveable { mutableStateOf(false) }
     var showWebLinkDialog by rememberSaveable { mutableStateOf(false) }
@@ -6359,7 +6360,7 @@ private fun ChatTab(
                 chatScope.launch {
                     val page = com.vayro.app.ui.components.fetchWebPageText(url)
                     if (page == null) {
-                        Toast.makeText(context, "Could not fetch that page.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(chatContext, "Could not fetch that page.", Toast.LENGTH_SHORT).show()
                     } else {
                         val (pageTitle, pageText) = page
                         onSend(
