@@ -44,6 +44,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -118,6 +119,7 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -163,6 +165,8 @@ import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MovieFilter
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.ViewInAr
@@ -205,6 +209,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -342,6 +347,7 @@ fun PocketDevApp(
     LaunchedEffect(Unit) {
         com.vayro.app.update.UpdateNotifier.checkAndNotify(context)
         com.vayro.app.update.ComponentUpdateNotifier.check(context)
+        viewModel.autoUpdateToolsAndSkills()
     }
     val projectsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     var guestDismissedAuth by rememberSaveable { mutableStateOf(false) }
@@ -2656,6 +2662,7 @@ private fun RootScreenHost(
                     onUpdate = viewModel::updateSkill,
                     autoUpdateEnabled = state.autoUpdateToolsAndSkills,
                     onToggleAutoUpdate = viewModel::toggleAutoUpdateToolsAndSkills,
+                    autoUpdateStatus = state.toolsAutoUpdateMessage,
                     mcpServers = state.mcpServers,
                     mcpCatalog = state.mcpCatalog,
                     mcpTools = state.mcpTools,
@@ -4904,7 +4911,7 @@ private fun ReadOnlyProjectScreen(
                 agentKind = state.agentKind,
                 workspaceFiles = emptyList(),
                 pendingAttachments = emptyList(),
-                onAttach = {},
+                onAttach = { _ -> },
                 onRemoveAttachment = {},
                 onOpenAttachment = {},
                 onRunInTerminal = {},
@@ -5475,8 +5482,8 @@ private fun WorkspaceScreen(
                     agentKind = state.agentKind,
                     workspaceFiles = state.workspaceFiles,
                     pendingAttachments = state.pendingAttachments,
-                    onAttach = {
-                        attachmentLauncher.launch(arrayOf("*/*"))
+                    onAttach = { types ->
+                        attachmentLauncher.launch(types)
                     },
                     onRemoveAttachment = onRemoveAttachment,
                     onOpenAttachment = onOpenAttachment,
@@ -5492,6 +5499,8 @@ private fun WorkspaceScreen(
                     onOpenLink = viewModel?.let { vm -> { url: String -> vm.openPreviewUrl(url) } },
                     onInstallApkPath = { path -> viewModel?.installBuiltApkByPath(path) },
                     onShareApkPath = { path -> viewModel?.shareBuiltApkByPath(path) },
+                    onSaveApkPath = { path -> viewModel?.saveBuiltApkByPath(path) },
+                    onLoadApkInfo = { path -> viewModel?.apkDeliveryInfo(path) },
                     executionMode = state.executionMode,
                     onSelectExecutionMode = onSelectExecutionMode,
                     scratchpadItems = state.scratchpadItems,
@@ -6243,7 +6252,7 @@ private fun ChatTab(
     agentKind: AgentKind,
     workspaceFiles: List<WorkspaceEntry>,
     pendingAttachments: List<ChatAttachment>,
-    onAttach: () -> Unit,
+    onAttach: (Array<String>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onSaveAttachment: (ChatAttachment) -> Unit = {},
@@ -6251,6 +6260,8 @@ private fun ChatTab(
     onOpenLink: ((String) -> Unit)? = null,
     onInstallApkPath: (String) -> Unit = {},
     onShareApkPath: (String) -> Unit = {},
+    onSaveApkPath: (String) -> Unit = {},
+    onLoadApkInfo: suspend (String) -> ApkDeliveryInfo? = { null },
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
@@ -6288,6 +6299,9 @@ private fun ChatTab(
         label = "tools_toggle_rotation",
     )
     var showYouTubeDialog by rememberSaveable { mutableStateOf(false) }
+    var showTikTokDialog by rememberSaveable { mutableStateOf(false) }
+    var showWebLinkDialog by rememberSaveable { mutableStateOf(false) }
+    var showGitHubDialog by rememberSaveable { mutableStateOf(false) }
     var mentionQuery by remember { mutableStateOf<String?>(null) }
     var activeCommentTarget by remember { mutableStateOf<Triple<String, String?, String>?>(null) }
     val chatScope = rememberCoroutineScope()
@@ -6304,6 +6318,73 @@ private fun ChatTab(
                 )
                 onSend(videoPrompt)
                 prompt = ""
+            },
+        )
+    }
+
+    if (showTikTokDialog) {
+        com.vayro.app.ui.components.TikTokLinkDialog(
+            onDismiss = { showTikTokDialog = false },
+            onAnalyze = { url, question ->
+                showTikTokDialog = false
+                chatScope.launch {
+                    val info = com.vayro.app.ui.components.fetchTikTokInfo(url)
+                    val message = buildString {
+                        appendLine("TikTok video shared: $url")
+                        if (info != null) {
+                            appendLine("Title: ${info.title}")
+                            appendLine("Author: ${info.authorName} (${info.authorUrl})")
+                            appendLine("Thumbnail: ${info.thumbnailUrl}")
+                            appendLine()
+                            appendLine("Note: TikTok gives no public transcript. Base your analysis on the title, author and thumbnail above, and say clearly what else could not be obtained.")
+                        } else {
+                            appendLine("Note: the app could not fetch public details for this link (it may be private, removed, or region-locked). Only the link itself is available - say so clearly.")
+                        }
+                        if (!question.isNullOrBlank()) {
+                            appendLine()
+                            appendLine("My question: $question")
+                        }
+                    }
+                    onSend(message.trim())
+                }
+            },
+        )
+    }
+
+    if (showWebLinkDialog) {
+        com.vayro.app.ui.components.WebLinkDialog(
+            onDismiss = { showWebLinkDialog = false },
+            onFetch = { url ->
+                showWebLinkDialog = false
+                chatScope.launch {
+                    val page = com.vayro.app.ui.components.fetchWebPageText(url)
+                    if (page == null) {
+                        Toast.makeText(context, "Could not fetch that page.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val (pageTitle, pageText) = page
+                        onSend(
+                            buildString {
+                                appendLine("Web page shared: $url")
+                                if (pageTitle.isNotBlank()) appendLine("Title: $pageTitle")
+                                appendLine()
+                                appendLine(pageText.take(6000))
+                                if (pageText.length > 6000) appendLine("\n… (page text truncated)")
+                                appendLine()
+                                appendLine("Use this page content as context for my request.")
+                            },
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+    if (showGitHubDialog) {
+        com.vayro.app.ui.components.GitHubRepoDialog(
+            onDismiss = { showGitHubDialog = false },
+            onInspect = { url ->
+                showGitHubDialog = false
+                onSend("Clone this GitHub repository into the workspace, inspect its structure (file tree, README, manifest/build files, entry points), and summarize what it does, its main features, and how it is built: $url")
             },
         )
     }
@@ -6506,6 +6587,8 @@ private fun ChatTab(
                             onOpenLink = onOpenLink,
                             onInstallApkPath = onInstallApkPath,
                             onShareApkPath = onShareApkPath,
+                            onSaveApkPath = onSaveApkPath,
+                            onLoadApkInfo = onLoadApkInfo,
                             onAddRoadmapComment = { stepId ->
                                 val stepTitle = message.roadmap?.steps?.firstOrNull { it.id == stepId }?.title ?: ""
                                 message.roadmap?.let { r ->
@@ -6667,29 +6750,32 @@ private fun ChatTab(
                                 .padding(vertical = 4.dp),
                         ) {
                             val attachEnabled = pendingAttachments.size < 5
-                            Row(
-                                modifier = Modifier
-                                    .clickable {
-                                        if (attachEnabled) {
-                                            toolsOpen = false
-                                            onAttach()
-                                        }
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                            AttachMenuRow(
+                                icon = Icons.Default.Image,
+                                title = "Image",
+                                subtitle = "Photo or screenshot — the agent can look at it",
+                                enabled = attachEnabled,
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.AttachFile,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = if (pendingAttachments.isNotEmpty()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = "Attach files",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = if (attachEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                toolsOpen = false
+                                onAttach(arrayOf("image/*"))
+                            }
+                            AttachMenuRow(
+                                icon = Icons.Default.VideoFile,
+                                title = "Video",
+                                subtitle = "Clip or screen recording",
+                                enabled = attachEnabled,
+                            ) {
+                                toolsOpen = false
+                                onAttach(arrayOf("video/*"))
+                            }
+                            AttachMenuRow(
+                                icon = Icons.Default.AttachFile,
+                                title = "File",
+                                subtitle = "Any file, including ZIP",
+                                enabled = attachEnabled,
+                            ) {
+                                toolsOpen = false
+                                onAttach(arrayOf("*/*"))
                             }
                             Row(
                                 modifier = Modifier
@@ -6744,6 +6830,33 @@ private fun ChatTab(
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
+                            }
+                            AttachMenuRow(
+                                icon = Icons.Default.MusicNote,
+                                title = "TikTok",
+                                subtitle = "Public video details from a link",
+                                enabled = true,
+                            ) {
+                                toolsOpen = false
+                                showTikTokDialog = true
+                            }
+                            AttachMenuRow(
+                                icon = Icons.Default.Link,
+                                title = "Web link",
+                                subtitle = "Fetch a page as agent context",
+                                enabled = true,
+                            ) {
+                                toolsOpen = false
+                                showWebLinkDialog = true
+                            }
+                            AttachMenuRow(
+                                icon = Icons.Default.Code,
+                                title = "GitHub repo",
+                                subtitle = "Clone and inspect a repository",
+                                enabled = true,
+                            ) {
+                                toolsOpen = false
+                                showGitHubDialog = true
                             }
                         }
                     }
@@ -7271,6 +7384,8 @@ private fun MessageBubble(
     onApproveAndBuildRoadmap: () -> Unit = {},
     onInstallApkPath: (String) -> Unit = {},
     onShareApkPath: (String) -> Unit = {},
+    onSaveApkPath: (String) -> Unit = {},
+    onLoadApkInfo: suspend (String) -> ApkDeliveryInfo? = { null },
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -7285,7 +7400,7 @@ private fun MessageBubble(
         if (message.fromUser) {
             null
         } else {
-            Regex("[A-Za-z0-9_./~-]+\.apk").find(message.text)?.value
+            Regex("""[A-Za-z0-9_./~-]+\.apk""").find(message.text)?.value
         }
     }
 
@@ -7307,6 +7422,7 @@ private fun MessageBubble(
                         markdown = displayText,
                         modifier = Modifier.padding(start = 14.dp, end = 44.dp),
                         color = if (message.fromUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                        fontFamily = if (message.fromUser) null else com.vayro.app.ui.theme.SourceSerifFontFamily,
                     )
                 } else SelectionContainer {
                     if (message.fromUser) {
@@ -7333,6 +7449,7 @@ private fun MessageBubble(
                             modifier = Modifier.padding(start = 14.dp, end = 44.dp),
                             color = MaterialTheme.colorScheme.onSurface,
                             onRunCode = onRunInTerminal,
+                            fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                         )
                     }
                 }
@@ -7389,6 +7506,42 @@ private fun MessageBubble(
                 }
             }
         }
+        if (!message.fromUser && !isStreaming && message.text.isNotBlank()) {
+            val listeningThis = com.vayro.app.voice.ReadAloudPlayer.playingMessageId == message.id
+            TextButton(
+                onClick = {
+                    com.vayro.app.voice.ReadAloudPlayer.toggle(context, message.id, message.text)
+                },
+                modifier = Modifier.fillMaxWidth(.92f),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        if (listeningThis) Icons.Default.Stop else Icons.Default.VolumeUp,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = if (listeningThis) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (listeningThis) "Stop" else "Listen",
+                        fontSize = 12.sp,
+                        color = if (listeningThis) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
+            }
+        }
         if (!isStreaming && messageLinks.isNotEmpty()) {
             Column(
                 Modifier
@@ -7404,8 +7557,10 @@ private fun MessageBubble(
         if (!isStreaming && deliveredApkPath != null) {
             DeliveredApkCard(
                 apkPath = deliveredApkPath,
+                loadInfo = onLoadApkInfo,
                 onInstall = onInstallApkPath,
                 onShare = onShareApkPath,
+                onSave = onSaveApkPath,
                 modifier = Modifier
                     .fillMaxWidth(if (message.fromUser) .82f else .92f)
                     .padding(top = 6.dp),
@@ -7454,6 +7609,27 @@ private fun ChatLinkCard(
                 Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Copy", fontSize = 12.sp)
+            }
+            IconButton(
+                onClick = {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, url)
+                    }
+                    runCatching {
+                        context.startActivity(Intent.createChooser(send, "Share link"))
+                    }.onFailure {
+                        Toast.makeText(context, "Could not share this link", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    Icons.Default.Share,
+                    contentDescription = "Share link",
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             TextButton(
                 onClick = {
@@ -7774,7 +7950,19 @@ private fun KodexDrawerOverlay(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxHeight()
-                .width(308.dp),
+                .width(308.dp)
+                .pointerInput(onClose) {
+                    var totalDrag = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { totalDrag = 0f },
+                        onDragEnd = { totalDrag = 0f },
+                        onDragCancel = { totalDrag = 0f },
+                        onHorizontalDrag = { _, dragAmount ->
+                            totalDrag += dragAmount
+                            if (totalDrag < -90f) onClose()
+                        },
+                    )
+                },
             shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 8.dp,
@@ -7987,16 +8175,25 @@ private fun KodexDrawerItem(
 
 // ---------------------------------------------------------------------------
 // Kodex Delivered card (v3.2.31): shown under an agent message that reports
-// a built APK path — one tap Install or Share, no hunting through folders.
+// a built APK path. Metadata (app name, package, version, size, stack,
+// SHA-256) is read from the real APK file — never invented. Buttons:
+// Install, Save (to Downloads), Share.
 // ---------------------------------------------------------------------------
 
 @Composable
 private fun DeliveredApkCard(
     apkPath: String,
+    loadInfo: suspend (String) -> ApkDeliveryInfo?,
     onInstall: (String) -> Unit,
     onShare: (String) -> Unit,
+    onSave: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val info by produceState<ApkDeliveryInfo?>(initialValue = null, apkPath) {
+        value = loadInfo(apkPath)
+    }
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -8022,18 +8219,49 @@ private fun DeliveredApkCard(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
             )
-            Text(
-                apkPath,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
-            )
+            val meta = info
+            if (meta == null) {
+                Text(
+                    "Reading APK info…",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                DeliveredMetaRow("App", meta.appName)
+                DeliveredMetaRow("Package", meta.packageId)
+                DeliveredMetaRow("Version", meta.versionLabel)
+                DeliveredMetaRow("Size", meta.sizeLabel)
+                DeliveredMetaRow("Stack", meta.stack)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "SHA-256",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(64.dp),
+                    )
+                    Text(
+                        meta.sha256.take(16) + "…",
+                        fontSize = 11.sp,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
+                        modifier = Modifier.clickable {
+                            clipboardManager.setText(AnnotatedString(meta.sha256))
+                            Toast.makeText(context, "SHA-256 copied", Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { onInstall(apkPath) },
                     modifier = Modifier.weight(1f),
                 ) {
                     Text("Install")
+                }
+                OutlinedButton(
+                    onClick = { onSave(apkPath) },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Save")
                 }
                 OutlinedButton(
                     onClick = { onShare(apkPath) },
@@ -8046,3 +8274,63 @@ private fun DeliveredApkCard(
     }
 }
 
+@Composable
+private fun DeliveredMetaRow(label: String, value: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Text(
+            label,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(64.dp),
+        )
+        Text(value, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kodex attach menu row (v3.2.31): one row of the composer's "+" menu.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun AttachMenuRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = if (enabled) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+            },
+        )
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                subtitle,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}

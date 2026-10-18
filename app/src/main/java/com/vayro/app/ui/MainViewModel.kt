@@ -217,6 +217,19 @@ data class RuntimeHealthSnapshot(
     val memoryMaxBytes: Long = 0L,
 )
 
+/**
+ * Kodex: metadata read from a real built APK (package archive info, zip
+ * contents, SHA-256) for the chat Delivered card. Nothing here is guessed.
+ */
+data class ApkDeliveryInfo(
+    val appName: String,
+    val packageId: String,
+    val versionLabel: String,
+    val sizeLabel: String,
+    val stack: String,
+    val sha256: String,
+)
+
 data class AppUiState(
     val startupStage: StartupStage = StartupStage.CHECKING,
     val startupProgress: Float = 0f,
@@ -5406,6 +5419,96 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
             )
         }.onFailure {
             _state.update { it.copy(toastMessage = "Could not share the APK.") }
+        }
+    }
+
+    /** Reads real metadata (badging, size, stack, SHA-256) from a delivered APK. */
+    suspend fun apkDeliveryInfo(path: String): ApkDeliveryInfo? = withContext(Dispatchers.IO) {
+        val apk = resolveReportedApk(path) ?: return@withContext null
+        runCatching {
+            val context = getApplication<android.app.Application>()
+            val pm = context.packageManager
+            val info = pm.getPackageArchiveInfo(apk.absolutePath, 0) ?: return@runCatching null
+            val appInfo = info.applicationInfo
+            if (appInfo != null) {
+                appInfo.sourceDir = apk.absolutePath
+                appInfo.publicSourceDir = apk.absolutePath
+            }
+            val appName = appInfo?.let { pm.getApplicationLabel(it).toString() }
+                ?.takeIf { it.isNotBlank() } ?: apk.nameWithoutExtension
+            val versionLabel = (info.versionName ?: "?") + " (" + info.longVersionCode + ")"
+            val sizeLabel = String.format("%.1f MB", apk.length() / 1_048_576.0)
+            var stack = "Android (Kotlin/Java)"
+            runCatching {
+                java.util.zip.ZipFile(apk).use { zip ->
+                    val names = zip.entries().asSequence().map { it.name }.toList()
+                    stack = when {
+                        names.any { it.contains("libflutter.so") } -> "Flutter"
+                        names.any { it == "assets/index.android.bundle" } -> "React Native"
+                        names.any { it.startsWith("assets/www/") } -> "WebView (HTML/CSS/JS)"
+                        else -> stack
+                    }
+                }
+            }
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            apk.inputStream().buffered().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            val sha = digest.digest().joinToString("") { "%02x".format(it) }
+            ApkDeliveryInfo(appName, info.packageName ?: "", versionLabel, sizeLabel, stack, sha)
+        }.getOrNull()
+    }
+
+    /** Saves a delivered APK into the device Downloads folder. */
+    fun saveBuiltApkByPath(path: String) {
+        val apk = resolveReportedApk(path) ?: run {
+            _state.update { it.copy(toastMessage = "APK not found: $path") }
+            return
+        }
+        val context = getApplication<android.app.Application>()
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, apk.name)
+                            put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
+                            put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                        }
+                        val resolver = context.contentResolver
+                        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                            ?: error("Downloads unavailable")
+                        val copied = resolver.openOutputStream(uri)?.use { out ->
+                            apk.inputStream().use { it.copyTo(out) }
+                        }
+                        if (copied == null) error("Could not open Downloads")
+                        values.clear()
+                        values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                        resolver.update(uri, values, null, null)
+                    } else {
+                        val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                            android.os.Environment.DIRECTORY_DOWNLOADS
+                        )
+                        dir.mkdirs()
+                        apk.copyTo(java.io.File(dir, apk.name), overwrite = true)
+                    }
+                    true
+                }.getOrDefault(false)
+            }
+            _state.update {
+                it.copy(
+                    toastMessage = if (saved) {
+                        "Saved ${apk.name} to Downloads"
+                    } else {
+                        "Could not save the APK to Downloads."
+                    }
+                )
+            }
         }
     }
 

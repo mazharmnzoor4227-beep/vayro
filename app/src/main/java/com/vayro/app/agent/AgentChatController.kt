@@ -156,6 +156,9 @@ CRITICAL INSTRUCTIONS FOR UNIFIED MODE PHASE 1:
                 appendLine("- ${attachment.displayName}: $guestRoot/${attachment.relativePath} (${attachment.mimeType})")
             }
             appendLine("These files were explicitly attached by the user. Inspect them only as needed for the request.")
+            appendLine("- Images: open and LOOK at the image before answering. If the user asks you to recreate or clone what it shows (a screen, design, or preview), rebuild it as closely as you can. If your runtime cannot view images, say that honestly in one line - never pretend you saw it.")
+            appendLine("- Videos: extract a set of frames with the terminal (for example: ffmpeg -i <file> -vf fps=1 frames/%03d.png) and read the duration/metadata (ffprobe), view the extracted frames, then recreate the design or flow the video shows.")
+            appendLine("- ZIP archives: extract into a subfolder, inspect the file tree and key files (README, manifest/build files, entry points), and summarize the project structure and features before making changes.")
             appendLine("</attached_files>")
         }
         if (skillContext.isNotBlank()) {

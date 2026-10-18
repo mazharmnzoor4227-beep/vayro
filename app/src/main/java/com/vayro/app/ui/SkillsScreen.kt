@@ -120,6 +120,7 @@ fun SkillsScreen(
     onUpdate: (String) -> Unit = {},
     autoUpdateEnabled: Boolean = true,
     onToggleAutoUpdate: (Boolean) -> Unit = {},
+    autoUpdateStatus: String? = null,
     mcpServers: List<McpServerInfo> = emptyList(),
     mcpCatalog: List<McpCatalogTemplate> = emptyList(),
     mcpTools: List<McpToolDefinition> = emptyList(),
@@ -373,6 +374,9 @@ fun SkillsScreen(
                                 Text("Check updates", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
                             }
                             message?.let { Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary) }
+                            autoUpdateStatus?.let {
+                                Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -1081,6 +1085,14 @@ private fun SkillCard(
             }
             Text(skill.description, fontSize = 11.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
             Text(skill.source, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth())
+            if (!skill.source.startsWith("https://github.com/", ignoreCase = true) && skill.source != "built-in") {
+                Text(
+                    "Manual — installed locally, no update source",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,

@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -86,6 +87,7 @@ fun MarkdownText(
     markdown: String,
     modifier: Modifier = Modifier,
     color: Color = Color.Unspecified,
+    fontFamily: FontFamily? = null,
     onRunCode: ((String) -> Unit)? = null,
     onOpenUri: ((String) -> Unit)? = null,
 ) {
@@ -123,7 +125,11 @@ fun MarkdownText(
         Text(
             text = fallbackText,
             modifier = modifier,
-            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+            style = if (fontFamily != null) {
+                MaterialTheme.typography.bodyMedium.copy(fontFamily = fontFamily, lineHeight = 24.sp)
+            } else {
+                MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp)
+            },
             color = color,
         )
     } else Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -143,7 +149,11 @@ fun MarkdownText(
                 is MarkdownBlock.Paragraph -> {
                     Text(
                         text = formatInlineMarkdown(block.text, effectiveOpenUri),
-                        style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+                        style = if (fontFamily != null) {
+                            MaterialTheme.typography.bodyMedium.copy(fontFamily = fontFamily, lineHeight = 24.sp)
+                        } else {
+                            MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp)
+                        },
                         color = color,
                     )
                 }
@@ -251,98 +261,63 @@ private fun TableBlock(
     color: Color,
     onOpenUri: ((String) -> Unit)?,
 ) {
-    val scrollState = rememberScrollState()
+    // Kodex: on phone-width screens a real multi-column table crushes its
+    // columns into unreadable overlap (user-reported defect). Tables render
+    // as stacked cards instead: one card per row, each cell shown as a
+    // small header label with its value under it — always fully readable.
     val visibleHeaders = table.headers.take(MAX_TABLE_COLUMNS)
     val hiddenColumns = (table.headers.size - MAX_TABLE_COLUMNS).coerceAtLeast(0)
     val visibleRows = table.rows.take(MAX_TABLE_ROWS)
     val hiddenRows = (table.rows.size - MAX_TABLE_ROWS).coerceAtLeast(0)
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(
-            modifier = Modifier
-                .horizontalScroll(scrollState)
-                .padding(8.dp),
-        ) {
-            Row(
-                modifier = Modifier
-                    .background(
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                        RoundedCornerShape(6.dp),
-                    )
-                    .padding(vertical = 8.dp, horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        visibleRows.forEach { row ->
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                visibleHeaders.forEach { header ->
-                    Box(
-                        modifier = Modifier
-                            .widthIn(min = 90.dp, max = 220.dp)
-                            .padding(horizontal = 8.dp),
-                    ) {
-                        Text(
-                            text = formatInlineMarkdown(header, onOpenUri),
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                }
-                if (hiddenColumns > 0) {
-                    Text(
-                        text = "… +$hiddenColumns cols",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                }
-            }
-            HorizontalDivider(
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                modifier = Modifier.padding(vertical = 4.dp),
-            )
-            visibleRows.forEachIndexed { rowIndex, row ->
-                Row(
-                    modifier = Modifier
-                        .padding(vertical = 6.dp, horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    visibleHeaders.indices.forEach { colIndex ->
-                        val cellText = row.getOrNull(colIndex) ?: ""
-                        Box(
-                            modifier = Modifier
-                                .widthIn(min = 90.dp, max = 220.dp)
-                                .padding(horizontal = 8.dp),
-                        ) {
+                    visibleHeaders.forEachIndexed { colIndex, header ->
+                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                             Text(
-                                text = formatInlineMarkdown(cellText, onOpenUri),
-                                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp),
+                                text = formatInlineMarkdown(header, onOpenUri),
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = formatInlineMarkdown(row.getOrNull(colIndex).orEmpty(), onOpenUri),
+                                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
                                 color = color,
                             )
                         }
                     }
-                }
-                if (rowIndex < visibleRows.size - 1) {
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                        modifier = Modifier.padding(vertical = 2.dp),
-                    )
+                    if (hiddenColumns > 0) {
+                        Text(
+                            text = "… +$hiddenColumns more fields",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
-            if (hiddenRows > 0) {
-                Text(
-                    text = "… $hiddenRows more rows hidden",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 4.dp),
-                )
-            }
+        }
+        if (hiddenRows > 0) {
+            Text(
+                text = "… $hiddenRows more rows hidden",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
+
 
 @Composable
 private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String) -> Unit)?) {
@@ -353,6 +328,16 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
         block.code.take(MAX_CODE_DISPLAY_CHARS) + "\n… (truncated for display; Copy gives the full code)"
     } else {
         block.code
+    }
+    // Kodex: long code collapses to the first lines with a Show all toggle,
+    // so a big block never pushes the whole conversation off screen.
+    var codeExpanded by remember { mutableStateOf(false) }
+    val codeLines = remember(displayCode) { displayCode.split("\n") }
+    val collapsibleCode = codeLines.size > 14
+    val shownCode = if (collapsibleCode && !codeExpanded) {
+        codeLines.take(14).joinToString("\n")
+    } else {
+        displayCode
     }
 
     Surface(
@@ -376,7 +361,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (onRunCode != null) {
@@ -413,6 +398,18 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                 }
             }
 
+            if (collapsibleCode) {
+                TextButton(
+                    onClick = { codeExpanded = !codeExpanded },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (codeExpanded) "Show less" else "Show all ${codeLines.size} lines",
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -420,8 +417,8 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                     .padding(12.dp),
             ) {
                 Text(
-                    text = displayCode,
-                    fontFamily = FontFamily.Monospace,
+                    text = shownCode,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     color = MaterialTheme.colorScheme.onSurface,

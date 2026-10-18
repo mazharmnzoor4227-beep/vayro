@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -167,7 +168,7 @@ import com.vayro.app.auth.ui.ChangePasswordDialog
 import com.vayro.app.auth.ui.DeleteAccountDialog
 import com.vayro.app.auth.ui.EditDisplayNameDialog
 
-private enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS }
+private enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, VOICE, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -864,6 +865,18 @@ fun SettingsScreen(
             }
 
             item {
+                SettingsAccordion(
+                    title = "Voice",
+                    subtitle = "Read-aloud voice for agent replies",
+                    icon = Icons.Default.RecordVoiceOver,
+                    expanded = expanded == SettingsSection.VOICE,
+                    onClick = { toggle(SettingsSection.VOICE) },
+                ) {
+                    VoiceSettingsSection()
+                }
+            }
+
+            item {
                 AppUpdateChannelSection(
                     initialUrl = initialUpdateManifestUrl.ifBlank { initialDebugUpdateManifestUrl },
                     initialToken = initialUpdateAuthToken,
@@ -1470,6 +1483,37 @@ private fun EnvironmentUpdateCenter() {
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // Kodex: optional hands-free component updates. Default OFF —
+        // updates are large; the app-start notice still appears either way.
+        val componentPrefs = remember {
+            context.getSharedPreferences(com.vayro.app.update.ComponentUpdateNotifier.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        }
+        var autoUpdateComponents by remember {
+            mutableStateOf(componentPrefs.getBoolean(com.vayro.app.update.ComponentUpdateNotifier.KEY_AUTO_UPDATE, false))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Auto-update components", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Text(
+                    "Install component updates in the background (backup + health check, auto-restore on failure)",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = autoUpdateComponents,
+                onCheckedChange = { enabled ->
+                    autoUpdateComponents = enabled
+                    componentPrefs.edit()
+                        .putBoolean(com.vayro.app.update.ComponentUpdateNotifier.KEY_AUTO_UPDATE, enabled)
+                        .apply()
+                },
+            )
+        }
         OutlinedButton(
             onClick = {
                 runtimeInspector.invalidateEnvironmentVersionCache()
@@ -2206,4 +2250,87 @@ private fun AccountSectionContent(
 }
 
 
+// ---------------------------------------------------------------------------
+// Kodex Voice settings (v3.2.31): read-aloud for agent replies. Default is
+// the free on-device voice; an optional ElevenLabs key + voice ID (stored
+// encrypted in ApiKeyVault) switches Listen to the premium voice.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun VoiceSettingsSection() {
+    val context = LocalContext.current
+    val vault = remember { com.vayro.app.data.ApiKeyVault(context) }
+    var apiKey by remember { mutableStateOf("") }
+    var voiceId by remember { mutableStateOf(vault.get("elevenlabs_voice") ?: "") }
+    var hasKey by remember { mutableStateOf(vault.get("elevenlabs") != null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "Agent replies can be read aloud with the Listen button under each reply. By default Kodex uses the free on-device voice (works offline, no limits). For a premium voice, paste your own ElevenLabs API key and a Voice ID — both are stored encrypted on this device only and are never logged or shared.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = apiKey,
+            onValueChange = { apiKey = it },
+            label = { Text("ElevenLabs API key") },
+            placeholder = { Text(if (hasKey) "Saved — paste a new key to replace it" else "sk_…") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+        )
+        OutlinedTextField(
+            value = voiceId,
+            onValueChange = { voiceId = it },
+            label = { Text("ElevenLabs Voice ID") },
+            placeholder = { Text("e.g. 21m00Tcm4TlvDq8ikWAM") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = {
+                    if (apiKey.isNotBlank()) vault.put("elevenlabs", apiKey.trim())
+                    if (voiceId.isNotBlank()) {
+                        vault.put("elevenlabs_voice", voiceId.trim())
+                    } else {
+                        vault.remove("elevenlabs_voice")
+                    }
+                    hasKey = vault.get("elevenlabs") != null
+                    status = if (hasKey && voiceId.isNotBlank()) {
+                        "Saved. Listen will use your ElevenLabs voice."
+                    } else if (hasKey) {
+                        "Key saved. Add a Voice ID to enable the premium voice."
+                    } else {
+                        "Saved. Listen will use the free on-device voice."
+                    }
+                    apiKey = ""
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Save")
+            }
+            if (hasKey) {
+                OutlinedButton(
+                    onClick = {
+                        vault.remove("elevenlabs")
+                        vault.remove("elevenlabs_voice")
+                        apiKey = ""
+                        voiceId = ""
+                        hasKey = false
+                        status = "Removed. Listen will use the free on-device voice."
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Remove key")
+                }
+            }
+        }
+        status?.let {
+            Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
 

@@ -210,6 +210,7 @@ fun AppFactoryScreen(
                 FactoryTab.BLUEPRINT -> BlueprintTab(
                     currentBlueprint = currentBlueprint,
                     isGenerating = isGeneratingBlueprint,
+                    githubConnected = githubConnected,
                     onGenerate = { prompt, framework, mode, archetype ->
                         onGenerateBlueprint(prompt, framework, mode, archetype)
                     }
@@ -223,6 +224,7 @@ fun AppFactoryScreen(
                 FactoryTab.BUILD -> BuildAutomationTab(
                     blueprint = currentBlueprint,
                     isBuilding = isBuilding,
+                    githubConnected = githubConnected,
                     buildResult = buildResult,
                     buildLogs = buildLogs,
                     onRunBuild = onRunBuild,
@@ -248,6 +250,7 @@ fun AppFactoryScreen(
 private fun BlueprintTab(
     currentBlueprint: AppBlueprint?,
     isGenerating: Boolean,
+    githubConnected: Boolean = false,
     onGenerate: (prompt: String, framework: AppFramework, mode: BuildMode, archetype: AppFactoryBlueprintEngine.Archetype?) -> Unit
 ) {
     var promptText by rememberSaveable { mutableStateOf("") }
@@ -541,6 +544,7 @@ private fun ScaffoldTab(
 private fun BuildAutomationTab(
     blueprint: AppBlueprint?,
     isBuilding: Boolean,
+    githubConnected: Boolean = false,
     buildResult: BuildResult?,
     buildLogs: List<String>,
     onRunBuild: (BuildArtifactType, BuildMode) -> Unit,

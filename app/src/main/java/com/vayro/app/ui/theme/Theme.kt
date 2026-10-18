@@ -80,6 +80,16 @@ private val LightColors = lightColorScheme(
     outlineVariant = Color(0xFFD8DEE4),
 )
 
+/**
+ * Claude-style reading serif (Source Serif 4, OFL) — the free match for
+ * Anthropic Serif used for Claude's response text; applied to agent
+ * message prose. UI stays Inter, code stays JetBrains Mono.
+ */
+val SourceSerifFontFamily = FontFamily(
+    Font(R.font.source_serif_regular, FontWeight.Normal),
+    Font(R.font.source_serif_semibold, FontWeight.SemiBold),
+)
+
 val JetBrainsMonoFontFamily = FontFamily(
     Font(R.font.jetbrains_mono_regular, FontWeight.Normal),
     Font(R.font.jetbrains_mono_semibold, FontWeight.SemiBold),
