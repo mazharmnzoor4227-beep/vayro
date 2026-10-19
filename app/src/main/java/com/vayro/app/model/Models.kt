@@ -120,7 +120,7 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.CEREBRAS,
     ProviderKind.COHERE,
     ProviderKind.XAI,
-    ProviderKind.OPENAI,
+    // OPENAI stays out: DshRouteMapper rejects it (Codex owns that slot).
 )
 
 val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
@@ -134,7 +134,6 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.CEREBRAS,
     ProviderKind.COHERE,
     ProviderKind.XAI,
-    ProviderKind.OPENAI,
 )
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
@@ -219,7 +218,8 @@ fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
         ProviderKind.CUSTOM, ProviderKind.ANTHROPIC, ProviderKind.LLM_ROUTER,
         ProviderKind.GROQ, ProviderKind.GOOGLE_AI_STUDIO, ProviderKind.MISTRAL,
         ProviderKind.CEREBRAS, ProviderKind.COHERE, ProviderKind.XAI,
-        ProviderKind.OPENAI, ProviderKind.DEEPSEEK,
+        ProviderKind.DEEPSEEK,
+        // OPENAI deliberately absent: that vault slot belongs to Codex.
     )
 }
 

@@ -298,7 +298,17 @@ class AgentProviderPresetTest {
         assertTrue(ProviderKind.OPENCODE_ZEN in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.DEEPSEEK in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.NVIDIA_NIM in DEEPSEEK_HARNESS_PROVIDERS)
-        assertEquals(7, DEEPSEEK_HARNESS_PROVIDERS.size)
+        // v3.2.37 (Part C): the API catalog kinds joined the harness set —
+        // they run through openai-completions custom routes. OPENAI stays
+        // out (DshRouteMapper rejects it; Codex owns that vault slot).
+        assertTrue(ProviderKind.GROQ in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.GOOGLE_AI_STUDIO in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.MISTRAL in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.CEREBRAS in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.COHERE in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.XAI in DEEPSEEK_HARNESS_PROVIDERS)
+        assertFalse(ProviderKind.OPENAI in DEEPSEEK_HARNESS_PROVIDERS)
+        assertEquals(13, DEEPSEEK_HARNESS_PROVIDERS.size)
     }
 
     @Test
