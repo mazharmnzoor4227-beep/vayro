@@ -42,7 +42,9 @@ class McpRegistry(
             var changed = false
             for ((key, server) in servers) {
                 if (!server.isBuiltIn) continue
-                val template = catalogTemplates.find { it.id == server.id.substringBefore("::") } ?: continue
+                // NB: the top-level catalog, not the instance property —
+                // this runs from init, before later properties initialize.
+                val template = McpBuiltInCatalogTemplates.find { it.id == server.id.substringBefore("::") } ?: continue
                 if (server.command != template.defaultCommand || server.args != template.defaultArgs) {
                     servers[key] = server.copy(
                         command = template.defaultCommand,
