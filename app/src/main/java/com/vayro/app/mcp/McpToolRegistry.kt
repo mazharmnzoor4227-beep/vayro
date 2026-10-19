@@ -10,6 +10,16 @@ class McpDeniedException(val decision: McpPermissionDecision) :
 class McpPromptRequiredException(val decision: McpPermissionDecision) :
     Exception("MCP tool requires confirmation: ${decision.reason}")
 
+/**
+ * v3.2.40 (Scope C2): a declared secret is absent from the credential
+ * store. A missing key is a STATE ("Needs an API key" on the server's
+ * card, with an Add action), never a discovery failure — the
+ * coordinator catches this type specifically and keeps it off the
+ * global banner and out of the server's error slot.
+ */
+class McpMissingCredentialsException(val serverId: String, val missing: List<String>) :
+    McpConfigurationException("MCP server '$serverId' is missing required credentials: ${missing.joinToString(", ")}")
+
 /** Cached discovery result for one server. */
 data class McpDiscoveredTools(
     val serverId: String,
@@ -55,12 +65,14 @@ class McpToolRegistry(
             if (value == null) missing.add(name) else resolved[name] = value
         }
         if (missing.isNotEmpty()) {
-            throw McpConfigurationException(
-                "MCP server '${server.id}' is missing required credentials: ${missing.joinToString(", ")}"
-            )
+            throw McpMissingCredentialsException(server.id, missing.toList())
         }
         return resolved
     }
+
+    /** Required credentials that are NOT in the store for [server]. */
+    fun missingCredentials(server: McpServerInfo): List<String> =
+        server.secretEnvNames.filter { credentialStore.getCredential(server.id, it) == null }
 
     private fun requireServer(serverId: String): McpServerInfo =
         registry.getServer(serverId)

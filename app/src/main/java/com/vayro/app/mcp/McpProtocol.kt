@@ -24,7 +24,7 @@ class McpAuthException(message: String) : Exception(message)
 class McpRpcException(val code: Int, message: String) : Exception("MCP RPC error $code: $message")
 
 /** Thrown when a server's environment cannot be resolved (e.g. a required secret is missing). */
-class McpConfigurationException(message: String) : Exception(message)
+open class McpConfigurationException(message: String) : Exception(message)
 
 /** A tool advertised by an MCP server via tools/list. */
 data class McpToolDefinition(

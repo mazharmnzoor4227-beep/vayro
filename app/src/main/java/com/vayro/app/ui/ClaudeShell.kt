@@ -2389,7 +2389,12 @@ internal fun ChatsScreen(
                     )
                 }
             }
-            if (visible.isEmpty() && homeThreads.isEmpty()) {
+            // v3.2.40 (Scope E): message-less home threads (the
+            // cold-start landing thread, an unused "+" new chat) are
+            // not listed — a thread earns its Chats entry with its
+            // first message.
+            val listedHomeThreads = homeThreads.filter { it.messages.isNotEmpty() }
+            if (visible.isEmpty() && listedHomeThreads.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
                         if (query.isNotBlank()) "No chats match your search." else "No chats yet. Start a new chat to begin.",
@@ -2403,7 +2408,7 @@ internal fun ChatsScreen(
                     state = listState,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
-                    if (query.isBlank() && homeThreads.isNotEmpty()) {
+                    if (query.isBlank() && listedHomeThreads.isNotEmpty()) {
                         item {
                             Text(
                                 "Home chats",
@@ -2413,7 +2418,7 @@ internal fun ChatsScreen(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             )
                         }
-                        items(homeThreads, key = { "home-" + it.id }) { thread ->
+                        items(listedHomeThreads, key = { "home-" + it.id }) { thread ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()

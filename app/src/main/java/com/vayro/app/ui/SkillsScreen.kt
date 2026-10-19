@@ -127,6 +127,9 @@ fun SkillsScreen(
     mcpCatalog: List<McpCatalogTemplate> = emptyList(),
     mcpTools: List<McpToolDefinition> = emptyList(),
     mcpServerErrors: Map<String, String> = emptyMap(),
+    mcpServersMissingKeys: Map<String, List<String>> = emptyMap(),
+    mcpDiscoveringServerIds: Set<String> = emptySet(),
+    onSaveMcpServerSecrets: (String, Map<String, String>) -> Unit = { _, _ -> },
     mcpAuditLogs: List<McpAuditEntry> = emptyList(),
     mcpBusy: Boolean = false,
     mcpMessage: String? = null,
@@ -158,6 +161,7 @@ fun SkillsScreen(
     var showAddCustomMcpDialog by rememberSaveable { mutableStateOf(false) }
     var runDialogServer by remember { mutableStateOf<McpServerInfo?>(null) }
     var runDialogTool by remember { mutableStateOf<McpToolDefinition?>(null) }
+    var addKeyServer by remember { mutableStateOf<McpServerInfo?>(null) }
 
     val zipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(onImportZip)
@@ -524,7 +528,9 @@ fun SkillsScreen(
                             server = server,
                             tools = mcpTools.filter { it.serverId == server.id },
                             lastError = mcpServerErrors[server.id],
-                            busy = mcpBusy,
+                            missingKeys = mcpServersMissingKeys[server.id].orEmpty(),
+                            busy = mcpDiscoveringServerIds.contains(server.id),
+                            onAddKey = { addKeyServer = server },
                             onToggle = { onToggleMcpServer(server.id, it) },
                             onDiscoverTools = { onDiscoverMcpTools(server) },
                             onRemove = { onRemoveMcpServer(server.id) },
@@ -614,6 +620,19 @@ fun SkillsScreen(
         }
     }
 
+    val keyServer = addKeyServer
+    if (keyServer != null) {
+        AddMcpKeyDialog(
+            server = keyServer,
+            missingNames = mcpServersMissingKeys[keyServer.id] ?: keyServer.secretEnvNames,
+            onDismiss = { addKeyServer = null },
+            onSave = { secrets ->
+                onSaveMcpServerSecrets(keyServer.id, secrets)
+                addKeyServer = null
+            }
+        )
+    }
+
     if (showAddCustomMcpDialog) {
         AddCustomMcpDialog(
             onDismiss = { showAddCustomMcpDialog = false },
@@ -693,7 +712,9 @@ private fun McpServerCard(
     server: McpServerInfo,
     tools: List<McpToolDefinition>,
     lastError: String? = null,
+    missingKeys: List<String> = emptyList(),
     busy: Boolean,
+    onAddKey: () -> Unit = {},
     onToggle: (Boolean) -> Unit,
     onDiscoverTools: () -> Unit,
     onRemove: () -> Unit,
@@ -753,11 +774,30 @@ private fun McpServerCard(
                 )
             }
             if (server.secretEnvNames.isNotEmpty()) {
-                Text(
-                    "Needs: ${server.secretEnvNames.joinToString(", ")} — set when the server was added; discovery reports it plainly if missing.",
-                    fontSize = 10.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // v3.2.40 (Scope C2): the line reports the credential
+                // store's ACTUAL state for this server — saved or not.
+                if (missingKeys.isEmpty()) {
+                    Text(
+                        "Needs: ${server.secretEnvNames.joinToString(", ")} — saved",
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Needs an API key: ${missingKeys.joinToString(", ")} — not saved yet",
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onAddKey, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
+                            Text("Add", fontSize = 11.sp)
+                        }
+                    }
+                }
             }
             if (!lastError.isNullOrBlank()) {
                 Text(
@@ -981,6 +1021,56 @@ internal fun parseKeyValueList(text: String): Map<String, String> {
         if (key.isNotEmpty()) map[key] = parts[1].trim()
     }
     return map
+}
+
+/**
+ * v3.2.40 (Scope C2): the card's Add action — enter the missing keys
+ * for an already-installed server. Values go to the encrypted
+ * credential store via the coordinator, never into the server config.
+ */
+@Composable
+private fun AddMcpKeyDialog(
+    server: McpServerInfo,
+    missingNames: List<String>,
+    onDismiss: () -> Unit,
+    onSave: (Map<String, String>) -> Unit
+) {
+    var values by remember { mutableStateOf(missingNames.associateWith { "" }) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add API key — ${server.name}", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()).imePadding(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Stored encrypted in the credential store, never in the server config.",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                missingNames.forEach { name ->
+                    OutlinedTextField(
+                        value = values[name] ?: "",
+                        onValueChange = { values = values + (name to it) },
+                        label = { Text(name, fontSize = 11.sp) },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(values.filterValues { it.isNotBlank() }) },
+                enabled = values.values.any { it.isNotBlank() }
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

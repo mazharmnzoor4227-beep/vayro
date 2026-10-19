@@ -336,6 +336,15 @@ import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.documentfile.provider.DocumentFile
 
+/**
+ * v3.2.40 (Scope E): process-lifetime sentinel. True once this process
+ * has composed the shell — a genuinely fresh process (cold start)
+ * starts false, so a rememberSaveable-restored sub-screen can be
+ * dropped back to the chat home exactly once per process; warm
+ * resumes in the same process see it already true and are untouched.
+ */
+private var shellComposedInThisProcess = false
+
 // Kodex branding is rendered in the shared setup headers.
 private enum class RootScreen(val label: String, val icon: ImageVector) {
     CHAT_HOME("Kodex", Icons.AutoMirrored.Filled.Chat),
@@ -2552,6 +2561,16 @@ private fun RootScreenHost(
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.CHAT_HOME) }
     var settingsFocus by rememberSaveable { mutableStateOf("tools") }
+    // v3.2.40 (Scope E): cold start lands on the chat home even when
+    // saved-instance state restored a sub-screen (e.g. Settings) from
+    // a killed process. Runs once per process; warm resumes keep
+    // whatever screen the user is on.
+    LaunchedEffect(Unit) {
+        if (!shellComposedInThisProcess) {
+            shellComposedInThisProcess = true
+            if (screen != RootScreen.CHAT_HOME) screen = RootScreen.CHAT_HOME
+        }
+    }
     // Kodex drawer shell: the side drawer is the single home for every
     // section; Back from a section returns here with the drawer re-opened
     // (inventory rule R1), and Back with the drawer open just closes it.
@@ -2944,6 +2963,9 @@ private fun RootScreenHost(
                     mcpCatalog = state.mcpCatalog,
                     mcpTools = state.mcpTools,
                     mcpServerErrors = state.mcpServerErrors,
+                    mcpServersMissingKeys = state.mcpServersMissingKeys,
+                    mcpDiscoveringServerIds = state.mcpDiscoveringServerIds,
+                    onSaveMcpServerSecrets = viewModel::saveMcpServerSecrets,
                     mcpAuditLogs = state.mcpAuditLogs,
                     mcpBusy = state.mcpBusy,
                     mcpMessage = state.mcpMessage,
@@ -3006,6 +3028,9 @@ private fun RootScreenHost(
                     mcpCatalog = state.mcpCatalog,
                     mcpTools = state.mcpTools,
                     mcpServerErrors = state.mcpServerErrors,
+                    mcpServersMissingKeys = state.mcpServersMissingKeys,
+                    mcpDiscoveringServerIds = state.mcpDiscoveringServerIds,
+                    onSaveMcpServerSecrets = viewModel::saveMcpServerSecrets,
                     mcpAuditLogs = state.mcpAuditLogs,
                     mcpBusy = state.mcpBusy,
                     mcpMessage = state.mcpMessage,

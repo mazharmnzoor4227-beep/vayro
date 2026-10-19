@@ -219,9 +219,14 @@ val McpBuiltInCatalogTemplates: List<McpCatalogTemplate> = listOf(
     McpCatalogTemplate(
         id = "brave-search",
         name = "Brave Search",
-        description = "Perform private web searches and retrieve up-to-date web answers. Requires a Brave API key (set it when adding the server).",
+        // v3.2.40 (Scope C2): Brave's official MCP server moved to
+        // Brave's own package, @brave/brave-search-mcp-server — the
+        // @modelcontextprotocol/server-brave-search reference package
+        // is retired. Installed entries pick this up on next launch
+        // through the registry's template-refresh migration (Part Q).
+        description = "Perform private web searches and retrieve up-to-date web answers. Requires a Brave API key — add it from the server's card after installing.",
         defaultCommand = "npx",
-        defaultArgs = listOf("-y", "@modelcontextprotocol/server-brave-search"),
+        defaultArgs = listOf("-y", "@brave/brave-search-mcp-server"),
         requiredEnv = listOf("BRAVE_API_KEY"),
         category = "Search"
     ),

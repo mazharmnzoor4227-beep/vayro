@@ -269,6 +269,36 @@ class McpToolRegistryTest {
     }
 
     @Test
+    fun `missing secret throws the typed state exception`() {
+        // v3.2.40 (Scope C2): the coordinator keys the "Needs an API
+        // key" card state off this exact type — it must carry the
+        // missing names and stay a configuration exception.
+        registry.installServer(
+            testStdioServer("s5").copy(isBuiltIn = true, secretEnvNames = listOf("BRAVE_API_KEY"))
+        )
+        try {
+            toolRegistry().resolveEnv(registry.getServer("s5")!!)
+            fail("expected McpMissingCredentialsException")
+        } catch (e: McpMissingCredentialsException) {
+            assertEquals("s5", e.serverId)
+            assertEquals(listOf("BRAVE_API_KEY"), e.missing)
+        }
+    }
+
+    @Test
+    fun `missingCredentials reflects the credential store`() {
+        registry.installServer(
+            testStdioServer("s6").copy(isBuiltIn = true, secretEnvNames = listOf("A_KEY", "B_KEY"))
+        )
+        val server = registry.getServer("s6")!!
+        assertEquals(listOf("A_KEY", "B_KEY"), toolRegistry().missingCredentials(server))
+        credentialStore.setCredential("s6", "A_KEY", "saved")
+        assertEquals(listOf("B_KEY"), toolRegistry().missingCredentials(server))
+        credentialStore.setCredential("s6", "B_KEY", "saved")
+        assertEquals(emptyList<String>(), toolRegistry().missingCredentials(server))
+    }
+
+    @Test
     fun `unknown server fails honestly`() {
         try {
             toolRegistry().discover("nope")

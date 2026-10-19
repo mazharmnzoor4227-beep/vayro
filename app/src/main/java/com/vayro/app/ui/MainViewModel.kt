@@ -434,6 +434,12 @@ data class AppUiState(
     // and per-server last discovery error, shown on the server's own card.
     val mcpToolCounts: Map<String, Int> = emptyMap(),
     val mcpServerErrors: Map<String, String> = emptyMap(),
+    // v3.2.40 (Scope C2): servers whose required credentials are NOT
+    // saved — a card STATE ("Needs an API key" + Add), never an error;
+    // and the servers with a discovery currently in flight, so one
+    // server's discovery never disables another server's card.
+    val mcpServersMissingKeys: Map<String, List<String>> = emptyMap(),
+    val mcpDiscoveringServerIds: Set<String> = emptySet(),
     val mcpAuditLogs: List<com.vayro.app.mcp.McpAuditEntry> = emptyList(),
     val mcpSelectedServerId: String? = null,
     val mcpBusy: Boolean = false,
@@ -829,7 +835,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .getOrDefault(com.vayro.app.ui.theme.AppFontStyle.DEFAULT),
             projects = initialProjects,
             activeProject = initialActiveProject,
-            workspaceVisible = isWarmReady && initialActiveProject != null,
+            // v3.2.40 (Scope E): a cold start lands on the chat home,
+            // never inside the previous workspace. The project session
+            // stays fully loaded above (activeProject, chats,
+            // messages) and Work reopens it exactly as it was — only
+            // the landing changes. This initial state is built once
+            // per process (the ViewModel is created with the process
+            // and survives warm resumes), so this IS the cold start.
+            workspaceVisible = false,
             projectChats = initialChats,
             activeChatId = initialActiveChatId,
             messages = initialMessages,
@@ -898,10 +911,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // v3.2.37 (Part F): restore home chat threads (never workspace projects).
         runCatching {
             val threads = homeChatStore.load()
-            val activeId = preferences.activeHomeThreadId
-                .takeIf { id -> threads.any { it.id == id } }
-                ?: threads.firstOrNull()?.id.orEmpty()
-            _state.update { it.copy(homeThreads = threads, activeHomeThreadId = activeId) }
+            // v3.2.40 (Scope E): a cold start lands on a brand-new
+            // empty conversation — the previously open thread is NOT
+            // reopened (it stays in the Chats list, one tap away).
+            // This init runs once per process: the ViewModel is
+            // created with the process and survives warm resumes and
+            // configuration changes, so this block is exactly the
+            // cold-start point and warm resume is untouched. The
+            // landing thread is in-memory only: persistHomeThreads
+            // skips message-less threads, so it reaches disk (via the
+            // normal append path) only once it has a first message —
+            // a never-used landing thread leaves no empty entry in
+            // the Chats list.
+            val landing = com.vayro.app.data.HomeThread()
+            _state.update { it.copy(homeThreads = listOf(landing) + threads, activeHomeThreadId = landing.id) }
         }
         refreshHomeChatProviderLabel()
         // GitHub's official CLI owns its OAuth credential. Remove credentials from
@@ -1425,6 +1448,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun discoverMcpTools(server: com.vayro.app.mcp.McpServerInfo) =
         mcpCoordinator.discoverMcpTools(server)
+
+    fun saveMcpServerSecrets(serverId: String, secrets: Map<String, String>) =
+        mcpCoordinator.saveMcpServerSecrets(serverId, secrets)
 
     suspend fun executeMcpTool(
         server: com.vayro.app.mcp.McpServerInfo,
@@ -3829,7 +3855,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: _state.value.homeThreads.firstOrNull()
 
     private fun persistHomeThreads() {
-        val threads = _state.value.homeThreads
+        // v3.2.40 (Scope E): message-less threads are never written
+        // to disk — an empty thread (the cold-start landing thread, or
+        // a "+" new chat the user never typed in) appears in the
+        // Chats list only once it has a first message.
+        val threads = _state.value.homeThreads.filter { it.messages.isNotEmpty() }
         viewModelScope.launch(Dispatchers.IO) { homeChatStore.save(threads) }
     }
 

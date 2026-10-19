@@ -3,6 +3,7 @@ package com.vayro.app.ui.coordinators
 import com.vayro.app.mcp.McpAuditLogger
 import com.vayro.app.mcp.McpCredentialStore
 import com.vayro.app.mcp.McpDeniedException
+import com.vayro.app.mcp.McpMissingCredentialsException
 import com.vayro.app.mcp.McpPermissionManager
 import com.vayro.app.mcp.McpPromptRequiredException
 import com.vayro.app.mcp.McpRegistry
@@ -45,7 +46,27 @@ class McpCoordinator(
     fun refreshMcpServers(projectId: String? = host.state().activeProject?.id) {
         val servers = mcpRegistry.listServers(projectId)
         val catalog = mcpRegistry.catalogTemplates
-        host.updateState { it.copy(mcpServers = servers, mcpCatalog = catalog) }
+        // v3.2.40 (Scope C2): the cards' needs-key state comes from the
+        // credential store's ACTUAL contents, recomputed on every
+        // refresh — never boilerplate.
+        val missing = servers.associate { it.id to toolRegistry.missingCredentials(it) }
+            .filterValues { it.isNotEmpty() }
+        host.updateState { it.copy(mcpServers = servers, mcpCatalog = catalog, mcpServersMissingKeys = missing) }
+    }
+
+    /**
+     * v3.2.40 (Scope C2): saves keys for an ALREADY-installed server
+     * (its card's Add action) into the encrypted credential store,
+     * then refreshes so the needs-key state recomputes from the store.
+     */
+    fun saveMcpServerSecrets(serverId: String, secrets: Map<String, String>) {
+        secrets.forEach { (name, value) ->
+            if (name.isNotBlank() && value.isNotBlank()) {
+                credentialStore.setCredential(serverId, name, value)
+            }
+        }
+        host.updateState { it.copy(mcpServerErrors = it.mcpServerErrors - serverId) }
+        refreshMcpServers()
     }
 
     /**
@@ -105,11 +126,26 @@ class McpCoordinator(
         refreshMcpServers()
     }
 
+    /** "Tools ready on N of M servers" — M = enabled installed servers. */
+    private fun toolsReadySummary(servers: List<McpServerInfo>, counts: Map<String, Int>): String {
+        val enabled = servers.filter { it.enabled }
+        val ready = enabled.count { (counts[it.id] ?: 0) > 0 }
+        return "Tools ready on $ready of ${enabled.size} servers."
+    }
+
+    /**
+     * v3.2.40 (Scope C2): discovery is PER SERVER — busy state is the
+     * set of in-flight server ids, so one server's discovery never
+     * blocks or masks another's. Outcomes: missing credentials land
+     * in the server's needs-key STATE (never the failure banner,
+     * never the error slot); any other failure's reason lives on
+     * that server's card only, with a neutral summary in the banner.
+     */
     fun discoverMcpTools(server: McpServerInfo) {
         host.scope.launch {
             // v3.2.38 (Part Q): the busy message tells the truth about a
             // first start — the package downloads before the handshake.
-            host.updateState { it.copy(mcpBusy = true, mcpSelectedServerId = server.id, mcpMessage = "Starting ${server.name}... a first start downloads its package, so this can take a minute.") }
+            host.updateState { it.copy(mcpBusy = true, mcpDiscoveringServerIds = it.mcpDiscoveringServerIds + server.id, mcpSelectedServerId = server.id, mcpMessage = "Starting ${server.name}... a first start downloads its package, so this can take a minute.") }
             // v3.2.40 (Scope C): mirror the session's live start stage
             // into the busy banner — "Downloading packages…" while the
             // guest pulls the package, so the wait reads as progress.
@@ -131,32 +167,50 @@ class McpCoordinator(
                 runCatching { toolRegistry.discover(server.id, host.state().activeProject?.id) }
             }
             stageJob.cancel()
-            res.onSuccess { discovered ->
-                val tools = discovered.map { tool ->
-                    com.vayro.app.runtime.McpToolDefinition(
-                        name = tool.name,
-                        description = tool.description,
-                        inputSchemaJson = tool.inputSchema.toString(),
-                        serverId = server.id,
+            val failure = res.exceptionOrNull()
+            when {
+                failure is McpMissingCredentialsException -> host.updateState {
+                    val discovering = it.mcpDiscoveringServerIds - server.id
+                    it.copy(
+                        mcpBusy = discovering.isNotEmpty(),
+                        mcpDiscoveringServerIds = discovering,
+                        mcpServersMissingKeys = it.mcpServersMissingKeys + (server.id to failure.missing),
+                        mcpServerErrors = it.mcpServerErrors - server.id,
+                        mcpMessage = "${server.name} needs an API key — add it on its card. ${toolsReadySummary(it.mcpServers, it.mcpToolCounts)}"
                     )
                 }
-                host.updateState {
+                failure != null -> host.updateState {
+                    val detail = failure.message?.takeIf { it.isNotBlank() } ?: "unknown error (no detail reported)"
+                    val discovering = it.mcpDiscoveringServerIds - server.id
                     it.copy(
-                        mcpBusy = false,
-                        mcpTools = tools,
-                        mcpMessage = "Found ${tools.size} tools",
-                        mcpToolCounts = it.mcpToolCounts + (server.id to tools.size),
-                        mcpServerErrors = it.mcpServerErrors - server.id
-                    )
-                }
-            }.onFailure { err ->
-                val detail = err.message?.takeIf { it.isNotBlank() } ?: "unknown error (no detail reported)"
-                host.updateState {
-                    it.copy(
-                        mcpBusy = false,
-                        mcpMessage = "Tool discovery failed: $detail",
+                        mcpBusy = discovering.isNotEmpty(),
+                        mcpDiscoveringServerIds = discovering,
+                        mcpMessage = "${server.name} could not start — the reason is on its card. ${toolsReadySummary(it.mcpServers, it.mcpToolCounts)}",
                         mcpServerErrors = it.mcpServerErrors + (server.id to detail)
                     )
+                }
+                else -> {
+                    val tools = res.getOrThrow().map { tool ->
+                        com.vayro.app.runtime.McpToolDefinition(
+                            name = tool.name,
+                            description = tool.description,
+                            inputSchemaJson = tool.inputSchema.toString(),
+                            serverId = server.id,
+                        )
+                    }
+                    host.updateState {
+                        val discovering = it.mcpDiscoveringServerIds - server.id
+                        val counts = it.mcpToolCounts + (server.id to tools.size)
+                        it.copy(
+                            mcpBusy = discovering.isNotEmpty(),
+                            mcpDiscoveringServerIds = discovering,
+                            mcpTools = tools,
+                            mcpMessage = "Found ${tools.size} tools on ${server.name}. ${toolsReadySummary(it.mcpServers, counts)}",
+                            mcpToolCounts = counts,
+                            mcpServerErrors = it.mcpServerErrors - server.id,
+                            mcpServersMissingKeys = it.mcpServersMissingKeys - server.id
+                        )
+                    }
                 }
             }
         }

@@ -373,7 +373,7 @@ class McpServerSession(
             // downloading one is recognised while it works.
             val line = proc.readLine(minOf(remaining, 1_000L))
             if (line == null) {
-                if (!proc.isAlive) return false
+                if (!proc.isAlive()) return false
                 // v3.2.40 (Scope C): no stdout yet, but the guest's
                 // stderr is GROWING — that is a first start downloading
                 // its package (uv / pip / npm all report to stderr).
