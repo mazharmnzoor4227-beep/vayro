@@ -54,10 +54,12 @@ val PocketBlue: Color
 val PocketGreen: Color
     @Composable get() = LocalPocketAccents.current.success
 
-val PocketBackground = Color(0xFF262624)
-val PocketSurface = Color(0xFF2E2E2B)
-val PocketSurfaceVariant = Color(0xFF35332F)
-val PocketOutline = Color(0xFF55534C)
+// Kept at their original values: only the retired AppColorTheme palettes
+// reference them now, and AppColorThemeTest pins those exact hex values.
+val PocketBackground = Color(0xFF0B0E14)
+val PocketSurface = Color(0xFF131821)
+val PocketSurfaceVariant = Color(0xFF1B222D)
+val PocketOutline = Color(0xFF2A3240)
 
 private val DarkColors = darkColorScheme(
     primary = KodexClay,
