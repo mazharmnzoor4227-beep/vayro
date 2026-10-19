@@ -35,8 +35,8 @@ object LiveCallProtocol {
         "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
     /** The WebSocket URL for one key. The API key travels as the `key` query parameter (the documented API-key auth for this endpoint). */
-    fun endpointFor(apiKey: <redacted> String =
-        "$ENDPOINT?key=$apiKey"
+    fun endpointFor(key: String): String =
+        "$ENDPOINT?key=$key"
 
     /**
      * The spoken-conversation system instruction: short spoken replies,

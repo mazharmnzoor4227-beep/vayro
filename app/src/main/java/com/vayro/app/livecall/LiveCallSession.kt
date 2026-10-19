@@ -56,7 +56,7 @@ data class LiveCallConfig(
  * nothing; the pool only helps across accounts/projects.
  */
 class LiveCallSession(
-    private val transportFactory: (apiKey: <redacted> -> LiveTransport,
+    private val transportFactory: (String) -> LiveTransport,
     private val credentials: List<ApiKeyCredential>,
     private val autoSwitch: Boolean,
     private val config: LiveCallConfig,
