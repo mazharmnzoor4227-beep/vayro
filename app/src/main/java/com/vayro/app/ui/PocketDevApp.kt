@@ -49,6 +49,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -218,7 +219,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -247,6 +247,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -2635,11 +2636,11 @@ private fun RootScreenHost(
     }
     val marketplaceInstalledIds by viewModel.marketplaceInstalledIds.collectAsStateWithLifecycle()
     val marketplaceUpdatesAvailable by viewModel.marketplaceUpdatesAvailable.collectAsStateWithLifecycle()
-    // v3.2.41 (Scope 1): derived boolean — the raw inset value would
-    // recompose this root on every keyboard animation frame.
-    val imeInsetsRoot = WindowInsets.ime
-    val imeDensityRoot = LocalDensity.current
-    val keyboardVisible by remember { derivedStateOf { imeInsetsRoot.getBottom(imeDensityRoot) > 0 } }
+    // v3.2.42: the v3.2.41 derived IME boolean that used to be read
+    // here is GONE — nothing ever consumed its value (the workspace
+    // hid its bottom bar through its own read, now focus-driven;
+    // the chat screens own their IME handling at the composer).
+    // The root reads no IME state at all.
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
     val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
@@ -5380,7 +5381,9 @@ private fun ReadOnlyProjectScreen(
     var showChats by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state.readOnlyChatId) {
-        if (state.readOnlyMessages.isNotEmpty()) listState.scrollToItem(state.readOnlyMessages.lastIndex)
+        // v3.2.42: ChatTab's list is reversed — the newest message
+        // is index 0, where a fresh state already sits.
+        if (state.readOnlyMessages.isNotEmpty()) listState.scrollToItem(ScrollFollowGate.NEWEST_INDEX)
     }
 
     if (showChats) {
@@ -5538,10 +5541,11 @@ private fun WorkspaceScreen(
 ) {
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
-    // v3.2.41 (Scope 1): derived boolean, as at the app root.
-    val imeInsetsWs = WindowInsets.ime
-    val imeDensityWs = LocalDensity.current
-    val keyboardVisible by remember { derivedStateOf { imeInsetsWs.getBottom(imeDensityWs) > 0 } }
+    // v3.2.42: no IME boolean is read in this screen anymore. The
+    // bottom bar below hides while the chat composer is being
+    // edited; that session state now arrives from ChatTab as field
+    // FOCUS (onInputFocusChange → chatInputFocused), the same
+    // discrete signal that drives the composer's controls row.
     val bindFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { uri -> if (uri != null) onBindFolder(uri) },
@@ -5574,16 +5578,17 @@ private fun WorkspaceScreen(
         },
     )
     val chatListState = rememberLazyListState()
-    var userScrolledUp by rememberSaveable { mutableStateOf(false) }
     // U8a: true while a sheet/dialog covers the chat (reported by ChatTab).
     // The follow-scroll below pauses then, so the list is exactly where
     // the user left it when the sheet closes.
     var chatOverlayOpen by remember { mutableStateOf(false) }
+    // v3.2.42: true while the chat composer field holds focus
+    // (reported by ChatTab) — the bottom bar hides for the session.
+    var chatInputFocused by remember { mutableStateOf(false) }
 
     // Item count of the chat LazyColumn: messages + the in-flow working
     // row (v3.2.34, U4 — it is a list item now, not a docked bar) + the
-    // approval card + the end-of-run changes review card (U6d). The
-    // follow-scroll effects below key off this count.
+    // approval card + the end-of-run changes review card (U6d).
     val chatItemCount = state.messages.size +
         (if (state.isRunning) 1 else 0) +
         (if (state.pendingApproval != null) 1 else 0) +
@@ -5606,7 +5611,6 @@ private fun WorkspaceScreen(
     }
 
     LaunchedEffect(state.activeChatId) {
-        userScrolledUp = false
         // A saved position for THIS chat wins: returning to the chat
         // (re-entry, background return, Work round trip) restores
         // exactly where the user left it. Only a chat with no saved
@@ -5615,7 +5619,11 @@ private fun WorkspaceScreen(
         if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0)) {
             chatListState.scrollToItem(savedScroll.first, savedScroll.second)
         } else if (chatItemCount > 0) {
-            chatListState.scrollToItem(chatItemCount - 1)
+            // v3.2.42: the chat list is REVERSED — index 0 is the
+            // newest item at the visual bottom, where a fresh list
+            // state already sits; this covers a state carried over
+            // from another chat.
+            chatListState.scrollToItem(ScrollFollowGate.NEWEST_INDEX)
         }
     }
 
@@ -5646,43 +5654,18 @@ private fun WorkspaceScreen(
         }
     }
 
-    // When the user actively scrolls/touches the screen, detect if they scrolled up to read thinking/messages.
-    LaunchedEffect(chatListState.isScrollInProgress) {
-        if (chatListState.isScrollInProgress) {
-            if (chatListState.canScrollForward) {
-                userScrolledUp = true
-            }
-        } else {
-            // If user scrolled back down to the very bottom, re-enable follow mode
-            if (!chatListState.canScrollForward) {
-                userScrolledUp = false
-            }
-        }
-    }
-
-    // Follow new tokens/updates only when the user is parked at the
-    // bottom — the decision goes through ScrollFollowGate (v3.2.41,
-    // Scope 1), the same rule the home list uses: never mid-gesture,
-    // never under an overlay, never after the user scrolled up.
-    LaunchedEffect(
-        state.messages.size,
-        state.messages.lastOrNull()?.text?.length,
-        state.liveProcess.size,
-        state.liveProcess.lastOrNull()?.detail,
-        state.pendingApproval,
-    ) {
-        if (!state.isRunning || chatItemCount <= 0) return@LaunchedEffect
-        if (ScrollFollowGate.shouldFollow(
-                ownSend = false,
-                atBottom = !chatListState.canScrollForward,
-                userScrollInProgress = chatListState.isScrollInProgress,
-                userScrolledUp = userScrolledUp,
-                overlayOpen = chatOverlayOpen,
-            )
-        ) {
-            chatListState.scrollToItem(chatItemCount - 1)
-        }
-    }
+    // v3.2.42: the v3.2.41 streaming follow effect — and the
+    // userScrolledUp tracking that fed it — are DELETED. The follow
+    // effect existed because a forward list had to be scrolled to
+    // its end on every data change; with reverseLayout the list
+    // anchors at the newest item (index 0) by construction — while
+    // the user is parked there, streaming growth simply extends the
+    // list upward from the anchor, and while he is scrolled up
+    // reading, nothing may move the list at all. The gate's rules
+    // are preserved by the structure itself (auto-follow only at
+    // the bottom, never mid-gesture, never under an overlay — the
+    // list is also gesture-locked while an overlay is open, U8a)
+    // and by ScrollFollowGate.shouldRestore for position restore.
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     // v3.2.37 (A2): while the voice call is up, the workspace chrome hides
@@ -5934,7 +5917,7 @@ private fun WorkspaceScreen(
             }
         },
         bottomBar = {
-            if (!keyboardVisible && !voiceCallOverlayActive) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            if (!chatInputFocused && !voiceCallOverlayActive) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
                     NavigationBarItem(
                         selected = tab != WorkspaceTab.HOME && selectedTab == tab,
@@ -6105,6 +6088,7 @@ private fun WorkspaceScreen(
                     onKeepChanges = onKeepChanges,
                     onUndoChanges = onUndoChanges,
                     onModalOverlayChange = { chatOverlayOpen = it },
+                    onInputFocusChange = { chatInputFocused = it },
                     executionMode = state.executionMode,
                     onSelectExecutionMode = onSelectExecutionMode,
                     scratchpadItems = state.scratchpadItems,
@@ -6898,6 +6882,10 @@ private fun ChatTab(
     // U8a: tells the workspace when a sheet/dialog covers the chat, so
     // the background list can be gesture-locked and follow-scroll paused.
     onModalOverlayChange: (Boolean) -> Unit = {},
+    // v3.2.42: tells the workspace when the composer field holds
+    // focus (the editing session) — the workspace hides its bottom
+    // bar for the session, replacing its old derived IME boolean.
+    onInputFocusChange: (Boolean) -> Unit = {},
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
@@ -6948,7 +6936,6 @@ private fun ChatTab(
     var inputFocused by remember { mutableStateOf(false) }
     var inputLineCount by remember { mutableStateOf(1) }
     var inputSectionHeight by remember { mutableStateOf(0.dp) }
-    val density = LocalDensity.current
     var showWorkspaceControls by rememberSaveable { mutableStateOf(false) }
     var toolsOpen by rememberSaveable { mutableStateOf(false) }
     var toolsMenuHeightPx by remember { mutableStateOf(0) }
@@ -7151,6 +7138,10 @@ private fun ChatTab(
     // screen, so the header/bottom bar stop bleeding through the overlay.
     LaunchedEffect(voiceCallActive) { onCallActiveChange(voiceCallActive) }
     DisposableEffect(Unit) { onDispose { onCallActiveChange(false) } }
+    // v3.2.42: report the composer's editing session (field focus)
+    // so the workspace can hide its bottom bar for the session.
+    LaunchedEffect(inputFocused) { onInputFocusChange(inputFocused) }
+    DisposableEffect(Unit) { onDispose { onInputFocusChange(false) } }
 
     fun startVoiceCall() {
         if (!voiceRecognizer.isAvailable()) {
@@ -7199,7 +7190,13 @@ private fun ChatTab(
         prompt = if (prompt.isBlank()) spoken else "$prompt $spoken"
         updateMentionQuery(prompt)
     }
-    Column(Modifier.fillMaxSize().imePadding()) {
+    // v3.2.42 (Architecture A — JetChat structure): this Column no
+    // longer consumes the IME inset. The tab's ONE IME consumer is
+    // the composer container at the bottom (imePadding there), so
+    // the keyboard's own inset animation is the single driver of
+    // motion: the banners and the message list keep the full height
+    // and the list draws behind the keyboard while it slides.
+    Column(Modifier.fillMaxSize()) {
         AnimatedVisibility(
             visible = showWorkspaceControls && scratchpadItems.isNotEmpty(),
             enter = expandVertically() + fadeIn(),
@@ -7286,10 +7283,33 @@ private fun ChatTab(
     val anyOverlayOpen = showLiveActivity || pastActivity != null || toolsOpen ||
         showAgentSheet || voiceCallActive
     LaunchedEffect(anyOverlayOpen) { onModalOverlayChange(anyOverlayOpen) }
-        Box(Modifier.weight(1f)) {
+    // v3.2.42: tapping the conversation ends the editing session
+    // (focus leaves the field, the keyboard hides, the composer
+    // returns to its one-row state) — the workspace list's half of
+    // the focus-session pattern the home list uses. Taps only;
+    // scrolling is untouched.
+    val chatFocusManager = LocalFocusManager.current
+        Box(
+            Modifier
+                .weight(1f)
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { chatFocusManager.clearFocus() })
+                },
+        ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
+                // v3.2.42: reverseLayout — index 0 is the visual
+                // bottom (the end-of-run changes card when present,
+                // else the approval card, else the working row, else
+                // the newest message) and the layout anchors there.
+                // Items are emitted in that order below: tail cards
+                // first, then the messages newest-first, the empty
+                // state last (the visual top). The list needs NO ime
+                // handling and NO follow effect: it draws behind the
+                // keyboard while the composer rides it, and new
+                // content grows upward from the anchor.
+                reverseLayout = true,
                 // U8a: while any sheet/dialog covers the chat, the list
                 // ignores user gestures entirely — sheet drags and inner
                 // scrolls can no longer leak into the conversation, and
@@ -7298,21 +7318,61 @@ private fun ChatTab(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                // U6d: the end-of-run changes review is a card IN the
+                // chat flow. Keep/Revert right here; the Changes tab
+                // stays available for the detailed per-file diffs.
+                // (Index 0 in the reversed list = the visual bottom,
+                // directly under the most recent message.)
+                if (!isRunning && changes.isNotEmpty()) {
+                    item(key = "changes-review") {
+                        ChangesReviewCard(
+                            changes = changes,
+                            onKeep = onKeepChanges,
+                            onUndo = onUndoChanges,
+                        )
+                    }
+                }
+                approval?.let { request ->
+                    item(key = "approval-card") { ApprovalCard(request, onApproval, onApprovalWithLevel) }
+                }
+                if (isRunning) {
+                    // v3.2.34 (U4): the working row sits directly
+                    // under the most recent message — Claude-style,
+                    // in the conversation flow — with the approval
+                    // card right below it (U6c). While a run streams,
+                    // the reversed list's bottom anchor keeps this
+                    // tail visible with no scroll calls at all.
+                    item(key = "working-row") {
+                        WorkingBar(
+                            items = liveProcess,
+                            thinkingActive = thinkingActive,
+                            startedAtMillis = taskStartedAtMillis,
+                            onClick = { showLiveActivity = true },
+                        )
+                    }
+                }
                 // Crash fix (2026-10-13): keys must be unique even if the message
                 // list ever holds two rows with the same id (duplicate ids used
                 // to throw IllegalArgumentException and kill the app). The index
                 // suffix guarantees uniqueness; the id prefix keeps item identity
                 // stable for the append-only chat list.
-                if (messages.isEmpty() && !isRunning && liveProcess.isEmpty() && !thinkingActive && approval == null) {
-                    item {
-                        EmptyState(
-                            Icons.AutoMirrored.Filled.Chat,
-                            "Start a conversation",
-                            "Ask Kodex anything — describe what to build, or mention a file to discuss.",
-                        )
-                    }
-                }
-                itemsIndexed(messages, key = { index, msg -> "${msg.id}#$index" }) { _, rawMessage ->
+                // v3.2.42: the suffix is the message's CHRONOLOGICAL
+                // index (not its reversed list position), so an
+                // append — which shifts every reversed position by
+                // one — leaves every existing key untouched. The
+                // contentType lets the list recycle rows within a
+                // message kind.
+                itemsIndexed(
+                    messages.asReversed(),
+                    key = { revIndex, msg -> "${msg.id}#${messages.size - 1 - revIndex}" },
+                    contentType = { _, msg ->
+                        when {
+                            msg.workItems.isNotEmpty() -> "work"
+                            msg.fromUser -> "user"
+                            else -> "assistant"
+                        }
+                    },
+                ) { _, rawMessage ->
                     val message = remember(rawMessage.id, rawMessage.text) {
                         if (!isRunning && rawMessage.roadmap == null && !rawMessage.fromUser && rawMessage.text.length <= 30000 && rawMessage.text.contains("### Implementation Roadmap", ignoreCase = true)) {
                             val parsed = RoadmapParser.parseFromText(rawMessage.text, executionMode)
@@ -7352,53 +7412,33 @@ private fun ChatTab(
                         )
                     }
                 }
-                if (isRunning) {
-                    // v3.2.34 (U4): the working row is the LAST item of
-                    // the message list, directly under the most recent
-                    // message — Claude-style, in the conversation flow.
-                    // (It used to dock above the composer.) The approval
-                    // card stays right below it (U6c), and the workspace
-                    // follow-scroll keeps this tail visible while a run
-                    // streams.
-                    item(key = "working-row") {
-                        WorkingBar(
-                            items = liveProcess,
-                            thinkingActive = thinkingActive,
-                            startedAtMillis = taskStartedAtMillis,
-                            onClick = { showLiveActivity = true },
-                        )
-                    }
-                }
-                approval?.let { request -> item { ApprovalCard(request, onApproval, onApprovalWithLevel) } }
-                // U6d: the end-of-run changes review is a card IN the
-                // chat flow. Keep/Revert right here; the Changes tab
-                // stays available for the detailed per-file diffs.
-                if (!isRunning && changes.isNotEmpty()) {
-                    item(key = "changes-review") {
-                        ChangesReviewCard(
-                            changes = changes,
-                            onKeep = onKeepChanges,
-                            onUndo = onUndoChanges,
+                if (messages.isEmpty() && !isRunning && liveProcess.isEmpty() && !thinkingActive && approval == null) {
+                    item(key = "empty-state") {
+                        EmptyState(
+                            Icons.AutoMirrored.Filled.Chat,
+                            "Start a conversation",
+                            "Ask Kodex anything — describe what to build, or mention a file to discuss.",
                         )
                     }
                 }
             }
             // v3.2.40 (Scope H): floating scroll-to-bottom arrow — in
             // the list layer only (under every sheet/dialog), shown
-            // when a screenful or more sits below the viewport; one
-            // tap animates to the very end (working row included).
-            // Streaming never auto-yanks: this arrow is the way back.
+            // when a screenful or more sits between the user and the
+            // newest message; one tap animates to index 0, the
+            // newest end (working row included). Streaming never
+            // auto-yanks: this arrow is the way back.
             val wsLayoutInfo = listState.layoutInfo
             ScrollToBottomButton(
-                visible = !anyOverlayOpen && isFarFromBottom(
-                    totalItems = wsLayoutInfo.totalItemsCount,
-                    lastVisibleIndex = wsLayoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                visible = !anyOverlayOpen && isFarFromNewest(
+                    firstVisibleIndex = listState.firstVisibleItemIndex,
                     visibleCount = wsLayoutInfo.visibleItemsInfo.size,
                 ),
                 onClick = {
                     chatScope.launch {
-                        val total = listState.layoutInfo.totalItemsCount
-                        if (total > 0) listState.animateScrollToItem(total - 1, Int.MAX_VALUE)
+                        if (listState.layoutInfo.totalItemsCount > 0) {
+                            listState.animateScrollToItem(ScrollFollowGate.NEWEST_INDEX)
+                        }
                     }
                 },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
@@ -7439,6 +7479,11 @@ private fun ChatTab(
             Column(
                 Modifier
                     .fillMaxWidth()
+                    // v3.2.42: the tab's ONE IME consumer (see the
+                    // ChatTab root Column's note). Layout-phase only,
+                    // fed by the platform's animated insets — the
+                    // composer rides the keyboard's own curve.
+                    .imePadding()
                     .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
                 AnimatedVisibility(
@@ -7634,15 +7679,17 @@ private fun ChatTab(
                 // mic, voice); editing or content present adds the
                 // controls row (tools +, provider pill, mic,
                 // send/stop) under the field.
-                // v3.2.41 (Scope 1): same single-motion rule as the
-                // home composer — the IME read is a derived boolean
-                // (flips once per open/close, not per animation
-                // frame), and the controls row below fades only; the
-                // Surface's animateContentSize is the one owner of
-                // the card's height.
-                val imeInsets = WindowInsets.ime
-                val imeOpen by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
-                val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null
+                // v3.2.42 (Architecture A): same single-motion rule
+                // as the home composer — the controls row belongs to
+                // the field's editing session, driven by its FOCUS
+                // (inputFocused, tracked by the field's own
+                // onFocusChanged since Scope F2), not by an IME
+                // inset read. A boolean IME read could only flip
+                // discretely against the keyboard's continuous slide;
+                // focus flips with the tap that opens the keyboard,
+                // and the continuous motion is left entirely to the
+                // one imePadding consumer above.
+                val controlsVisible = inputFocused || prompt.isNotEmpty() || pastedText != null
                 val sendStopButton: @Composable () -> Unit = {
                     if (isRunning) {
                         Box(
@@ -7713,9 +7760,17 @@ private fun ChatTab(
                         width = 1.dp,
                         color = if (canSend) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else MaterialTheme.colorScheme.outlineVariant,
                     ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
+                    // v3.2.42 (Architecture A): NO animateContentSize
+                    // here — the v3.2.41 spring owned this card's
+                    // height while the IME inset animation moved the
+                    // same space on the platform's curve; two
+                    // unsynchronised animations on one surface read
+                    // on screen as a "double layer". The card's
+                    // height now changes only with its CONTENT (a
+                    // discrete state); every continuous motion comes
+                    // from the keyboard via the composer container's
+                    // imePadding.
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column {
                         if (pastedText != null) {
@@ -7809,8 +7864,10 @@ private fun ChatTab(
                         }
                         AnimatedVisibility(
                             visible = controlsVisible,
-                            // v3.2.41 (Scope 1): fade ONLY — size is
-                            // owned by the Surface's animateContentSize.
+                            // Fade ONLY — and no size owner remains
+                            // to fight (v3.2.42 removed the Surface's
+                            // animateContentSize entirely); continuous
+                            // motion is the keyboard's alone.
                             enter = fadeIn(),
                             exit = fadeOut(),
                         ) {

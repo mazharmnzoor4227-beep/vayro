@@ -203,6 +203,21 @@ jobs:
           yes | "${SDKMANAGER}" --licenses >/dev/null || true
           "${SDKMANAGER}" "platform-tools" "platforms;android-36" "ndk;26.1.10909125" "cmake;3.22.1"
 
+      - name: Verify committed baseline profile exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          # v3.2.42: the Baseline Profile ships as a committed file
+          # (app/src/main/baseline-prof.txt, the manual-profile
+          # location AGP packages from). A release built without it
+          # silently loses the install-time AOT profile, so its
+          # absence fails this job before anything is compiled.
+          if [[ ! -s app/src/main/baseline-prof.txt ]]; then
+            echo "::error::app/src/main/baseline-prof.txt is missing or empty — the release must ship the committed Baseline Profile."
+            exit 1
+          fi
+          echo "Baseline Profile present: $(wc -l < app/src/main/baseline-prof.txt) rules"
+
       - name: Configure permanent Kodex release signing key
         shell: bash
         env:
@@ -353,6 +368,23 @@ jobs:
             echo "Verifying $apk"
             "$APKSIGNER" verify --verbose "$apk"
           done
+
+      - name: Verify baseline profile is packaged in the release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          # v3.2.42: prove the committed Baseline Profile actually
+          # made it into the shipped artifact (AGP packages it as
+          # assets/dexopt/baseline.prof). Building "successfully"
+          # without it inside the APK is a silent no-op — fail here
+          # instead of shipping that.
+          APK="app/build/outputs/apk/online/release/app-online-release.apk"
+          if ! unzip -l "$APK" | grep -q "assets/dexopt/baseline.prof"; then
+            echo "::error::assets/dexopt/baseline.prof is NOT packaged in $APK — the Baseline Profile did not reach the release build."
+            exit 1
+          fi
+          unzip -l "$APK" | grep "assets/dexopt/"
+          echo "PASS: Baseline Profile packaged in the release APK."
 
       - name: Verify in-place update compatibility against previous release
         env:

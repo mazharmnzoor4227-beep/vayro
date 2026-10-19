@@ -68,4 +68,21 @@ object ScrollFollowGate {
         if (userScrollInProgress) return false
         return liveIndex == 0 && liveOffset == 0
     }
+
+    /**
+     * v3.2.42: both chat lists now run with `reverseLayout = true`
+     * (the JetChat structure): the NEWEST message is list index 0 —
+     * the visual bottom — and the layout itself anchors the viewport
+     * there, so a user parked at the newest message needs no scroll
+     * call at all when new content arrives; the list simply grows
+     * upward from its anchor. In list-state terms the user is parked
+     * at the newest exactly when the state cannot scroll backward
+     * (toward index 0) any further. This replaces the pre-3.2.42
+     * "at bottom" test (`!canScrollForward` on a forward list),
+     * whose meaning inverts with the layout direction.
+     */
+    fun isParkedAtNewest(canScrollBackward: Boolean): Boolean = !canScrollBackward
+
+    /** The list index of the newest message in a reversed chat list. */
+    const val NEWEST_INDEX: Int = 0
 }

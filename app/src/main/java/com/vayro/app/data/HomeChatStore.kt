@@ -1,6 +1,7 @@
 package com.vayro.app.data
 
 import android.content.Context
+import androidx.compose.runtime.Immutable
 import java.io.File
 import java.util.UUID
 import org.json.JSONArray
@@ -15,6 +16,10 @@ import org.json.JSONObject
  *  - "handoff"   — the "This is a job for Work" card; [taskText] holds the job text,
  *  - "work_note" — "Moved to Work · <projectName>" left in the thread after a handoff.
  */
+// v3.2.42: @Immutable — home messages are snapshots (the store
+// replaces them wholesale on change), so Compose can skip unchanged
+// rows in the home thread list instead of recomposing them.
+@Immutable
 data class HomeChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val fromUser: Boolean,

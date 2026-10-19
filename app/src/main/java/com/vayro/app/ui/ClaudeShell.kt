@@ -13,15 +13,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
@@ -32,6 +29,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,8 +41,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -136,7 +132,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -1378,6 +1374,15 @@ internal fun ChatHomeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var prompt by rememberSaveable { mutableStateOf("") }
+    // v3.2.42 (Architecture A): the composer's editing-session
+    // state. The controls row belongs to the session — it appears
+    // when the field takes focus (the same gesture that raises the
+    // keyboard) and stays while the session or its content lasts.
+    // No IME inset value is read anywhere in this screen's
+    // composition: the keyboard's motion reaches the screen only
+    // through the composer Column's imePadding (layout phase), so
+    // nothing here can step against the keyboard's own curve.
+    var composerFocused by remember { mutableStateOf(false) }
     // v3.2.40 (Scope F): the TXT chip's content + the viewer target.
     var pastedText by rememberSaveable { mutableStateOf<String?>(null) }
     var viewingPasted by remember { mutableStateOf<String?>(null) }
@@ -1641,6 +1646,15 @@ internal fun ChatHomeScreen(
             onHorizontalDrag = { _, dragAmount -> totalDrag += dragAmount },
         )
     }
+    // v3.2.42: tapping the conversation ends the editing session —
+    // focus leaves the field, the keyboard hides, and the composer
+    // returns to its one-row state. Focus is the session signal now
+    // (see the composer), so this tap is how the session closes
+    // besides sending. Only taps land here; scrolling is untouched.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val tapToDismissModifier = Modifier.pointerInput(focusManager) {
+        detectTapGestures(onTap = { focusManager.clearFocus() })
+    }
     val greeting = remember {
         when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
             in 5..11 -> "Good morning"
@@ -1678,39 +1692,47 @@ internal fun ChatHomeScreen(
         if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0)) {
             threadListState.scrollToItem(savedScroll.first, savedScroll.second)
         } else if (homeMessages.isNotEmpty()) {
-            threadListState.scrollToItem(homeMessages.lastIndex)
+            // v3.2.42: reversed list — the newest message is index
+            // 0. A fresh state already sits there; this call covers
+            // a state carried over from another thread.
+            threadListState.scrollToItem(ScrollFollowGate.NEWEST_INDEX)
         }
     }
     var lastHomeMessageCount by rememberSaveable { mutableStateOf(0) }
     LaunchedEffect(homeMessages.size, homeSending) {
         if (hasThread) {
-            // v3.2.41 (Scope 1): the follow decision goes through
-            // ScrollFollowGate — follow ONLY for the user's own send
-            // or when he is already at the bottom, and NEVER while
-            // his own scroll gesture is in progress or a sheet is
-            // open. Before, this effect fired animateScrollToItem
-            // even mid-fling (the effect was not gated on
-            // isScrollInProgress), which yanked the list away from
-            // the user's finger.
+            // v3.2.42: the list is REVERSED (newest = index 0) and
+            // anchors itself at the newest message — when the user
+            // is parked there, new content needs no scroll call at
+            // all. This effect now has exactly one live job left:
+            // the user's OWN send while he is scrolled up reading —
+            // the gate still decides (never mid-gesture, never
+            // under a sheet), and the target is index 0.
             val ownSend = homeMessages.size > lastHomeMessageCount &&
                 homeMessages.lastOrNull()?.fromUser == true
             lastHomeMessageCount = homeMessages.size
             val follow = ScrollFollowGate.shouldFollow(
                 ownSend = ownSend,
-                atBottom = !threadListState.canScrollForward,
+                atBottom = ScrollFollowGate.isParkedAtNewest(threadListState.canScrollBackward),
                 userScrollInProgress = threadListState.isScrollInProgress,
                 userScrolledUp = false,
                 overlayOpen = sheetOpen || workSheetOpen || agentSheetOpen ||
                     modelPickerOpen || viewingPasted != null || viewingDoc != null,
             )
             if (follow) {
-                val last = (homeMessages.size - 1 + if (homeSending) 1 else 0).coerceAtLeast(0)
-                threadListState.animateScrollToItem(last)
+                threadListState.animateScrollToItem(ScrollFollowGate.NEWEST_INDEX)
             }
         }
     }
 
-    Column(Modifier.fillMaxSize().imePadding()) {
+    // v3.2.42 (Architecture A — JetChat structure): this Column no
+    // longer consumes the IME inset. The screen's ONE IME consumer
+    // is the composer at the bottom (navigationBarsPadding +
+    // imePadding on its own Column below), so the keyboard's own
+    // inset animation is the single driver of all motion here: the
+    // top bar, greeting and message list keep the full height and
+    // the list simply draws behind the keyboard while it slides.
+    Column(Modifier.fillMaxSize()) {
         // v3.2.37 (Part D) + v3.2.38 (Part I): polished top bar — custom menu
         // chip on the left; the Chat | Work mode switcher centered; New Chat
         // + work menu (custom sheet, never the system popup) and the update
@@ -1770,7 +1792,7 @@ internal fun ChatHomeScreen(
         }
         if (!hasThread) {
             Box(
-                Modifier.weight(1f).fillMaxWidth().then(swipeToWorkModifier),
+                Modifier.weight(1f).fillMaxWidth().then(swipeToWorkModifier).then(tapToDismissModifier),
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1789,28 +1811,20 @@ internal fun ChatHomeScreen(
           Box(Modifier.weight(1f).fillMaxWidth()) {
             androidx.compose.foundation.lazy.LazyColumn(
                 state = threadListState,
-                modifier = Modifier.fillMaxSize().then(swipeToWorkModifier).padding(horizontal = 16.dp),
+                // v3.2.42: reverseLayout — index 0 (the thinking row
+                // while sending, otherwise the newest message) sits
+                // at the visual bottom and the layout anchors there.
+                // The list needs NO ime handling and NO follow
+                // scrolling: it draws behind the keyboard while the
+                // composer rides it, and new messages grow upward
+                // from the anchor the user is parked on.
+                reverseLayout = true,
+                modifier = Modifier.fillMaxSize().then(swipeToWorkModifier).then(tapToDismissModifier).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp),
             ) {
-                // v3.2.41 (Scope 1): stable keys — without them a
-                // position-based list re-measures and re-binds rows
-                // when items arrive, which reads on screen as a jump.
-                items(count = homeMessages.size, key = { homeMessages[it].id }) { index ->
-                    val message = homeMessages[index]
-                    HomeMessageRow(
-                        message = message,
-                        movedProjectName = homeMessages.firstOrNull {
-                            it.kind == "work_note" && it.taskText == message.taskText &&
-                                it.createdAtMillis >= message.createdAtMillis
-                        }?.projectName,
-                        onOpenInWork = onOpenInWork,
-                        onOpenPasted = { viewingPasted = it },
-                        onOpenDoc = { name, text -> viewingDoc = name to text },
-                    )
-                }
                 if (homeSending) {
-                    item {
+                    item(key = "thinking-row") {
                         // v3.2.38 (Part O): chat waits use the SAME Canvas
                         // ThinkingOrb as Work mode — no plain spinner here.
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1824,20 +1838,46 @@ internal fun ChatHomeScreen(
                         }
                     }
                 }
+                // Stable keys (kept from v3.2.41) + a contentType per
+                // message kind (v3.2.42), so the list can recycle
+                // rows within a kind instead of rebinding across
+                // kinds. The item at list index i is the message at
+                // homeMessages[size - 1 - i] — data order unchanged.
+                items(
+                    count = homeMessages.size,
+                    key = { homeMessages[homeMessages.lastIndex - it].id },
+                    contentType = { homeMessages[homeMessages.lastIndex - it].kind },
+                ) { revIndex ->
+                    val message = homeMessages[homeMessages.lastIndex - revIndex]
+                    HomeMessageRow(
+                        message = message,
+                        movedProjectName = homeMessages.firstOrNull {
+                            it.kind == "work_note" && it.taskText == message.taskText &&
+                                it.createdAtMillis >= message.createdAtMillis
+                        }?.projectName,
+                        onOpenInWork = onOpenInWork,
+                        onOpenPasted = { viewingPasted = it },
+                        onOpenDoc = { name, text -> viewingDoc = name to text },
+                    )
+                }
             }
             // v3.2.40 (Scope H): floating scroll-to-bottom arrow for
             // the home thread — same rule and behaviour as Work chat.
+            // v3.2.42: the reversed-list form of the rule — the items
+            // between the viewport and the newest message are the
+            // ones below the first visible index; one tap animates
+            // to index 0, the newest message at the visual bottom.
             val homeLayoutInfo = threadListState.layoutInfo
             ScrollToBottomButton(
-                visible = isFarFromBottom(
-                    totalItems = homeLayoutInfo.totalItemsCount,
-                    lastVisibleIndex = homeLayoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                visible = isFarFromNewest(
+                    firstVisibleIndex = threadListState.firstVisibleItemIndex,
                     visibleCount = homeLayoutInfo.visibleItemsInfo.size,
                 ),
                 onClick = {
                     scope.launch {
-                        val total = threadListState.layoutInfo.totalItemsCount
-                        if (total > 0) threadListState.animateScrollToItem(total - 1, Int.MAX_VALUE)
+                        if (threadListState.layoutInfo.totalItemsCount > 0) {
+                            threadListState.animateScrollToItem(ScrollFollowGate.NEWEST_INDEX)
+                        }
                     }
                 },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
@@ -1848,6 +1888,12 @@ internal fun ChatHomeScreen(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
+                // v3.2.42: the one IME consumer on this screen (see
+                // the root Column's note). imePadding changes in the
+                // layout phase only — fed by the platform's own
+                // animated insets — so the composer rides the
+                // keyboard's curve exactly, with no recomposition.
+                .imePadding()
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             if (voiceInputActive) {
@@ -1881,24 +1927,23 @@ internal fun ChatHomeScreen(
                 // from the user's Claude reference. The text field
                 // NEVER changes parent — only its row siblings and
                 // the controls row below animate — so focus and the
-                // keyboard survive the state flip. States: empty +
-                // keyboard closed = ONE row (+, field, mic, voice);
-                // keyboard open OR content present = the field's row
-                // plus the controls row (+, provider-model pill,
-                // mic, send/voice) under it.
-                // v3.2.41 (Scope 1): the IME inset is read through a
-                // derived boolean. Before, the raw per-frame pixel
-                // value was read in composition, so EVERY frame of
-                // the keyboard's slide recomposed this whole screen
-                // (greeting, list, composer) — the filmed stutter.
-                // The boolean flips once per open/close, so the
-                // keyboard's own inset animation (imePadding on the
-                // root) stays the single motion the eye follows and
-                // the content glides with it instead of stepping.
-                val density = androidx.compose.ui.platform.LocalDensity.current
-                val imeInsets = WindowInsets.ime
-                val imeOpen by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
-                val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null ||
+                // keyboard survive the state flip.
+                // v3.2.42 (Architecture A): the two states are the
+                // same as v3.2.40/41 — empty + not editing = ONE row
+                // (+, field, mic, voice); editing OR content present
+                // = the field's row plus the controls row under it.
+                // What changed is the signal: v3.2.41 read a derived
+                // IME boolean here. A boolean carries no per-frame
+                // position, so the row could only flip discretely
+                // while the keyboard slid continuously — the two
+                // were never in sync. The row is now driven by the
+                // field's own FOCUS, a discrete session state that
+                // flips with the tap that opens the keyboard, and
+                // the keyboard's continuous motion is left entirely
+                // to the one imePadding consumer. The field never
+                // changes parent, so focus and the keyboard survive
+                // the flip.
+                val controlsVisible = composerFocused || prompt.isNotEmpty() || pastedText != null ||
                     homePendingDocName.isNotBlank()
                 val sendOrVoice: @Composable () -> Unit = {
                     if (canSend) {
@@ -1939,19 +1984,20 @@ internal fun ChatHomeScreen(
                     shadowElevation = 2.dp,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    // v3.2.41 (Scope 1): ONE owner of this card's size
-                    // changes. The controls row below now fades only
-                    // (no expand/shrink of its own) and this Column
-                    // animates the height once, smoothly — before, the
-                    // AnimatedVisibility size animation and the IME
-                    // inset animation moved the same space on two
-                    // different curves, which read on screen as a
-                    // "double layer" sliding against itself.
+                    // v3.2.42 (Architecture A): NO animateContentSize
+                    // here or on any ancestor of this card. The
+                    // v3.2.41 design let this spring own the card's
+                    // height while the IME inset animation moved the
+                    // same space on the platform's curve — two
+                    // unsynchronised animations on one surface,
+                    // which is what read on screen as a "double
+                    // layer" sliding against itself. The card's
+                    // height now changes only when its CONTENT
+                    // changes (a discrete state), and every
+                    // continuous motion comes from the keyboard via
+                    // the composer Column's imePadding.
                     Column(
                         Modifier
-                            .animateContentSize(
-                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                            )
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                     ) {
                         // v3.2.40 (Scope G): staged images — what you
@@ -2049,7 +2095,10 @@ internal fun ChatHomeScreen(
                                 },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                                    // v3.2.42: focus drives the
+                                    // controls row (see above).
+                                    .onFocusChanged { composerFocused = it.isFocused },
                                 // Scope F2: grows to 8 whole lines, then
                                 // scrolls inside — maxLines keeps the
                                 // height a whole number of line heights,
@@ -2084,10 +2133,13 @@ internal fun ChatHomeScreen(
                         }
                         AnimatedVisibility(
                             visible = controlsVisible,
-                            // v3.2.41 (Scope 1): fade ONLY — the size
-                            // change belongs to the Column's single
-                            // animateContentSize above, never to a
-                            // second size animation on the same space.
+                            // Fade ONLY, and there is no size owner
+                            // left to fight: the row's appearance is a
+                            // discrete content change inside the card
+                            // (v3.2.42 removed the animateContentSize
+                            // spring entirely), while all continuous
+                            // motion comes from the keyboard through
+                            // the composer Column's imePadding.
                             enter = fadeIn(),
                             exit = fadeOut(),
                         ) {

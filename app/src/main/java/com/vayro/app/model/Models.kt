@@ -1,5 +1,6 @@
 package com.vayro.app.model
 
+import androidx.compose.runtime.Immutable
 import java.time.Instant
 import java.text.Normalizer
 import java.util.Locale
@@ -517,6 +518,12 @@ data class ScratchpadItem(
     val durationSeconds: Long? = null,
 )
 
+// v3.2.42: @Immutable is the stability contract the chat lists rely
+// on — a ChatMessage is a snapshot; edits always arrive as a copy()
+// in a new list instance, never as in-place mutation. With the
+// annotation, Compose can skip unchanged message rows outright
+// instead of recomposing them when the list state moves.
+@Immutable
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val fromUser: Boolean,
@@ -532,6 +539,7 @@ data class ChatMessage(
     val roadmap: ActiveRoadmap? = null,
 )
 
+@Immutable
 data class ChatAttachment(
     val id: String = UUID.randomUUID().toString(),
     val displayName: String,
@@ -565,6 +573,7 @@ data class ChangeItem(
     val accepted: Boolean? = null,
 )
 
+@Immutable
 data class ActivityItem(
     val title: String,
     val detail: String,

@@ -152,4 +152,63 @@ class ProviderApiClientTest {
         )
         assertEquals("hello", body.getJSONArray("messages").getJSONObject(0).getString("content"))
     }
+
+    // v3.2.42 (Scope 2 carry-over): a socket timeout gets exactly
+    // ONE retry. The transport block is fakeable here even though
+    // attemptRequest itself does raw HttpURLConnection I/O — the
+    // retry policy lives in runWithSingleTimeoutRetry, which is
+    // what request() wraps every attempt in.
+
+    @Test
+    fun timeoutRetry_successFirstTryRunsOnce() {
+        var calls = 0
+        val result = runWithSingleTimeoutRetry {
+            calls++
+            "ok"
+        }
+        assertEquals("ok", result)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun timeoutRetry_timeoutThenSuccessReturnsSecondResult() {
+        var calls = 0
+        val result = runWithSingleTimeoutRetry {
+            calls++
+            if (calls == 1) throw java.net.SocketTimeoutException("timeout")
+            "recovered"
+        }
+        assertEquals("recovered", result)
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun timeoutRetry_secondTimeoutPropagatesAfterExactlyTwoCalls() {
+        var calls = 0
+        try {
+            runWithSingleTimeoutRetry {
+                calls++
+                throw java.net.SocketTimeoutException("timeout")
+            }
+            throw AssertionError("expected the second timeout to propagate")
+        } catch (expected: java.net.SocketTimeoutException) {
+            assertEquals("timeout", expected.message)
+        }
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun timeoutRetry_otherExceptionsAreNotRetried() {
+        var calls = 0
+        try {
+            runWithSingleTimeoutRetry {
+                calls++
+                throw java.net.ConnectException("refused")
+            }
+            throw AssertionError("expected the ConnectException to propagate")
+        } catch (expected: java.net.ConnectException) {
+            assertEquals("refused", expected.message)
+        }
+        assertEquals(1, calls)
+    }
 }

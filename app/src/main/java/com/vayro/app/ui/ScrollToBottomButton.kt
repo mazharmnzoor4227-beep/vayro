@@ -72,3 +72,19 @@ fun isFarFromBottom(
     val below = totalItems - 1 - lastVisibleIndex
     return below >= maxOf(2, visibleCount)
 }
+
+/**
+ * v3.2.42: the reversed-list form of the Scope H rule. Both chat
+ * lists now use `reverseLayout = true`, so the items between the
+ * viewport and the newest message are the ones with indices BELOW
+ * the first visible index. The arrow shows when at least a
+ * screenful of them (the currently visible count, at least 2) sits
+ * between the user and the newest message.
+ */
+fun isFarFromNewest(
+    firstVisibleIndex: Int,
+    visibleCount: Int,
+): Boolean {
+    if (firstVisibleIndex < 0) return false
+    return firstVisibleIndex >= maxOf(2, visibleCount)
+}

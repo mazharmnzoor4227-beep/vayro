@@ -100,7 +100,11 @@ class ProviderApiClient {
         // Gateways may need to cold-start a model before returning the first token.
         // A ten-second validation timeout produced false "network" failures even
         // though discovery and the endpoint itself were healthy.
-        val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 12_000, readTimeoutMs = 45_000)
+        // v3.2.42 (Scope 2 carry-over): the connect timeout rises to
+        // 20s — on a congested carrier route the TCP connect itself
+        // can take most of 12s, and the request() layer now retries a
+        // socket timeout once before this failure is surfaced.
+        val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 20_000, readTimeoutMs = 45_000)
         val providerMessage = providerErrorMessage(response.body)
         // v3.2.38 (L2): the old classifier blamed "the Base URL and selected
         // gateway protocol" for EVERY 404 — but Groq, Cerebras, xAI, Google
@@ -410,7 +414,15 @@ class ProviderApiClient {
         var attempt = 0
         while (true) {
             val result = runCatching {
-                attemptRequest(endpoint, method, apiKey, body, protocol, connectTimeoutMs, readTimeoutMs)
+                // v3.2.42 (Scope 2 carry-over): a socket timeout gets
+                // ONE immediate retry before the failure is surfaced —
+                // on a congested route the first attempt can die in
+                // the carrier path while the endpoint itself is
+                // healthy. A second timeout propagates unchanged and
+                // keeps the existing timeout error message.
+                runWithSingleTimeoutRetry {
+                    attemptRequest(endpoint, method, apiKey, body, protocol, connectTimeoutMs, readTimeoutMs)
+                }
             }.getOrElse {
                 return HttpResult(0, "", it.message ?: "Network connection failed")
             }
@@ -591,6 +603,22 @@ class ChatApiException(
     message: String,
     val providerMessage: String? = null,
 ) : Exception(message)
+
+/**
+ * v3.2.42 (Scope 2 carry-over): runs [block] and, if it dies with a
+ * [java.net.SocketTimeoutException], runs it exactly once more. The
+ * second attempt's outcome — success or any failure — is the result.
+ * Any other exception propagates immediately with no retry. Kept as
+ * a standalone function over a fakeable block so the retry policy is
+ * unit-testable without a network (ProviderApiClient's transport is
+ * a raw HttpURLConnection with no injectable seam).
+ */
+internal fun <T> runWithSingleTimeoutRetry(block: () -> T): T =
+    try {
+        block()
+    } catch (timeout: java.net.SocketTimeoutException) {
+        block()
+    }
 
 object ModelResponseParser {
     fun parse(json: String): List<DiscoveredModel> = runCatching {

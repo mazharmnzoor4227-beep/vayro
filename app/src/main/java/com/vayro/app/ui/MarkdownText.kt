@@ -82,6 +82,35 @@ private const val MAX_TABLE_COLUMNS = 12
 private const val MAX_TABLE_ROWS = 200
 private const val MAX_CODE_DISPLAY_CHARS = 40_000
 
+/**
+ * v3.2.42: process-level cache of parsed markdown, keyed by the
+ * source text. A LazyColumn disposes message rows as they leave the
+ * viewport; without this cache, scrolling a long thread back
+ * re-parsed every returning message on the Default dispatcher and
+ * each row's final height landed a beat after its placeholder —
+ * the list visibly settled and jumped while scrolling. Parsed
+ * blocks are immutable data built once by [parseMarkdown], so
+ * sharing them across compositions is safe. Bounded LRU: the cache
+ * can never grow past [MAX_ENTRIES] messages.
+ */
+internal object MarkdownParseCache {
+    private const val MAX_ENTRIES = 48
+
+    private val cache = object : LinkedHashMap<String, List<MarkdownBlock>>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, List<MarkdownBlock>>,
+        ): Boolean = size > MAX_ENTRIES
+    }
+
+    @Synchronized
+    fun get(text: String): List<MarkdownBlock>? = cache[text]
+
+    @Synchronized
+    fun put(text: String, blocks: List<MarkdownBlock>) {
+        cache[text] = blocks
+    }
+}
+
 @Composable
 fun MarkdownText(
     markdown: String,
@@ -112,8 +141,21 @@ fun MarkdownText(
 
     // Large agent reports can contain hundreds of Markdown blocks. Parsing on the
     // main thread can stall Compose long enough to show a black frame or ANR.
-    val blocks by produceState(initialValue = emptyList<MarkdownBlock>(), markdown) {
-        value = withContext(Dispatchers.Default) { parseMarkdown(markdown) }
+    // v3.2.42: the initial value comes from MarkdownParseCache — a
+    // message this process has already parsed renders its real
+    // blocks (and its real height) on the very first frame, with no
+    // placeholder swap, when its row scrolls back into view.
+    val blocks by produceState(
+        initialValue = MarkdownParseCache.get(markdown) ?: emptyList(),
+        markdown,
+    ) {
+        if (value.isEmpty() && markdown.isNotBlank()) {
+            value = withContext(Dispatchers.Default) {
+                parseMarkdown(markdown).also { parsed ->
+                    if (parsed.isNotEmpty()) MarkdownParseCache.put(markdown, parsed)
+                }
+            }
+        }
     }
 
     if (blocks.isEmpty() && markdown.isNotBlank()) {

@@ -27,7 +27,7 @@ val hasUploadSigning = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { !it.isNullOrBlank() }
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.41"
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.42"
 val runtimeReleaseBaseUrl =
     "https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v$appVersionName"
 val appUpdateManifestUrl =
@@ -86,7 +86,7 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 79
+        versionCode = 80
         versionName = appVersionName
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
 
@@ -225,6 +225,11 @@ dependencies {
     // v3.2.40: the Gemini Live call runs over a raw OkHttp WebSocket
     // with the user's own AI Studio key (BYOK — no Firebase project).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // v3.2.42: installs the committed Baseline Profile
+    // (app/src/main/baseline-prof.txt, packaged as
+    // assets/dexopt/baseline.prof) on devices/paths where the
+    // package manager does not apply it at install time.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     // Firebase Auth and Identity libraries are shared across both online and offline builds
     // so account management and Google sign-in work seamlessly with project credentials.

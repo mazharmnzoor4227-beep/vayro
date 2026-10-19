@@ -57,7 +57,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,10 +71,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -133,10 +132,14 @@ fun TerminalScreen(
     val terminalScrollState = rememberScrollState()
     val inputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    // v3.2.41 (Scope 1): derived boolean — no per-frame recomposition while the keyboard animates.
-    val imeInsets = WindowInsets.ime
-    val imeDensity = LocalDensity.current
-    val keyboardVisible by remember { derivedStateOf { imeInsets.getBottom(imeDensity) > 0 } }
+    // v3.2.42: the helper rows below key off the command field's
+    // FOCUS (the editing session), not an IME inset read. The
+    // v3.2.41 derived boolean flipped once per open/close against
+    // the keyboard's continuous slide; focus flips with the tap
+    // that opens the keyboard, and the session ends when focus
+    // moves (e.g. to the search field). The imePadding on the
+    // screen Column remains this screen's one IME consumer.
+    var commandInputFocused by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}" 
     val openTerminalKeyboard = {
@@ -395,7 +398,7 @@ fun TerminalScreen(
                     }
                 }
             }
-            if (showQuickCommands && !keyboardVisible) {
+            if (showQuickCommands && !commandInputFocused) {
                 // Quick command chips are useful in the standalone terminal, but
                 // project terminal space is reserved for the actual project session.
                 Row(
@@ -551,7 +554,8 @@ fun TerminalScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .focusRequester(inputFocusRequester),
+                                .focusRequester(inputFocusRequester)
+                                .onFocusChanged { commandInputFocused = it.isFocused },
                             singleLine = false,
                             visualTransformation = prefixVisualTransformation,
                             cursorBrush = SolidColor(promptGreen),
@@ -576,7 +580,7 @@ fun TerminalScreen(
 
             // Keyboard helper row. These operate on the command draft, so they are
             // useful even when the phone keyboard does not expose terminal keys.
-            if (!keyboardVisible) {
+            if (!commandInputFocused) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
