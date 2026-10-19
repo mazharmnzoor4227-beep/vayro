@@ -157,6 +157,98 @@ fun PastedContentChip(
     }
 }
 
+/**
+ * v3.2.41 (Scope 3): the staged-document chip in the home composer —
+ * the file's real name and kind, tap to read exactly what will be
+ * sent, ✕ to unstage.
+ */
+@Composable
+fun DocumentAttachmentChip(
+    name: String,
+    kindLabel: String,
+    onOpen: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = modifier.clickable(onClick = onOpen),
+    ) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.Description,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    name,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Text(
+                    kindLabel,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Remove document", modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+/** v3.2.41 (Scope 3): the document card rendered inside a sent home message. */
+@Composable
+fun DocumentAttachmentCard(
+    name: String,
+    kindLabel: String,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        modifier = modifier.clickable(onClick = onOpen),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.Description,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(9.dp))
+            Column {
+                Text(
+                    name,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Text(
+                    kindLabel,
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
 /** The "TXT · Pasted content" card rendered inside a sent message. */
 @Composable
 fun PastedContentCard(
@@ -199,6 +291,9 @@ fun PastedContentCard(
 fun PastedContentViewerDialog(
     text: String,
     onDismiss: () -> Unit,
+    // v3.2.41 (Scope 3): the same full-text viewer shows an attached
+    // document's extracted content, titled with the file's name.
+    title: String = "Pasted content",
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -219,9 +314,11 @@ fun PastedContentViewerDialog(
                         Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                     Text(
-                        "Pasted content",
+                        title,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
                     TextButton(

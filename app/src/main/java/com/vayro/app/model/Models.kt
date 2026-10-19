@@ -49,7 +49,12 @@ enum class ProviderKind(
     // build time for every entry here. NVIDIA NIM is deliberately absent
     // from the catalog (Pakistani phone verification fails there).
     GROQ("Groq", "Very fast replies · free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
-    GOOGLE_AI_STUDIO("Google AI Studio", "Gemini models · free tier available", ProviderProtocol.OPENAI_CHAT, "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
+    // v3.2.41 (Scope 2): default model was gemini-2.5-flash — Google now
+    // answers HTTP 404 "no longer available to new users" for the whole
+    // 2.5 series on keys that never used it before, so a brand-new AI
+    // Studio key could never connect. gemini-3.8-flash is Google's named
+    // replacement and is open to new keys.
+    GOOGLE_AI_STUDIO("Google AI Studio", "Gemini models · free tier available", ProviderProtocol.OPENAI_CHAT, "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.8-flash"),
     MISTRAL("Mistral AI", "Free Experiment plan · phone verification", ProviderProtocol.OPENAI_CHAT, "https://api.mistral.ai/v1", "mistral-small-latest"),
     CEREBRAS("Cerebras", "Very fast replies · trial credit", ProviderProtocol.OPENAI_CHAT, "https://api.cerebras.ai/v1", "gpt-oss-120b"),
     COHERE("Cohere", "Trial key available", ProviderProtocol.OPENAI_CHAT, "https://api.cohere.ai/compatibility/v1", "command-a-03-2025"),

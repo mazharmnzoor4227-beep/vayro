@@ -4,6 +4,7 @@ import com.vayro.app.model.ProviderProtocol
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProviderApiClientTest {
@@ -106,6 +107,36 @@ class ProviderApiClientTest {
         assertEquals("base64", source.getString("type"))
         assertEquals("image/jpeg", source.getString("media_type"))
         assertEquals("QUJD", source.getString("data"))
+    }
+
+    // v3.2.41 (Scope 2): a 404 that names the MODEL is a model
+    // problem, never an address problem — Google's new-key wording
+    // for the retired-to-new-users 2.5 series included.
+    @Test
+    fun modelErrorClassification_googleNewKeyWording() {
+        val body = """{"error":{"code":404,"message":"This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use the latest model.","status":"NOT_FOUND"}}"""
+        assertTrue(ProviderApiClient().isModelError(404, body))
+    }
+
+    @Test
+    fun modelErrorClassification_openAiStyleMissingModel() {
+        val body = """{"error":{"message":"The model 'gemini-2.5-flash' does not exist or you do not have access to it.","type":"invalid_request_error","code":404}}"""
+        assertTrue(ProviderApiClient().isModelError(404, body))
+    }
+
+    @Test
+    fun modelErrorClassification_realEndpoint404StaysEndpoint() {
+        // A wrong address answers with a bare 404 page that never
+        // mentions a model — that one really is an endpoint problem.
+        val body = """<html><head><title>404 Page not found</title></head><body>Error: not found</body></html>"""
+        assertFalse(ProviderApiClient().isModelError(404, body))
+    }
+
+    @Test
+    fun modelErrorClassification_ignoresOtherStatuses() {
+        val body = """{"error":{"message":"This model is no longer available to new users.","status":"NOT_FOUND"}}"""
+        assertFalse(ProviderApiClient().isModelError(401, body))
+        assertFalse(ProviderApiClient().isModelError(500, body))
     }
 
     @Test

@@ -3059,7 +3059,10 @@ private fun ApiKeyCatalogSection(
  */
 private fun catalogFailureHeadline(result: ConnectionValidation.Failure, kind: ProviderKind): String = when {
     result.label == "Rejected" -> "This key was rejected by ${kind.title}. Check the key and try again."
-    result.modelError -> "The model Kodex picked is not available on ${kind.title}."
+    // v3.2.41 (Scope 2): a model-class 404 is the provider talking
+    // about the MODEL — say so in its name, with its own words in the
+    // technical line below; the address is never blamed first.
+    result.modelError -> "${kind.title} says this model isn't available for your key."
     result.label == "Rate limited" -> "${kind.title} is rate-limiting right now — wait a moment and try again."
     result.label == "Provider error" -> "${kind.title} is having a problem right now — try again later."
     result.label == "Timed out" || result.label == "Network error" -> "Network problem — check your connection and try again."
@@ -3081,9 +3084,18 @@ private fun catalogTechnicalLine(result: ConnectionValidation.Failure): String? 
  * the verified default first, then a same-family chat model, skipping
  * embedding / speech / moderation / codex-only ids that cannot answer chat.
  */
-private fun pickCatalogChatModel(models: List<DiscoveredModel>, kind: ProviderKind): String? {
+private fun pickCatalogChatModel(
+    models: List<DiscoveredModel>,
+    kind: ProviderKind,
+    exclude: Set<String> = emptySet(),
+): String? {
     if (models.isEmpty()) return null
-    val ids = models.map { it.id }
+    // v3.2.41 (Scope 2): never "correct" onto the model that just
+    // failed — a provider's list can still advertise a model its keys
+    // may not call (Google lists the 2.5 series while new keys get a
+    // 404 for it), so the failed id is excluded before any preference.
+    val ids = models.map { it.id }.filter { it !in exclude }
+    if (ids.isEmpty()) return null
     if (kind.defaultModel in ids) return kind.defaultModel
     val notChat = listOf("embed", "whisper", "tts", "transcri", "moderation", "rerank", "image", "audio", "codex", "safeguard", "guard")
     val chat = ids.filter { id -> notChat.none { id.contains(it, ignoreCase = true) } }
@@ -3122,6 +3134,7 @@ private fun CatalogProviderCard(
     var statusOk by remember(kind) { mutableStateOf(false) }
     var showAdvanced by remember(kind) { mutableStateOf(false) }
     var baseUrl by remember(kind) { mutableStateOf(catalogChatDefaults(kind).baseUrl) }
+    var baseUrlError by remember(kind) { mutableStateOf<String?>(null) }
     var model by remember(kind) { mutableStateOf(catalogChatDefaults(kind).model) }
     var autoSwitch by remember(kind) { mutableStateOf(autoSwitchFor(kind)) }
 
@@ -3286,6 +3299,20 @@ private fun CatalogProviderCard(
                 enabled = newKey.isNotBlank() && !testing,
                 onClick = {
                     val keyValue = newKey.trim()
+                    // v3.2.41 (Scope 2): the Base URL is checked at the
+                    // field before anything is tested or saved — a
+                    // pasted curl example stops here with the plain
+                    // message instead of reaching the network layer.
+                    val addressError = com.vayro.app.network.BaseUrlValidation.errorOrNull(baseUrl)
+                    if (addressError != null) {
+                        baseUrlError = addressError
+                        if (!showAdvanced) showAdvanced = true
+                        status = addressError
+                        statusDetail = null
+                        statusOk = false
+                        return@Button
+                    }
+                    baseUrlError = null
                     fun finishConnect(usedModel: String, corrected: Boolean, testedBaseUrl: String) {
                         keys = onAddApiKey(
                             kind,
@@ -3323,23 +3350,42 @@ private fun CatalogProviderCard(
                                     status = "That model is gone — finding one that works…"
                                     val discovery = onDiscoverModels(profile, keyValue)
                                     val found = (discovery as? ModelDiscoveryResult.Success)?.models.orEmpty()
-                                    val pick = pickCatalogChatModel(found, kind)
-                                    if (pick == null) {
+                                    // v3.2.41 (Scope 2): candidates in
+                                    // order — the provider-list pick with
+                                    // the failed model EXCLUDED (the list
+                                    // can still advertise a model new
+                                    // keys may not call), then this
+                                    // provider's known-good default.
+                                    // Each is tried once; the first that
+                                    // answers is what gets connected.
+                                    val candidates = buildList {
+                                        pickCatalogChatModel(found, kind, exclude = setOf(profile.model))?.let { add(it) }
+                                        if (kind.defaultModel != profile.model && kind.defaultModel !in this) {
+                                            add(kind.defaultModel)
+                                        }
+                                    }.distinct()
+                                    var connectedWith: String? = null
+                                    var lastFailure: ConnectionValidation.Failure = first
+                                    for (candidate in candidates) {
+                                        when (val attempt = onValidateProvider(profile.copy(model = candidate), keyValue, emptyList())) {
+                                            is ConnectionValidation.Success -> {
+                                                connectedWith = candidate
+                                                break
+                                            }
+                                            is ConnectionValidation.Failure -> lastFailure = attempt
+                                        }
+                                    }
+                                    if (connectedWith != null) {
+                                        model = connectedWith
+                                        finishConnect(connectedWith, corrected = true, testedBaseUrl = profile.baseUrl)
+                                    } else if (candidates.isEmpty()) {
                                         status = "The model Kodex picked is not available on ${kind.title}, and no other model could be found."
                                         statusDetail = catalogTechnicalLine(first)
                                         statusOk = false
                                     } else {
-                                        when (val second = onValidateProvider(profile.copy(model = pick), keyValue, emptyList())) {
-                                            is ConnectionValidation.Success -> {
-                                                model = pick
-                                                finishConnect(pick, corrected = true, testedBaseUrl = profile.baseUrl)
-                                            }
-                                            is ConnectionValidation.Failure -> {
-                                                status = catalogFailureHeadline(second, kind)
-                                                statusDetail = catalogTechnicalLine(second)
-                                                statusOk = false
-                                            }
-                                        }
+                                        status = catalogFailureHeadline(lastFailure, kind)
+                                        statusDetail = catalogTechnicalLine(lastFailure)
+                                        statusOk = false
                                     }
                                 } else {
                                     status = catalogFailureHeadline(first, kind)
@@ -3367,9 +3413,13 @@ private fun CatalogProviderCard(
             if (showAdvanced) {
                 OutlinedTextField(
                     value = baseUrl,
-                    onValueChange = { baseUrl = it },
+                    onValueChange = { baseUrl = it; baseUrlError = null },
                     label = { Text("Base URL") },
                     singleLine = true,
+                    isError = baseUrlError != null,
+                    supportingText = baseUrlError?.let { error ->
+                        { Text(error, color = MaterialTheme.colorScheme.error) }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                 )
@@ -3385,6 +3435,16 @@ private fun CatalogProviderCard(
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
+                        // v3.2.41 (Scope 2): garbage never gets saved —
+                        // the same field check as Test & Connect.
+                        val addressError = com.vayro.app.network.BaseUrlValidation.errorOrNull(baseUrl)
+                        if (addressError != null) {
+                            baseUrlError = addressError
+                            status = addressError
+                            statusDetail = null
+                            statusOk = false
+                            return@OutlinedButton
+                        }
                         onSaveProvider(ProviderProfile(kind, baseUrl.trim(), model.trim()), "")
                         // v3.2.38 (L/J): an endpoint saved here is also the endpoint home chat uses for this provider.
                         onChatEndpointCorrected(kind, baseUrl.trim(), model.trim())

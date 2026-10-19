@@ -38,6 +38,12 @@ class ProviderApiClient {
         if (baseUrl.isBlank()) {
             return@withContext ModelDiscoveryResult.Failure("Enter a base URL first.")
         }
+        // v3.2.41 (Scope 2): a stored value that is not one clean web
+        // address (e.g. a pasted curl example) gets the plain field
+        // message here — never an exception dump from the network layer.
+        BaseUrlValidation.errorOrNull(baseUrl)?.let { message ->
+            return@withContext ModelDiscoveryResult.Failure(message)
+        }
 
         var authError = false
         var lastMessage = "This provider did not expose a model list. You can enter a custom model name."
@@ -83,6 +89,11 @@ class ProviderApiClient {
     ): ConnectionValidation = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
             return@withContext ConnectionValidation.Failure("Base URL, model, and API key are required.")
+        }
+        // v3.2.41 (Scope 2): same stored-garbage guard as discovery —
+        // the test surfaces the plain address message, not a dump.
+        BaseUrlValidation.errorOrNull(baseUrl)?.let { message ->
+            return@withContext ConnectionValidation.Failure(message, label = "Bad address")
         }
         val endpoint = messagesEndpoint(baseUrl, protocol)
         val body = validationBody(model, protocol, openRouterProviderOrder, openRouterAllowFallbacks)
@@ -172,7 +183,7 @@ class ProviderApiClient {
      * model as 400 (Anthropic-style) or 404 (OpenAI-compatible style) with
      * the word "model" plus a not-found / no-access phrase in the body.
      */
-    private fun isModelError(code: Int, body: String): Boolean {
+    internal fun isModelError(code: Int, body: String): Boolean {
         if (code != 400 && code != 404) return false
         val b = body.lowercase()
         if (!b.contains("model")) return false
@@ -180,7 +191,13 @@ class ProviderApiClient {
         return b.contains("not_found") || b.contains("not found") ||
             b.contains("does not exist") || b.contains("not exist") ||
             b.contains("no access") || b.contains("not available") ||
-            b.contains("not supported") || b.contains("invalid model")
+            b.contains("not supported") || b.contains("invalid model") ||
+            // v3.2.41 (Scope 2): Google's new-key wording for the
+            // retired-to-new-users 2.5 series — "This model … is no
+            // longer available to new users" — names the model, not
+            // the address, and must classify as a MODEL problem.
+            b.contains("no longer available") || b.contains("unavailable") ||
+            b.contains("has been deprecated") || b.contains("is deprecated")
     }
 
     /** One image attached to a chat turn (Scope G): base64 payload. */
@@ -212,6 +229,9 @@ class ProviderApiClient {
     ): String = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
             throw ChatApiException(0, "This provider is not fully set up yet.", null)
+        }
+        BaseUrlValidation.errorOrNull(baseUrl)?.let { message ->
+            throw ChatApiException(0, message, null)
         }
         val endpoint = messagesEndpoint(baseUrl, protocol)
         val body = chatBody(model, protocol, turns, systemPrompt, maxTokens)

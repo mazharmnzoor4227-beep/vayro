@@ -31,10 +31,16 @@ data class HomeChatMessage(
     // They are sent to the provider as real vision parts (latest
     // user turn) and rendered in the bubble.
     val imagePaths: List<String> = emptyList(),
+    // v3.2.41 (Scope 3): a PDF/ZIP attached at home — [docName] is the
+    // file's display name (rendered as a document card in the bubble)
+    // and [docText] is the extracted content block that rides with
+    // the message to the model, exactly like the pasted text.
+    val docName: String = "",
+    val docText: String = "",
 ) {
-    /** The full text the model receives: typed text + pasted content. */
+    /** The full text the model receives: typed text + pasted content + attached document content. */
     fun modelText(): String =
-        listOf(text.trim(), pastedText.trim()).filter { it.isNotBlank() }.joinToString("\n\n")
+        listOf(text.trim(), pastedText.trim(), docText.trim()).filter { it.isNotBlank() }.joinToString("\n\n")
 }
 
 /** A persisted home conversation. Home threads are NOT workspace projects. */
@@ -76,6 +82,8 @@ class HomeChatStore(context: Context) {
                                 taskText = m.optString("taskText"),
                                 projectName = m.optString("projectName"),
                                 pastedText = m.optString("pastedText"),
+                                docName = m.optString("docName"),
+                                docText = m.optString("docText"),
                                 imagePaths = buildList {
                                     val arr = m.optJSONArray("imagePaths")
                                     if (arr != null) {
@@ -116,6 +124,8 @@ class HomeChatStore(context: Context) {
                             .put("taskText", m.taskText)
                             .put("projectName", m.projectName)
                             .put("pastedText", m.pastedText)
+                            .put("docName", m.docName)
+                            .put("docText", m.docText)
                             .put("imagePaths", JSONArray(m.imagePaths)),
                     )
                 }

@@ -416,6 +416,11 @@ data class AppUiState(
     val homePendingImages: List<String> = emptyList(),
     /** Plain note shown in the home composer (e.g. a video was staged as still frames). */
     val homeImageNote: String? = null,
+    /** v3.2.41 (Scope 3): a PDF/ZIP staged in the home composer — its display name and the extracted content block that will ride with the next message. */
+    val homePendingDocName: String = "",
+    val homePendingDocText: String = "",
+    /** Plain line in the home composer about the staged document (what will be sent) or why a document could not be staged. */
+    val homeDocNote: String? = null,
     val executionMode: ExecutionMode = ExecutionMode.UNIFIED,
     val activeRoadmap: ActiveRoadmap? = null,
     val scratchpadItems: List<ScratchpadItem> = emptyList(),
@@ -4179,7 +4184,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val pasted = pastedText?.takeIf { it.isNotBlank() }
         // v3.2.40 (Scope G): staged images alone are sendable too.
         val pendingImages = _state.value.homePendingImages
-        if ((trimmed.isBlank() && pasted == null && pendingImages.isEmpty()) || _state.value.homeSending) return
+        // v3.2.41 (Scope 3): a staged document alone is sendable too —
+        // a full prompt written inside the PDF is the message.
+        val pendingDocName = _state.value.homePendingDocName
+        val pendingDocText = _state.value.homePendingDocText
+        if ((trimmed.isBlank() && pasted == null && pendingImages.isEmpty() && pendingDocText.isBlank()) || _state.value.homeSending) return
         val thread = activeHomeThread() ?: run {
             newHomeThread()
             activeHomeThread() ?: return
@@ -4191,14 +4200,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 text = trimmed,
                 pastedText = pasted ?: "",
                 imagePaths = pendingImages,
+                docName = pendingDocName,
+                docText = pendingDocText,
             ),
         )
         if (pendingImages.isNotEmpty()) {
             _state.update { it.copy(homePendingImages = emptyList(), homeImageNote = null) }
         }
+        if (pendingDocText.isNotBlank()) {
+            _state.update { it.copy(homePendingDocName = "", homePendingDocText = "", homeDocNote = null) }
+        }
         // Classification and the Work handoff see the FULL content
-        // (typed + pasted) — the model does too (modelText()).
-        val fullText = listOf(trimmed, pasted).filterNotNull().filter { it.isNotBlank() }.joinToString("\n\n")
+        // (typed + pasted + document) — the model does too (modelText()).
+        val fullText = listOf(trimmed, pasted, pendingDocText.takeIf { it.isNotBlank() })
+            .filterNotNull().filter { it.isNotBlank() }.joinToString("\n\n")
         if (!isConversationalTurn(fullText, hasAttachments = false, mentionedPaths = emptyList())) {
             // A job, not a chat (Part N: only an unmistakable creation
             // command lands here). Acknowledge in words first; the card
@@ -4274,6 +4289,117 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun removeHomePendingImage(path: String) {
         _state.update { it.copy(homePendingImages = it.homePendingImages.filterNot { p -> p == path }) }
         viewModelScope.launch(Dispatchers.IO) { runCatching { File(path).delete() } }
+    }
+
+    /**
+     * v3.2.41 (Scope 3): the home composer's Files route. PDFs and
+     * ZIPs are read HERE and staged as home message content; every
+     * other file type keeps the existing behavior via [onFallback]
+     * (the caller routes it to Work as before). One document rides
+     * with one message; failures are plain visible lines in the
+     * composer, never silent and never faked.
+     */
+    fun attachHomeDocuments(uris: List<Uri>, onFallback: (List<Uri>) -> Unit) {
+        if (uris.isEmpty()) return
+        val app = getApplication<android.app.Application>()
+        val resolver = app.contentResolver
+        val documents = mutableListOf<Pair<Uri, com.vayro.app.data.HomeDocumentIntake.Kind>>()
+        val others = mutableListOf<Uri>()
+        for (uri in uris) {
+            var displayName = "file"
+            runCatching {
+                resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (index >= 0) cursor.getString(index)?.let { displayName = it }
+                    }
+                }
+            }
+            val kind = com.vayro.app.data.HomeDocumentIntake.classify(resolver.getType(uri).orEmpty(), displayName)
+            if (kind != null) documents += uri to kind else others += uri
+        }
+        if (others.isNotEmpty()) onFallback(others)
+        val first = documents.firstOrNull() ?: return
+        if (_state.value.homePendingDocText.isNotBlank()) {
+            _state.update {
+                it.copy(toastMessage = "One document per message — send or remove the attached document first.")
+            }
+            return
+        }
+        if (documents.size > 1) {
+            _state.update {
+                it.copy(toastMessage = "One document per message — only the first document was attached.")
+            }
+        }
+        val (uri, kind) = first
+        var displayName = "file"
+        var declaredSize = -1L
+        runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) cursor.getString(nameIndex)?.let { displayName = it }
+                    val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) declaredSize = cursor.getLong(sizeIndex)
+                }
+            }
+        }
+        if (declaredSize > MAX_HOME_DOCUMENT_BYTES) {
+            _state.update {
+                it.copy(homeDocNote = "That file is too large for home chat (over 25 MB). It belongs in Work instead.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                runCatching {
+                    resolver.openInputStream(uri)?.use { input ->
+                        val buffer = java.io.ByteArrayOutputStream()
+                        val chunk = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            val read = input.read(chunk)
+                            if (read < 0) break
+                            total += read
+                            if (total > MAX_HOME_DOCUMENT_BYTES) return@runCatching null
+                            buffer.write(chunk, 0, read)
+                        }
+                        buffer.toByteArray()
+                    }
+                }.getOrNull()
+            }
+            if (bytes == null) {
+                _state.update {
+                    it.copy(homeDocNote = "That file could not be read — it may be too large (over 25 MB).")
+                }
+                return@launch
+            }
+            val result = withContext(Dispatchers.Default) {
+                when (kind) {
+                    com.vayro.app.data.HomeDocumentIntake.Kind.PDF ->
+                        com.vayro.app.data.HomeDocumentIntake.stagePdf(displayName, bytes)
+                    com.vayro.app.data.HomeDocumentIntake.Kind.ZIP ->
+                        com.vayro.app.data.HomeDocumentIntake.stageZip(displayName, bytes)
+                }
+            }
+            when (result) {
+                is com.vayro.app.data.HomeDocumentIntake.Result.Ready -> _state.update {
+                    it.copy(
+                        homePendingDocName = result.staged.name,
+                        homePendingDocText = result.staged.contextText,
+                        homeDocNote = result.staged.note,
+                    )
+                }
+                is com.vayro.app.data.HomeDocumentIntake.Result.Failed -> _state.update {
+                    it.copy(homeDocNote = result.reason)
+                }
+            }
+        }
+    }
+
+    /** v3.2.41 (Scope 3): unstage the home document before sending. */
+    fun removeHomePendingDoc() {
+        _state.update { it.copy(homePendingDocName = "", homePendingDocText = "", homeDocNote = null) }
     }
 
     private data class StagedHomeImages(val paths: List<String>, val note: String?)
@@ -4490,8 +4616,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: kind.defaultModel
 
     /** v3.2.38 (J): the Base URL home chat / the catalog card should use for [kind]. */
-    fun catalogChatBaseUrl(kind: ProviderKind): String =
-        preferences.chatBaseUrlOverride(kind.name) ?: kind.defaultBaseUrl
+    fun catalogChatBaseUrl(kind: ProviderKind): String {
+        val stored = preferences.chatBaseUrlOverride(kind.name) ?: return kind.defaultBaseUrl
+        // v3.2.41 (Scope 2): Google rescue. This app speaks to Google
+        // AI Studio only through its OpenAI-compatible surface, whose
+        // address ends in /openai; a stored Google address without it
+        // (e.g. the bare native API address) can only ever answer 404,
+        // for every key and every model. When the stored host is
+        // Google's own and the /openai part is missing, fall back to
+        // the known-good default so an already-saved bad value heals
+        // itself instead of failing forever.
+        if (kind == ProviderKind.GOOGLE_AI_STUDIO) {
+            val host = runCatching { java.net.URI(stored.trim()).host }.getOrNull()
+            if (host.equals("generativelanguage.googleapis.com", ignoreCase = true) &&
+                !stored.trim().trimEnd('/').endsWith("/openai")
+            ) {
+                return kind.defaultBaseUrl
+            }
+        }
+        return stored
+    }
 
     /** v3.2.38 (L/J): the effective catalog profile for [kind] — validated-endpoint overrides first. */
     fun catalogChatDefaults(kind: ProviderKind): ProviderProfile =
@@ -4499,7 +4643,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** v3.2.38 (L/J): persists the endpoint Test & Connect validated, so chat actually uses it. */
     fun saveChatEndpointOverride(kind: ProviderKind, baseUrl: String, model: String) {
-        if (baseUrl.isNotBlank()) {
+        // v3.2.41 (Scope 2): a value that is not one clean web address
+        // is never persisted as an endpoint override.
+        if (baseUrl.isNotBlank() && com.vayro.app.network.BaseUrlValidation.isValid(baseUrl)) {
             preferences.setChatBaseUrlOverride(kind.name, baseUrl)
         }
         if (model.isNotBlank()) {
@@ -7014,6 +7160,8 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
         private const val MAX_PROCESS_OUTPUT_BYTES = 512 * 1024
         private const val MAX_ATTACHMENT_BYTES = 25L * 1024L * 1024L
+        /** v3.2.41 (Scope 3): a home PDF/ZIP is read in memory; same 25 MB ceiling as a workspace attachment. */
+        private const val MAX_HOME_DOCUMENT_BYTES = 25L * 1024L * 1024L
         private const val MAX_EDITABLE_FILE_CHARS = 512_000
         private const val MAX_IMPORTED_PROJECT_BYTES = 8L * 1024L * 1024L * 1024L
         private const val MAX_IMPORTED_ZIP_ENTRIES = 100_000

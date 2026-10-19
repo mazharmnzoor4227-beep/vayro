@@ -57,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -132,7 +133,8 @@ fun TerminalScreen(
     val terminalScrollState = rememberScrollState()
     val inputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // v3.2.41 (Scope 1): derived boolean — no per-frame recomposition while the keyboard animates.
+    val keyboardVisible by remember { derivedStateOf { WindowInsets.ime.getBottom(LocalDensity.current) > 0 } }
     val scope = rememberCoroutineScope()
     val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}" 
     val openTerminalKeyboard = {

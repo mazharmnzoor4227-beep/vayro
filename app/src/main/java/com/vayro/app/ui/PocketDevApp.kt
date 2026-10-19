@@ -2635,7 +2635,9 @@ private fun RootScreenHost(
     }
     val marketplaceInstalledIds by viewModel.marketplaceInstalledIds.collectAsStateWithLifecycle()
     val marketplaceUpdatesAvailable by viewModel.marketplaceUpdatesAvailable.collectAsStateWithLifecycle()
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // v3.2.41 (Scope 1): derived boolean — the raw inset value would
+    // recompose this root on every keyboard animation frame.
+    val keyboardVisible by remember { derivedStateOf { WindowInsets.ime.getBottom(LocalDensity.current) > 0 } }
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
     val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
@@ -2783,9 +2785,15 @@ private fun RootScreenHost(
                     // turns are answered in this thread by the API providers
                     // (Part F2); a task gets the "Open in Work" handoff card
                     // instead of a silent teleport into a quick project.
-                    // Attachments still go to Work (they need a workspace).
+                    // Other attachments still go to Work (they need a workspace).
                     onSend = { text, pasted -> viewModel.sendHomeMessage(text, pasted) },
                     onAttach = onHomeAttach,
+                    // v3.2.41 (Scope 3): PDFs/ZIPs picked at home are
+                    // read at home; anything else falls back to the
+                    // Work route unchanged.
+                    onAttachDocuments = { uris ->
+                        viewModel.attachHomeDocuments(uris) { leftover -> onHomeAttach(leftover) }
+                    },
                     onVoiceCall = { startHomeCall() },
                     onSelectAgent = viewModel::selectAgent,
                     onMoreAgents = { screen = RootScreen.AGENT },
@@ -2797,6 +2805,10 @@ private fun RootScreenHost(
                     homeImageNote = state.homeImageNote,
                     onAttachImages = viewModel::attachHomeImages,
                     onRemoveHomeImage = viewModel::removeHomePendingImage,
+                    homePendingDocName = state.homePendingDocName,
+                    homePendingDocText = state.homePendingDocText,
+                    homeDocNote = state.homeDocNote,
+                    onRemoveHomeDoc = viewModel::removeHomePendingDoc,
                     homeSending = state.homeSending,
                     homeProviderName = state.homeChatProviderName,
                     onNewChat = { viewModel.newHomeThread() },
@@ -5524,7 +5536,8 @@ private fun WorkspaceScreen(
 ) {
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // v3.2.41 (Scope 1): derived boolean, as at the app root.
+    val keyboardVisible by remember { derivedStateOf { WindowInsets.ime.getBottom(LocalDensity.current) > 0 } }
     val bindFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { uri -> if (uri != null) onBindFolder(uri) },
@@ -5605,13 +5618,24 @@ private fun WorkspaceScreen(
     // Scope I: closing a sheet/dialog over the chat must hand back the
     // exact position from the moment it opened — the store captured
     // it continuously while the sheet was up (scrolling was locked).
-    // Restore only if the live state actually came back zeroed.
+    // v3.2.41 (Scope 1): the restore decision goes through
+    // ScrollFollowGate.shouldRestore — a saved position is applied
+    // ONLY when the live list demonstrably lost its position (0/0)
+    // and no scroll gesture is in flight. The gate is the single
+    // rule both chat lists share, unit-tested, so no future effect
+    // can reintroduce a mid-read yank by hand-rolling the checks.
     LaunchedEffect(chatOverlayOpen) {
         if (!chatOverlayOpen) {
             val savedScroll = ChatScrollStore.get(chatScrollKey)
-            if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0) &&
-                chatListState.firstVisibleItemIndex == 0 &&
-                chatListState.firstVisibleItemScrollOffset == 0
+            val storeHasPosition = savedScroll != null &&
+                (savedScroll.first > 0 || savedScroll.second > 0)
+            if (savedScroll != null &&
+                ScrollFollowGate.shouldRestore(
+                    storeHasPosition = storeHasPosition,
+                    liveIndex = chatListState.firstVisibleItemIndex,
+                    liveOffset = chatListState.firstVisibleItemScrollOffset,
+                    userScrollInProgress = chatListState.isScrollInProgress,
+                )
             ) {
                 chatListState.scrollToItem(savedScroll.first, savedScroll.second)
             }
@@ -5632,7 +5656,10 @@ private fun WorkspaceScreen(
         }
     }
 
-    // Follow new tokens/updates only when user is at the bottom and has not scrolled up to read.
+    // Follow new tokens/updates only when the user is parked at the
+    // bottom — the decision goes through ScrollFollowGate (v3.2.41,
+    // Scope 1), the same rule the home list uses: never mid-gesture,
+    // never under an overlay, never after the user scrolled up.
     LaunchedEffect(
         state.messages.size,
         state.messages.lastOrNull()?.text?.length,
@@ -5640,8 +5667,15 @@ private fun WorkspaceScreen(
         state.liveProcess.lastOrNull()?.detail,
         state.pendingApproval,
     ) {
-        if (!state.isRunning || chatItemCount <= 0 || userScrolledUp || chatListState.isScrollInProgress || chatOverlayOpen) return@LaunchedEffect
-        if (!chatListState.canScrollForward) {
+        if (!state.isRunning || chatItemCount <= 0) return@LaunchedEffect
+        if (ScrollFollowGate.shouldFollow(
+                ownSend = false,
+                atBottom = !chatListState.canScrollForward,
+                userScrollInProgress = chatListState.isScrollInProgress,
+                userScrolledUp = userScrolledUp,
+                overlayOpen = chatOverlayOpen,
+            )
+        ) {
             chatListState.scrollToItem(chatItemCount - 1)
         }
     }
@@ -7596,7 +7630,13 @@ private fun ChatTab(
                 // mic, voice); editing or content present adds the
                 // controls row (tools +, provider pill, mic,
                 // send/stop) under the field.
-                val imeOpen = WindowInsets.ime.getBottom(density) > 0
+                // v3.2.41 (Scope 1): same single-motion rule as the
+                // home composer — the IME read is a derived boolean
+                // (flips once per open/close, not per animation
+                // frame), and the controls row below fades only; the
+                // Surface's animateContentSize is the one owner of
+                // the card's height.
+                val imeOpen by remember { derivedStateOf { WindowInsets.ime.getBottom(density) > 0 } }
                 val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null
                 val sendStopButton: @Composable () -> Unit = {
                     if (isRunning) {
@@ -7764,8 +7804,10 @@ private fun ChatTab(
                         }
                         AnimatedVisibility(
                             visible = controlsVisible,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically(),
+                            // v3.2.41 (Scope 1): fade ONLY — size is
+                            // owned by the Surface's animateContentSize.
+                            enter = fadeIn(),
+                            exit = fadeOut(),
                         ) {
                             Row(
                                 modifier = Modifier

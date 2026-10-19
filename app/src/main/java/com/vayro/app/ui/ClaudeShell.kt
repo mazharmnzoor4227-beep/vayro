@@ -13,12 +13,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
@@ -133,6 +136,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -1041,6 +1045,8 @@ private fun HomeMessageRow(
     movedProjectName: String?,
     onOpenInWork: (String) -> Unit,
     onOpenPasted: (String) -> Unit = {},
+    // v3.2.41 (Scope 3): opens the attached document's extracted text.
+    onOpenDoc: (String, String) -> Unit = { _, _ -> },
 ) {
     when (message.kind) {
         "system" -> {
@@ -1172,7 +1178,11 @@ private fun HomeMessageRow(
                                         )
                                     }
                                     MessageCopyButton(
-                                        text = if (message.pastedText.isNotBlank()) message.modelText() else message.text,
+                                        text = if (message.pastedText.isNotBlank() || message.docName.isNotBlank()) {
+                                            message.modelText()
+                                        } else {
+                                            message.text
+                                        },
                                         fromUser = true,
                                         modifier = Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 4.dp),
                                     )
@@ -1192,6 +1202,22 @@ private fun HomeMessageRow(
                                 // full-screen viewer.
                                 PastedContentCard(
                                     onOpen = { onOpenPasted(message.pastedText) },
+                                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                                )
+                            }
+                            if (message.docName.isNotBlank()) {
+                                // v3.2.41 (Scope 3): the sent message
+                                // shows the document that rode with it;
+                                // tapping opens the exact extracted text
+                                // the model received.
+                                DocumentAttachmentCard(
+                                    name = message.docName,
+                                    kindLabel = if (message.docName.endsWith(".zip", ignoreCase = true)) {
+                                        "ZIP archive"
+                                    } else {
+                                        "PDF document"
+                                    },
+                                    onOpen = { onOpenDoc(message.docName, message.docText) },
                                     modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
                                 )
                             }
@@ -1322,6 +1348,16 @@ internal fun ChatHomeScreen(
     homeImageNote: String? = null,
     onAttachImages: (List<Uri>) -> Unit = {},
     onRemoveHomeImage: (String) -> Unit = {},
+    // v3.2.41 (Scope 3): a PDF/ZIP staged at home — its display name,
+    // the extracted text that will be sent with the message, and the
+    // plain line about it. Files picked at home route through
+    // onAttachDocuments (PDF/ZIP are read at home; anything else
+    // falls back to the Work route inside the handler).
+    homePendingDocName: String = "",
+    homePendingDocText: String = "",
+    homeDocNote: String? = null,
+    onAttachDocuments: (List<Uri>) -> Unit = onAttach,
+    onRemoveHomeDoc: () -> Unit = {},
     homeSending: Boolean = false,
     homeProviderName: String = "",
     onNewChat: () -> Unit = {},
@@ -1345,6 +1381,8 @@ internal fun ChatHomeScreen(
     // v3.2.40 (Scope F): the TXT chip's content + the viewer target.
     var pastedText by rememberSaveable { mutableStateOf<String?>(null) }
     var viewingPasted by remember { mutableStateOf<String?>(null) }
+    // v3.2.41 (Scope 3): the attached-document viewer target (title to text).
+    var viewingDoc by remember { mutableStateOf<Pair<String, String>?>(null) }
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
     var workSheetOpen by rememberSaveable { mutableStateOf(false) }
     var agentSheetOpen by rememberSaveable { mutableStateOf(false) }
@@ -1359,7 +1397,8 @@ internal fun ChatHomeScreen(
         if (uris.isNotEmpty()) onAttachImages(uris)
     }
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) onAttach(uris)
+        // v3.2.41 (Scope 3): PDFs and ZIPs are read at home now.
+        if (uris.isNotEmpty()) onAttachDocuments(uris)
     }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
@@ -1507,6 +1546,9 @@ internal fun ChatHomeScreen(
     viewingPasted?.let { pasted ->
         PastedContentViewerDialog(text = pasted, onDismiss = { viewingPasted = null })
     }
+    viewingDoc?.let { (title, text) ->
+        PastedContentViewerDialog(text = text, title = title, onDismiss = { viewingDoc = null })
+    }
     if (modelPickerOpen) {
         ChatModelPickerSheet(
             choices = chatChoices,
@@ -1607,7 +1649,9 @@ internal fun ChatHomeScreen(
             else -> "Coffee and Kodex time?"
         }
     }
-    val canSend = prompt.isNotBlank() || pastedText != null || homePendingImages.isNotEmpty()
+    // v3.2.41 (Scope 3): a staged document alone is sendable too.
+    val canSend = prompt.isNotBlank() || pastedText != null || homePendingImages.isNotEmpty() ||
+        homePendingDocName.isNotBlank()
     val hasThread = homeMessages.isNotEmpty()
     // v3.2.38 (Part I): thread scroll survives leaving to Work and back,
     // like every other list in the shell (U8b pattern).
@@ -1640,14 +1684,26 @@ internal fun ChatHomeScreen(
     var lastHomeMessageCount by rememberSaveable { mutableStateOf(0) }
     LaunchedEffect(homeMessages.size, homeSending) {
         if (hasThread) {
-            // Follow new content ONLY for the user's own send (jump
-            // to latest, as always) or when he is already at the
-            // bottom. A reply landing while he reads up-list moves
-            // nothing — the Scope H arrow is his way back.
+            // v3.2.41 (Scope 1): the follow decision goes through
+            // ScrollFollowGate — follow ONLY for the user's own send
+            // or when he is already at the bottom, and NEVER while
+            // his own scroll gesture is in progress or a sheet is
+            // open. Before, this effect fired animateScrollToItem
+            // even mid-fling (the effect was not gated on
+            // isScrollInProgress), which yanked the list away from
+            // the user's finger.
             val ownSend = homeMessages.size > lastHomeMessageCount &&
                 homeMessages.lastOrNull()?.fromUser == true
             lastHomeMessageCount = homeMessages.size
-            if (ownSend || !threadListState.canScrollForward) {
+            val follow = ScrollFollowGate.shouldFollow(
+                ownSend = ownSend,
+                atBottom = !threadListState.canScrollForward,
+                userScrollInProgress = threadListState.isScrollInProgress,
+                userScrolledUp = false,
+                overlayOpen = sheetOpen || workSheetOpen || agentSheetOpen ||
+                    modelPickerOpen || viewingPasted != null || viewingDoc != null,
+            )
+            if (follow) {
                 val last = (homeMessages.size - 1 + if (homeSending) 1 else 0).coerceAtLeast(0)
                 threadListState.animateScrollToItem(last)
             }
@@ -1737,7 +1793,10 @@ internal fun ChatHomeScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp),
             ) {
-                items(homeMessages.size) { index ->
+                // v3.2.41 (Scope 1): stable keys — without them a
+                // position-based list re-measures and re-binds rows
+                // when items arrive, which reads on screen as a jump.
+                items(count = homeMessages.size, key = { homeMessages[it].id }) { index ->
                     val message = homeMessages[index]
                     HomeMessageRow(
                         message = message,
@@ -1747,6 +1806,7 @@ internal fun ChatHomeScreen(
                         }?.projectName,
                         onOpenInWork = onOpenInWork,
                         onOpenPasted = { viewingPasted = it },
+                        onOpenDoc = { name, text -> viewingDoc = name to text },
                     )
                 }
                 if (homeSending) {
@@ -1826,8 +1886,19 @@ internal fun ChatHomeScreen(
                 // keyboard open OR content present = the field's row
                 // plus the controls row (+, provider-model pill,
                 // mic, send/voice) under it.
-                val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
-                val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null
+                // v3.2.41 (Scope 1): the IME inset is read through a
+                // derived boolean. Before, the raw per-frame pixel
+                // value was read in composition, so EVERY frame of
+                // the keyboard's slide recomposed this whole screen
+                // (greeting, list, composer) — the filmed stutter.
+                // The boolean flips once per open/close, so the
+                // keyboard's own inset animation (imePadding on the
+                // root) stays the single motion the eye follows and
+                // the content glides with it instead of stepping.
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val imeOpen by remember { derivedStateOf { WindowInsets.ime.getBottom(density) > 0 } }
+                val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null ||
+                    homePendingDocName.isNotBlank()
                 val sendOrVoice: @Composable () -> Unit = {
                     if (canSend) {
                         Box(
@@ -1867,7 +1938,21 @@ internal fun ChatHomeScreen(
                     shadowElevation = 2.dp,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                    // v3.2.41 (Scope 1): ONE owner of this card's size
+                    // changes. The controls row below now fades only
+                    // (no expand/shrink of its own) and this Column
+                    // animates the height once, smoothly — before, the
+                    // AnimatedVisibility size animation and the IME
+                    // inset animation moved the same space on two
+                    // different curves, which read on screen as a
+                    // "double layer" sliding against itself.
+                    Column(
+                        Modifier
+                            .animateContentSize(
+                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    ) {
                         // v3.2.40 (Scope G): staged images — what you
                         // see here is exactly what will be sent as
                         // vision input with the next message.
@@ -1916,6 +2001,34 @@ internal fun ChatHomeScreen(
                                 onRemove = { pastedText = null },
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
                             )
+                        }
+                        // v3.2.41 (Scope 3): the staged document — the
+                        // chip names the file, tapping it shows the
+                        // EXACT text that will be sent, and the line
+                        // under it states what will be sent (or why a
+                        // document could not be staged).
+                        if (homePendingDocName.isNotBlank()) {
+                            DocumentAttachmentChip(
+                                name = homePendingDocName,
+                                kindLabel = if (homePendingDocName.endsWith(".zip", ignoreCase = true)) {
+                                    "ZIP archive"
+                                } else {
+                                    "PDF document"
+                                },
+                                onOpen = { viewingDoc = homePendingDocName to homePendingDocText },
+                                onRemove = onRemoveHomeDoc,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                            )
+                        }
+                        if (homePendingDocName.isNotBlank() || homeDocNote != null) {
+                            homeDocNote?.let { note ->
+                                Text(
+                                    note,
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                )
+                            }
                         }
                         Row(verticalAlignment = Alignment.Bottom) {
                             if (!controlsVisible) {
@@ -1970,8 +2083,12 @@ internal fun ChatHomeScreen(
                         }
                         AnimatedVisibility(
                             visible = controlsVisible,
-                            enter = fadeIn() + expandVertically(),
-                            exit = fadeOut() + shrinkVertically(),
+                            // v3.2.41 (Scope 1): fade ONLY — the size
+                            // change belongs to the Column's single
+                            // animateContentSize above, never to a
+                            // second size animation on the same space.
+                            enter = fadeIn(),
+                            exit = fadeOut(),
                         ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
