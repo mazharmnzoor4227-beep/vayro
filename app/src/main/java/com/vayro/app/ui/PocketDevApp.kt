@@ -3275,7 +3275,6 @@ private fun RootScreenHost(
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private fun QuickTerminalSheet(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
