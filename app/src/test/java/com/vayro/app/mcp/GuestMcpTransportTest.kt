@@ -15,6 +15,7 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * v3.2.39 (Scope 1): the guest MCP transport, proven at JVM level.
@@ -152,8 +153,8 @@ class GuestMcpTransportTest {
         val dir = Files.createTempDirectory("tail").toFile()
         val file = File(dir, "out.log").apply { createNewFile() }
         val lines = ConcurrentLinkedQueue<String>()
-        @Volatile var alive = true
-        val reader = FileTailLineReader(file, { alive }) { lines.add(it) }
+        val alive = AtomicBoolean(true)
+        val reader = FileTailLineReader(file, { alive.get() }) { lines.add(it) }
         val thread = Thread(reader, "test-tail").apply { isDaemon = true; start() }
 
         file.appendBytes("hel".toByteArray(Charsets.UTF_8))
@@ -168,7 +169,7 @@ class GuestMcpTransportTest {
         file.appendBytes("\ntail-without-newline".toByteArray(Charsets.UTF_8))
         Thread.sleep(250)
 
-        alive = false
+        alive.set(false)
         thread.join(10_000)
         assertFalse(thread.isAlive)
         assertEquals(
