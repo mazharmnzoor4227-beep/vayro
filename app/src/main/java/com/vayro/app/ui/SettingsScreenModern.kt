@@ -169,7 +169,7 @@ import com.vayro.app.auth.ui.ChangePasswordDialog
 import com.vayro.app.auth.ui.DeleteAccountDialog
 import com.vayro.app.auth.ui.EditDisplayNameDialog
 
-internal enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, VOICE, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS }
+enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, VOICE, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
