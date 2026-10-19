@@ -262,7 +262,7 @@ private fun BlueprintTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-0") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -462,7 +462,7 @@ private fun ScaffoldTab(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-1") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -559,7 +559,7 @@ private fun BuildAutomationTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-2") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -727,7 +727,7 @@ private fun SigningTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-3") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -827,7 +827,7 @@ private fun PlayStoreTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-4") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {

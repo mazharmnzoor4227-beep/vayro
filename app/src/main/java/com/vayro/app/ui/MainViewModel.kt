@@ -3912,7 +3912,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Workspace choices for [agent]: the providers it can use that have a saved key (plus the current one). */
     fun workspaceProviderChoices(agent: AgentKind): List<ProviderChoice> {
         val current = _state.value.provider
-        return providersForAgent(agent)
+        return com.vayro.app.model.providersForAgent(agent)
             .filter { kind -> kind == current.kind || vault.list(kind.name).isNotEmpty() }
             .map { kind ->
                 ProviderChoice(
