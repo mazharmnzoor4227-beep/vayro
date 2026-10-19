@@ -2637,7 +2637,9 @@ private fun RootScreenHost(
     val marketplaceUpdatesAvailable by viewModel.marketplaceUpdatesAvailable.collectAsStateWithLifecycle()
     // v3.2.41 (Scope 1): derived boolean — the raw inset value would
     // recompose this root on every keyboard animation frame.
-    val keyboardVisible by remember { derivedStateOf { WindowInsets.ime.getBottom(LocalDensity.current) > 0 } }
+    val imeInsetsRoot = WindowInsets.ime
+    val imeDensityRoot = LocalDensity.current
+    val keyboardVisible by remember { derivedStateOf { imeInsetsRoot.getBottom(imeDensityRoot) > 0 } }
     val terminalLines by viewModel.terminalLines.collectAsStateWithLifecycle()
     val isTerminalRunning by viewModel.isTerminalRunning.collectAsStateWithLifecycle()
     val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
@@ -5537,7 +5539,9 @@ private fun WorkspaceScreen(
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     // v3.2.41 (Scope 1): derived boolean, as at the app root.
-    val keyboardVisible by remember { derivedStateOf { WindowInsets.ime.getBottom(LocalDensity.current) > 0 } }
+    val imeInsetsWs = WindowInsets.ime
+    val imeDensityWs = LocalDensity.current
+    val keyboardVisible by remember { derivedStateOf { imeInsetsWs.getBottom(imeDensityWs) > 0 } }
     val bindFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { uri -> if (uri != null) onBindFolder(uri) },
@@ -7636,7 +7640,8 @@ private fun ChatTab(
                 // frame), and the controls row below fades only; the
                 // Surface's animateContentSize is the one owner of
                 // the card's height.
-                val imeOpen by remember { derivedStateOf { WindowInsets.ime.getBottom(density) > 0 } }
+                val imeInsets = WindowInsets.ime
+                val imeOpen by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
                 val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null
                 val sendStopButton: @Composable () -> Unit = {
                     if (isRunning) {

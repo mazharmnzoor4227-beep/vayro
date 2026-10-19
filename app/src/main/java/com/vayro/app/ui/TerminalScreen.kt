@@ -134,7 +134,9 @@ fun TerminalScreen(
     val inputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     // v3.2.41 (Scope 1): derived boolean — no per-frame recomposition while the keyboard animates.
-    val keyboardVisible by remember { derivedStateOf { WindowInsets.ime.getBottom(LocalDensity.current) > 0 } }
+    val imeInsets = WindowInsets.ime
+    val imeDensity = LocalDensity.current
+    val keyboardVisible by remember { derivedStateOf { imeInsets.getBottom(imeDensity) > 0 } }
     val scope = rememberCoroutineScope()
     val terminalPromptPath = if (promptPath == "/workspace") "~" else "~${promptPath.removePrefix("/workspace")}" 
     val openTerminalKeyboard = {

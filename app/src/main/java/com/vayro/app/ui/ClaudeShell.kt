@@ -1896,7 +1896,8 @@ internal fun ChatHomeScreen(
                 // root) stays the single motion the eye follows and
                 // the content glides with it instead of stepping.
                 val density = androidx.compose.ui.platform.LocalDensity.current
-                val imeOpen by remember { derivedStateOf { WindowInsets.ime.getBottom(density) > 0 } }
+                val imeInsets = WindowInsets.ime
+                val imeOpen by remember { derivedStateOf { imeInsets.getBottom(density) > 0 } }
                 val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null ||
                     homePendingDocName.isNotBlank()
                 val sendOrVoice: @Composable () -> Unit = {
