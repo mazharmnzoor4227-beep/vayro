@@ -17,8 +17,9 @@ import kotlinx.coroutines.withContext
  * Kodex update notifications: when a newer release is published, the app
  * finds it on its own and tells the user with a notification. The check
  * runs at app start, throttled to once every 6 hours, and each version is
- * announced only once. Tapping the notification opens Kodex, where the
- * update can be installed from Settings -> App updates.
+ * announced only once. Tapping the notification deep-links straight to
+ * the app-update dialog (route "update" -> MainViewModel), where the
+ * update can be downloaded and installed.
  */
 object UpdateNotifier {
     private const val CHANNEL_ID = "app-updates"
@@ -56,6 +57,9 @@ object UpdateNotifier {
         }
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            // Deep link: the tap lands on the root update dialog, not on a
+            // screen where the user has to hunt for the install action.
+            putExtra(MainActivity.EXTRA_NOTIFICATION_ROUTE, "update")
         }
         val pending = PendingIntent.getActivity(
             context,

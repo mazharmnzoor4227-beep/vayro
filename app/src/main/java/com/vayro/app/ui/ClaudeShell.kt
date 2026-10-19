@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
@@ -90,6 +91,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SmartDisplay
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Storefront
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
@@ -142,6 +144,7 @@ import androidx.core.content.FileProvider
 import com.vayro.app.BuildConfig
 import com.vayro.app.R
 import com.vayro.app.data.ApiKeyVault
+import com.vayro.app.voice.ReadAloudPlayer
 import com.vayro.app.model.AgentKind
 import com.vayro.app.model.Project
 import com.vayro.app.model.agentsForPicker
@@ -177,6 +180,7 @@ internal val ShellEase = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 internal const val VOICE_PREFS = "kodex_voice_settings"
 internal const val VOICE_KEY_NAME = "voice_name"
 internal const val VOICE_KEY_PACE = "pace_rate"
+internal const val VOICE_KEY_SOURCE = "active_voice_source"
 
 @Composable
 internal fun SerifText(
@@ -490,6 +494,7 @@ internal fun AddToChatSheet(
     onOpenFactory: () -> Unit,
     onOpenConnectors: () -> Unit,
     onCustomize: () -> Unit,
+    onVoiceCall: () -> Unit = {},
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -517,6 +522,7 @@ internal fun AddToChatSheet(
                 Box(Modifier.weight(1f)) { AttachTile(Icons.Outlined.PhotoLibrary, "Photos", onPhotos) }
                 Box(Modifier.weight(1f)) { AttachTile(Icons.Outlined.Folder, "Files", onFiles) }
             }
+            AttachRow(Icons.Outlined.Call, "Voice call", onClick = onVoiceCall)
             AttachRow(Icons.Outlined.SmartDisplay, "YouTube Analyzer", onClick = onYouTube)
             AttachRow(Icons.Outlined.MusicNote, "TikTok Analyzer", onClick = onTikTok)
             AttachRow(Icons.Outlined.Link, "Web link", onClick = onWebLink)
@@ -644,6 +650,7 @@ internal fun ChatHomeScreen(
     onMoreAgents: () -> Unit,
     onOpenConnectors: () -> Unit,
     onPushToGitHub: () -> Unit = {},
+    onVoiceCall: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -836,6 +843,10 @@ internal fun ChatHomeScreen(
                 onOpenConnectors()
             },
             onCustomize = {},
+            onVoiceCall = {
+                sheetOpen = false
+                onVoiceCall()
+            },
         )
     }
 
@@ -991,14 +1002,19 @@ internal fun ChatHomeScreen(
                                     Icon(Icons.Outlined.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
                                 }
                             } else {
+                                // Same behaviour as the workspace composer
+                                // (v3.2.34, U2): the waveform button starts
+                                // a voice call — the host opens/creates the
+                                // chat and presents the call there. The Mic
+                                // button beside it stays dictation.
                                 Box(
                                     modifier = Modifier
                                         .size(36.dp)
                                         .background(KodexClay, CircleShape)
-                                        .clickable(onClick = onStartVoiceInput),
+                                        .clickable(onClick = onVoiceCall),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    Icon(Icons.Filled.GraphicEq, contentDescription = "Voice mode", tint = Color.White, modifier = Modifier.size(19.dp))
+                                    Icon(Icons.Filled.GraphicEq, contentDescription = "Voice call", tint = Color.White, modifier = Modifier.size(19.dp))
                                 }
                             }
                         }
@@ -1756,6 +1772,9 @@ internal fun ClaudeSettingsHome(
     onOpenAbout: () -> Unit,
     onOpenAllSettings: () -> Unit,
     onLogout: () -> Unit,
+    appUpdateAvailable: Boolean = false,
+    currentVersion: String = "",
+    onOpenAppUpdates: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var showColorPopup by remember { mutableStateOf(false) }
@@ -1936,6 +1955,13 @@ internal fun ClaudeSettingsHome(
                     ShellCardDivider()
                     ShellRow(Icons.Outlined.Lock, "Privacy", onClick = onOpenPrivacy)
                     ShellCardDivider()
+                    ShellRow(
+                        Icons.Outlined.SystemUpdate,
+                        "App updates",
+                        value = if (appUpdateAvailable) "Update available" else "v$currentVersion",
+                        onClick = onOpenAppUpdates,
+                    )
+                    ShellCardDivider()
                     ShellRow(Icons.Outlined.Info, "About", value = "v${BuildConfig.VERSION_NAME}", onClick = onOpenAbout)
                 }
             }
@@ -2082,9 +2108,30 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
             runCatching { tts.shutdown() }
         }
     }
+    DisposableEffect(Unit) {
+        onDispose {
+            // Do not leave a voice TEST playing after leaving the screen;
+            // a Listen started elsewhere is not ours to stop.
+            if (ReadAloudPlayer.playingMessageId == "kodex-voice-test") ReadAloudPlayer.stop()
+        }
+    }
 
     var selectedVoiceName by remember { mutableStateOf(prefs.getString(VOICE_KEY_NAME, null)) }
     var pace by remember { mutableStateOf(prefs.getFloat(VOICE_KEY_PACE, 1.0f)) }
+    // v3.2.34 (U5): ONE explicit "Active voice" selection. The persisted
+    // source (device | elevenlabs) is what ReadAloudPlayer honors for
+    // Listen and Voice Call; the device cards and the ElevenLabs card in
+    // the row below are peers — tapping any of them makes it active.
+    val vault = remember { ApiKeyVault(context) }
+    var elevenLabsHasKey by remember { mutableStateOf(!vault.get("elevenlabs").isNullOrBlank()) }
+    var elevenLabsVoiceId by remember { mutableStateOf(vault.get("elevenlabs_voice")?.takeIf { it.isNotBlank() }) }
+    val elevenLabsConnected = elevenLabsHasKey && elevenLabsVoiceId != null
+    var activeSource by remember { mutableStateOf(prefs.getString(VOICE_KEY_SOURCE, null)) }
+    val elevenLabsActive = activeSource == "elevenlabs" || (activeSource == null && elevenLabsConnected)
+    fun refreshElevenLabs() {
+        elevenLabsHasKey = !vault.get("elevenlabs").isNullOrBlank()
+        elevenLabsVoiceId = vault.get("elevenlabs_voice")?.takeIf { it.isNotBlank() }
+    }
     var showLanguagePopup by remember { mutableStateOf(false) }
     var showPacePopup by remember { mutableStateOf(false) }
 
@@ -2100,16 +2147,23 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
         allVoices.firstOrNull { it.name == selectedVoiceName } ?: cards.firstOrNull()
     }
 
+    fun previewVoice(voice: Voice) {
+        if (!ttsReady) return
+        runCatching {
+            tts.voice = voice
+            tts.setSpeechRate(pace)
+            tts.speak("Hi, I'm your Kodex voice. Ask me anything.", TextToSpeech.QUEUE_FLUSH, null, "voice-preview")
+        }
+    }
+
     fun selectVoice(voice: Voice, preview: Boolean) {
         selectedVoiceName = voice.name
-        prefs.edit().putString(VOICE_KEY_NAME, voice.name).apply()
-        if (preview && ttsReady) {
-            runCatching {
-                tts.voice = voice
-                tts.setSpeechRate(pace)
-                tts.speak("Hi, I'm your Kodex voice. Ask me anything.", TextToSpeech.QUEUE_FLUSH, null, "voice-preview")
-            }
-        }
+        activeSource = "device"
+        prefs.edit()
+            .putString(VOICE_KEY_NAME, voice.name)
+            .putString(VOICE_KEY_SOURCE, "device")
+            .apply()
+        if (preview) previewVoice(voice)
     }
 
     if (showLanguagePopup) {
@@ -2144,7 +2198,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                 val rate = key.toFloatOrNull() ?: 1.0f
                 pace = rate
                 prefs.edit().putFloat(VOICE_KEY_PACE, rate).apply()
-                selectedVoice?.let { selectVoice(it, preview = true) }
+                selectedVoice?.let { previewVoice(it) }
             },
             onDismiss = { showPacePopup = false },
         )
@@ -2167,13 +2221,20 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
         ) {
             item {
                 Text(
-                    "Choose the voice Kodex uses for Listen. On-device voices are free, work offline and never run out.",
+                    "Choose the voice Kodex uses for Listen and voice calls. Tap a card to make it your active voice. On-device voices are free, work offline and never run out.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             item {
-                if (cards.isEmpty()) {
+                Text(
+                    "Active voice",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                if (cards.isEmpty() && !elevenLabsConnected) {
                     Text(
                         if (ttsReady) "No text-to-speech voices found on this device." else "Loading voices…",
                         fontSize = 13.5.sp,
@@ -2182,7 +2243,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                 } else {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(cards.withIndex().toList(), key = { it.value.name }) { (index, voice) ->
-                            val isSelected = selectedVoice?.name == voice.name
+                            val isSelected = !elevenLabsActive && selectedVoice?.name == voice.name
                             Surface(
                                 shape = RoundedCornerShape(16.dp),
                                 color = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
@@ -2227,7 +2288,40 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                                 }
                             }
                         }
+                        if (elevenLabsConnected) {
+                            item {
+                                ElevenLabsSelectionCard(
+                                    voiceIdMasked = "••••" + (elevenLabsVoiceId ?: "").takeLast(4),
+                                    selected = elevenLabsActive,
+                                    onClick = {
+                                        activeSource = "elevenlabs"
+                                        prefs.edit().putString(VOICE_KEY_SOURCE, "elevenlabs").apply()
+                                    },
+                                )
+                            }
+                        }
                     }
+                }
+            }
+            item {
+                val testPlaying = ReadAloudPlayer.playingMessageId == "kodex-voice-test"
+                OutlinedButton(
+                    onClick = {
+                        // The EXACT player path Listen uses, so the test
+                        // speaks with the ACTIVE voice (device card or
+                        // ElevenLabs), never a settings-only preview.
+                        ReadAloudPlayer.toggle(context, "kodex-voice-test", "Hello, this is your selected Kodex voice.")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Icon(
+                        if (testPlaying) Icons.Outlined.Close else Icons.Outlined.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (testPlaying) "Stop test" else "Test voice")
                 }
             }
             item {
@@ -2252,15 +2346,67 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                 }
             }
             item {
-                ElevenLabsVoiceCard()
+                ElevenLabsVoiceCard(onConnectionChanged = { refreshElevenLabs() })
             }
             item { Spacer(Modifier.height(10.dp)) }
         }
     }
 }
 
+/**
+ * The ElevenLabs peer in the Active voice row (v3.2.34, U5): same card
+ * style as the device voices. Shown only when a key + Voice ID are
+ * saved; tapping it makes ElevenLabs the active voice.
+ */
 @Composable
-private fun ElevenLabsVoiceCard() {
+private fun ElevenLabsSelectionCard(voiceIdMasked: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected) KodexClay else MaterialTheme.colorScheme.outlineVariant,
+        ),
+        shadowElevation = if (selected) 4.dp else 1.dp,
+        modifier = Modifier
+            .width(132.dp)
+            .height(104.dp)
+            .clickable(onClick = onClick),
+    ) {
+        Column(Modifier.fillMaxSize().padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "ElevenLabs",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.Outlined.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                    tint = if (selected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Text(
+                voiceIdMasked,
+                fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "Connected",
+                fontSize = 11.5.sp,
+                color = if (selected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ElevenLabsVoiceCard(onConnectionChanged: () -> Unit = {}) {
     val context = LocalContext.current
     val vault = remember { ApiKeyVault(context) }
     var apiKey by remember { mutableStateOf("") }
@@ -2271,7 +2417,7 @@ private fun ElevenLabsVoiceCard() {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Premium voice — ElevenLabs", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Optional: paste your own ElevenLabs API key and a Voice ID, and Listen will use that voice instead of the on-device one. Both are stored encrypted on this device only and are never logged or shared.",
+                "Optional: paste your own ElevenLabs API key and a Voice ID. Saving adds an ElevenLabs card to the Active voice row above — tap it there to make it the voice Kodex speaks with. Both are stored encrypted on this device only and are never logged or shared.",
                 fontSize = 12.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2305,13 +2451,14 @@ private fun ElevenLabsVoiceCard() {
                         }
                         hasKey = vault.get("elevenlabs") != null
                         status = if (hasKey && voiceId.isNotBlank()) {
-                            "Saved. Listen will use your ElevenLabs voice."
+                            "Saved. Tap the ElevenLabs card in Active voice above to speak with this voice."
                         } else if (hasKey) {
-                            "Key saved. Add a Voice ID to enable the premium voice."
+                            "Key saved. Add a Voice ID to enable the ElevenLabs voice card."
                         } else {
                             "Saved. Listen will use the free on-device voice."
                         }
                         apiKey = ""
+                        onConnectionChanged()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = KodexClay),
                     shape = RoundedCornerShape(10.dp),
@@ -2328,6 +2475,7 @@ private fun ElevenLabsVoiceCard() {
                             voiceId = ""
                             hasKey = false
                             status = "Removed. Listen will use the free on-device voice."
+                            onConnectionChanged()
                         },
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier.weight(1f),

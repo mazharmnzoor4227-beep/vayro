@@ -432,6 +432,23 @@ fun PocketDevApp(
         }
     }
 
+    // v3.2.34 (U1): the app-update dialog lives at the app ROOT. It used
+    // to be trapped inside ProjectsScreen, which the Claude-style shell
+    // never shows on the normal path (the app lands on CHAT_HOME), so a
+    // found update could never be installed from anywhere else. Hoisted
+    // here, it opens over ANY screen; the Projects banner, the chat-home
+    // bell, Settings -> App updates and the update notification all
+    // point at this one dialog. A manual check bumps the prompt nonce,
+    // which re-opens the dialog even for an already-known update.
+    var showAppUpdateDialog by rememberSaveable { mutableStateOf(false) }
+    val appUpdatePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { viewModel.installAppUpdate() }
+    LaunchedEffect(state.appUpdate?.versionCode, state.appUpdatePromptNonce) {
+        if (state.appUpdate != null) showAppUpdateDialog = true
+    }
+    val onShowAppUpdate: () -> Unit = { showAppUpdateDialog = true }
+
     val showAuthScreen = showAuthModal || (!guestDismissedAuth && authState is AuthState.Unauthenticated && state.startupStage != StartupStage.CHECKING)
 
     if (showAuthScreen) {
@@ -565,6 +582,7 @@ fun PocketDevApp(
     // is visible they are delivered through the normal send path.
     var pendingHomePrompt by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingHomeAttachments by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var pendingHomeVoiceCall by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.workspaceVisible, state.activeProject?.id) {
         if (state.workspaceVisible && state.activeProject != null &&
             state.projects.firstOrNull()?.id == state.activeProject?.id
@@ -572,6 +590,10 @@ fun PocketDevApp(
             if (pendingHomeAttachments.isNotEmpty()) {
                 viewModel.addChatAttachments(pendingHomeAttachments)
                 pendingHomeAttachments = emptyList()
+            }
+            if (pendingHomeVoiceCall) {
+                pendingHomeVoiceCall = false
+                viewModel.requestVoiceCall()
             }
             pendingHomePrompt?.let { homePrompt ->
                 pendingHomePrompt = null
@@ -777,10 +799,35 @@ fun PocketDevApp(
                 pendingHomeAttachments = homeUris
                 viewModel.createQuickProject()
             },
+            onShowAppUpdate = onShowAppUpdate,
+            onHomeVoiceCall = {
+                pendingHomeVoiceCall = true
+                viewModel.createQuickProject()
+            },
             onOpenAppFactory = { openStudio(OverlayScreen.APP_FACTORY) },
             onOpenTeamStudio = { openStudio(OverlayScreen.TEAM_STUDIO) },
             onOpenCloudHybrid = { openStudio(OverlayScreen.CLOUD_HYBRID) },
             onOpenGitHubStudio = { navigator.openGitHubStudio() },
+        )
+    }
+    // Root app-update dialog (U1): composed at the very end so it opens
+    // over whichever branch above is on screen.
+    val rootAppUpdate = state.appUpdate
+    if (showAppUpdateDialog && rootAppUpdate != null) {
+        AppUpdateDialog(
+            update = rootAppUpdate,
+            status = state.appUpdateStatus,
+            downloadedBytes = state.appUpdateDownloadedBytes,
+            totalBytes = state.appUpdateTotalBytes,
+            error = state.appUpdateError,
+            onDismiss = { showAppUpdateDialog = false },
+            onInstall = viewModel::installAppUpdate,
+            onCancelDownload = viewModel::cancelAppUpdateDownload,
+            onGrantPermission = {
+                appUpdatePermissionLauncher.launch(
+                    Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
+                )
+            },
         )
     }
     GitPushUi(
@@ -2562,6 +2609,8 @@ private fun RootScreenHost(
     onOpenGitHubStudio: () -> Unit = {},
     onHomeSend: (String) -> Unit = {},
     onHomeAttach: (List<Uri>) -> Unit = {},
+    onShowAppUpdate: () -> Unit = {},
+    onHomeVoiceCall: () -> Unit = {},
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.CHAT_HOME) }
     var settingsFocus by rememberSaveable { mutableStateOf("tools") }
@@ -2676,9 +2725,10 @@ private fun RootScreenHost(
                     freeModeEnabled = state.freeModeEnabled,
                     appUpdateAvailable = state.appUpdate != null,
                     onOpenDrawer = { drawerOpen = true },
-                    onOpenUpdate = { screen = RootScreen.PROJECTS },
+                    onOpenUpdate = onShowAppUpdate,
                     onSend = onHomeSend,
                     onAttach = onHomeAttach,
+                    onVoiceCall = onHomeVoiceCall,
                     onSelectAgent = viewModel::selectAgent,
                     onMoreAgents = { screen = RootScreen.AGENT },
                     onOpenConnectors = { screen = RootScreen.CONNECTORS },
@@ -2724,8 +2774,7 @@ private fun RootScreenHost(
                     onSettings = { screen = RootScreen.SETTINGS },
                     onPing = viewModel::pingApi,
                     onToggleTheme = viewModel::toggleTheme,
-                    onInstallUpdate = viewModel::installAppUpdate,
-                    onCancelUpdateDownload = viewModel::cancelAppUpdateDownload,
+                    onShowUpdateDialog = onShowAppUpdate,
                     onOpenAppFactory = onOpenAppFactory,
                     onOpenTeamStudio = onOpenTeamStudio,
                     onOpenCloudHybrid = onOpenCloudHybrid,
@@ -2899,6 +2948,9 @@ private fun RootScreenHost(
                     onOpenAbout = { settingsFocus = "about"; screen = RootScreen.SECTION_PAGE },
                     onOpenAllSettings = { screen = RootScreen.LEGACY_SETTINGS },
                     onLogout = { authViewModel?.signOut() },
+                    appUpdateAvailable = state.appUpdate != null,
+                    currentVersion = BuildConfig.VERSION_NAME,
+                    onOpenAppUpdates = onShowAppUpdate,
                 )
                 RootScreen.CAPABILITIES -> CapabilitiesScreen(
                     onBack = { screen = RootScreen.SETTINGS },
@@ -2970,6 +3022,8 @@ private fun RootScreenHost(
                     onClearUpdateManifestUrl = viewModel::clearUpdateManifestUrl,
                     onSetUpdateAuthToken = viewModel::setUpdateAuthToken,
                     onCheckForUpdate = { viewModel.checkForAppUpdate(force = true) },
+                    onInstallAppUpdate = viewModel::installAppUpdate,
+                    onShowAppUpdateDialog = onShowAppUpdate,
                     initialDebugUpdateManifestUrl = viewModel.debugUpdateManifestUrl(),
                     onSetDebugUpdateManifestUrl = viewModel::setDebugUpdateManifestUrl,
                     onClearDebugUpdateManifestUrl = viewModel::clearDebugUpdateManifestUrl,
@@ -4217,14 +4271,12 @@ private fun ProjectsScreen(
     onSettings: () -> Unit,
     onPing: () -> Unit,
     onToggleTheme: () -> Unit,
-    onInstallUpdate: () -> Unit,
-    onCancelUpdateDownload: () -> Unit = {},
+    onShowUpdateDialog: () -> Unit = {},
     onOpenAppFactory: () -> Unit = {},
     onOpenTeamStudio: () -> Unit = {},
     onOpenCloudHybrid: () -> Unit = {},
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
-    var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
     var showGitDialog by rememberSaveable { mutableStateOf(false) }
     var showGitHubDialog by rememberSaveable { mutableStateOf(false) }
     var importExpanded by rememberSaveable { mutableStateOf(false) }
@@ -4246,17 +4298,11 @@ private fun ProjectsScreen(
             }
         }
     }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        onInstallUpdate()
-    }
     val importZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) onImportZip(uri)
     }
     val importFolderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) onImportFolder(uri)
-    }
-    LaunchedEffect(state.appUpdate?.versionCode, state.appUpdatePromptNonce) {
-        if (state.appUpdate != null) showUpdateDialog = true
     }
     Scaffold(
         topBar = {
@@ -4440,7 +4486,7 @@ private fun ProjectsScreen(
             state.appUpdate?.let { update ->
                 item {
                     Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { showUpdateDialog = true },
+                        modifier = Modifier.fillMaxWidth().clickable { onShowUpdateDialog() },
                         shape = RoundedCornerShape(18.dp),
                         color = PocketOrange.copy(alpha = 0.11f),
                         border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.45f)),
@@ -4828,75 +4874,89 @@ private fun ProjectsScreen(
             },
         )
     }
-    val update = state.appUpdate
-    if (showUpdateDialog && update != null) {
-        val canInstall = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls()
-        val downloading = state.appUpdateStatus == AppUpdateStatus.DOWNLOADING
-        val installing = state.appUpdateStatus == AppUpdateStatus.INSTALLING
-        val total = state.appUpdateTotalBytes
-        val downloaded = state.appUpdateDownloadedBytes
-        val progress = if (total > 0) (downloaded.toFloat() / total).coerceIn(0f, 1f) else 0f
-        AlertDialog(
-            // Dismiss is always allowed: the download/install runs detached
-            // (the Android installer takes over at the end), so dismissing
-            // only hides this dialog. Reopen it from the update banner.
-            onDismissRequest = { showUpdateDialog = false },
-            icon = { Icon(Icons.Default.Download, null, tint = PocketOrange, modifier = Modifier.size(34.dp)) },
-            title = { Text("Update to ${update.versionName}", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(update.notes.ifBlank { "Get the latest improvements and fixes for Kodex." })
-                    if (update.sizeBytes > 0) Text("Download size: ${formatMegabytes(update.sizeBytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                    if (!canInstall) {
-                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)) {
-                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-                                Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Allow ‘Install unknown apps’ for Kodex. Without this permission, Android will not install the update.", fontSize = 13.sp)
-                            }
+}
+
+/**
+ * The app-update dialog (v3.2.34, U1: hoisted out of ProjectsScreen to the
+ * app root). Content and behavior are the ones ProjectsScreen used to
+ * host: release notes, size, the unknown-apps permission warning and
+ * grant flow, live download progress, and the detached install.
+ */
+@Composable
+private fun AppUpdateDialog(
+    update: com.vayro.app.update.AppUpdateInfo,
+    status: AppUpdateStatus?,
+    downloadedBytes: Long,
+    totalBytes: Long,
+    error: String?,
+    onDismiss: () -> Unit,
+    onInstall: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onGrantPermission: () -> Unit,
+) {
+    val context = LocalContext.current
+    val canInstall = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls()
+    val downloading = status == AppUpdateStatus.DOWNLOADING
+    val installing = status == AppUpdateStatus.INSTALLING
+    val progress = if (totalBytes > 0) (downloadedBytes.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
+    AlertDialog(
+        // Dismiss is always allowed: the download/install runs detached
+        // (the Android installer takes over at the end), so dismissing
+        // only hides this dialog. Reopen it from Settings -> App updates.
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Download, null, tint = PocketOrange, modifier = Modifier.size(34.dp)) },
+        title = { Text("Update to ${update.versionName}", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(update.notes.ifBlank { "Get the latest improvements and fixes for Kodex." })
+                if (update.sizeBytes > 0) Text("Download size: ${formatMegabytes(update.sizeBytes)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                if (!canInstall) {
+                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.65f)) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+                            Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Allow \u2018Install unknown apps\u2019 for Kodex. Without this permission, Android will not install the update.", fontSize = 13.sp)
                         }
                     }
-                    if (downloading) {
-                        if (total > 0) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-                        else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        Text(
-                            if (total > 0) "Downloading ${formatMegabytes(downloaded)} / ${formatMegabytes(total)} · ${(progress * 100).toInt()}%" else "Downloading ${formatMegabytes(downloaded)}",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                }
+                if (downloading) {
+                    if (totalBytes > 0) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                    else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(
+                        if (totalBytes > 0) "Downloading ${formatMegabytes(downloadedBytes)} / ${formatMegabytes(totalBytes)} \u00b7 ${(progress * 100).toInt()}%" else "Downloading ${formatMegabytes(downloadedBytes)}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (installing) Text("Download verified. Opening Android installer\u2026", color = PocketGreen, fontSize = 13.sp)
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !downloading && !installing,
+                onClick = {
+                    if (!canInstall && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        onGrantPermission()
+                    } else {
+                        onInstall()
                     }
-                    if (installing) Text("Download verified. Opening Android installer…", color = PocketGreen, fontSize = 13.sp)
-                    state.appUpdateError?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
-                }
-            },
-            confirmButton = {
-                Button(
-                    enabled = !downloading && !installing,
-                    onClick = {
-                        if (!canInstall && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            permissionLauncher.launch(
-                                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
-                            )
-                        } else {
-                            onInstallUpdate()
-                        }
-                    },
-                ) {
-                    Text(when { !canInstall -> "Grant permission"; downloading -> "Downloading…"; installing -> "Installing…"; else -> "Download and install" })
-                }
-            },
-            dismissButton = {
-                Row {
-                    if (downloading) {
-                        TextButton(onClick = onCancelUpdateDownload) {
-                            Text("Cancel", color = MaterialTheme.colorScheme.error)
-                        }
+                },
+            ) {
+                Text(when { !canInstall -> "Grant permission"; downloading -> "Downloading\u2026"; installing -> "Installing\u2026"; else -> "Download and install" })
+            }
+        },
+        dismissButton = {
+            Row {
+                if (downloading) {
+                    TextButton(onClick = onCancelDownload) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.error)
                     }
-                    TextButton(onClick = { showUpdateDialog = false }) { Text("Later") }
                 }
-            },
-        )
-    }
+                TextButton(onClick = onDismiss) { Text("Later") }
+            }
+        },
+    )
 }
 
 @Composable
@@ -5284,8 +5344,11 @@ private fun WorkspaceScreen(
     val chatListState = rememberLazyListState()
     var userScrolledUp by rememberSaveable { mutableStateOf(false) }
 
+    // Item count of the chat LazyColumn: messages + the in-flow working
+    // row (v3.2.34, U4 — it is a list item now, not a docked bar) + the
+    // approval card. The follow-scroll effects below key off this count.
     val chatItemCount = state.messages.size +
-        (if (state.liveProcess.isNotEmpty() || state.liveThinking) 1 else 0) +
+        (if (state.isRunning) 1 else 0) +
         (if (state.pendingApproval != null) 1 else 0)
 
     LaunchedEffect(state.activeChatId) {
@@ -5741,6 +5804,7 @@ private fun WorkspaceScreen(
                     onPushToGitHub = onPushToGitHubRequest,
                     onOpenGitHubBuild = onOpenCloudHybrid,
                     onOpenAppFactory = onOpenAppFactory,
+                    voiceCallRequestNonce = state.voiceCallRequestNonce,
                 )
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
@@ -6513,6 +6577,7 @@ private fun ChatTab(
     onPushToGitHub: () -> Unit = {},
     onOpenGitHubBuild: () -> Unit = {},
     onOpenAppFactory: () -> Unit = {},
+    voiceCallRequestNonce: Long = 0L,
 ) {
     val view = LocalView.current
     // Keep the screen on while the selected agent is working in this chat. Released automatically
@@ -6644,6 +6709,11 @@ private fun ChatTab(
             isRunning = true,
             workedText = null,
             onDismiss = { showLiveActivity = false },
+            // U6c: a pending approval pins to the bottom of the sheet,
+            // wired to the very same handlers as the in-flow card.
+            approval = approval,
+            onApproval = onApproval,
+            onApprovalWithLevel = onApprovalWithLevel,
         )
     }
     pastActivity?.let { (items, worked) ->
@@ -6752,6 +6822,18 @@ private fun ChatTab(
             callPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         } else {
             startVoiceCall()
+        }
+    }
+
+    // v3.2.34 (U2): a voice call requested from the chat home (composer
+    // waveform button or the "+" sheet's "Voice call" row) arrives via
+    // this nonce once the workspace chat exists — present the call here
+    // so the mic-permission flow and recognizer are the workspace's own.
+    var handledVoiceCallNonce by rememberSaveable { mutableStateOf(voiceCallRequestNonce) }
+    LaunchedEffect(voiceCallRequestNonce) {
+        if (voiceCallRequestNonce != 0L && voiceCallRequestNonce != handledVoiceCallNonce) {
+            handledVoiceCallNonce = voiceCallRequestNonce
+            onStartVoiceCall()
         }
     }
 
@@ -6902,16 +6984,25 @@ private fun ChatTab(
                         )
                     }
                 }
+                if (isRunning) {
+                    // v3.2.34 (U4): the working row is the LAST item of
+                    // the message list, directly under the most recent
+                    // message — Claude-style, in the conversation flow.
+                    // (It used to dock above the composer.) The approval
+                    // card stays right below it (U6c), and the workspace
+                    // follow-scroll keeps this tail visible while a run
+                    // streams.
+                    item(key = "working-row") {
+                        WorkingBar(
+                            items = liveProcess,
+                            thinkingActive = thinkingActive,
+                            startedAtMillis = taskStartedAtMillis,
+                            onClick = { showLiveActivity = true },
+                        )
+                    }
+                }
                 approval?.let { request -> item { ApprovalCard(request, onApproval, onApprovalWithLevel) } }
             }
-        }
-        if (isRunning) {
-            WorkingBar(
-                items = liveProcess,
-                thinkingActive = thinkingActive,
-                startedAtMillis = taskStartedAtMillis,
-                onClick = { showLiveActivity = true },
-            )
         }
         if (readOnly) {
             Surface(
@@ -7078,6 +7169,10 @@ private fun ChatTab(
                         onCustomize = {
                             toolsOpen = false
                             showWorkspaceControls = !showWorkspaceControls
+                        },
+                        onVoiceCall = {
+                            toolsOpen = false
+                            onStartVoiceCall()
                         },
                     )
                 }
@@ -7649,7 +7744,9 @@ private fun WorkingBar(
         color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).clickable(onClick = onClick),
+        // In-flow since v3.2.34 (U4): the list's own content padding
+        // provides the horizontal inset, so the bar carries none itself.
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp).clickable(onClick = onClick),
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
             ThinkingOrb()
@@ -7672,12 +7769,19 @@ private fun ActivitySheet(
     isRunning: Boolean,
     workedText: String?,
     onDismiss: () -> Unit,
+    approval: ToolRequest? = null,
+    onApproval: (Boolean) -> Unit = {},
+    onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit = { _, _ -> },
 ) {
     var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
+    // v3.2.34 (U6): the sheet is user-expandable — it starts partially
+    // expanded and can be dragged to near-full height (visible handle),
+    // and its list cap rose from 520dp so long runs stay browsable.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
-        dragHandle = null,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
         Column(Modifier.padding(bottom = 26.dp)) {
@@ -7687,7 +7791,7 @@ private fun ActivitySheet(
                 }
                 Text("Activity", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center))
             }
-            LazyColumn(Modifier.heightIn(max = 520.dp).padding(horizontal = 16.dp)) {
+            LazyColumn(Modifier.heightIn(max = 860.dp).padding(horizontal = 16.dp)) {
                 itemsIndexed(items) { index, item ->
                     val lastRunning = isRunning && !item.isComplete && index == items.indexOfLast { !it.isComplete }
                     Row(
@@ -7712,27 +7816,19 @@ private fun ActivitySheet(
                     }
                     if (index in expandedItems) ActivityExpandedDetail(item, activityDetail(item))
                 }
-                val codeChange = changes.lastOrNull { it.diffLines.isNotEmpty() }
-                if (codeChange != null) {
+                // v3.2.34 (U6): EVERY changed file gets its own code box
+                // with its COMPLETE lines. The old code showed only the
+                // last changed file and silently cut it at 60 lines
+                // ("… N more lines" with no way to see them).
+                val codeChanges = changes.filter { it.diffLines.isNotEmpty() }
+                if (codeChanges.isNotEmpty()) {
                     item {
                         Spacer(Modifier.height(12.dp))
                         Text("Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    itemsIndexed(codeChanges, key = { index, change -> "code-$index-${change.path}" }) { _, change ->
                         Spacer(Modifier.height(6.dp))
-                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                            Column(Modifier.padding(vertical = 8.dp)) {
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(codeChange.path, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    Text("+${codeChange.additions}", color = PocketGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("−${codeChange.deletions}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                                Spacer(Modifier.height(6.dp))
-                                codeChange.diffLines.take(60).forEach { line -> DiffLineRow(line) }
-                                if (codeChange.diffLines.size > 60) {
-                                    Text("… ${codeChange.diffLines.size - 60} more lines", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
-                                }
-                            }
-                        }
+                        ActivityCodeBox(change)
                     }
                 }
                 if (changes.isNotEmpty()) {
@@ -7755,6 +7851,77 @@ private fun ActivitySheet(
                         Spacer(Modifier.height(10.dp))
                         Text(workedText, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                }
+            }
+            // v3.2.34 (U6c): a pending approval pins to the bottom of
+            // the sheet — answerable right here, without closing the
+            // sheet or hunting through the message list. Same card and
+            // same handlers as the in-flow one; answering in either
+            // place resolves the request in both.
+            if (approval != null) {
+                Spacer(Modifier.height(10.dp))
+                Box(Modifier.padding(horizontal = 16.dp)) {
+                    ApprovalCard(approval, onApproval, onApprovalWithLevel)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One file's code box inside the Activity sheet (v3.2.34, U6/U6b).
+ * Shows the file's COMPLETE diff lines — nothing is dropped. The box
+ * scrolls in BOTH directions: vertically within its own bounded height,
+ * and horizontally because lines are never force-wrapped (JetBrains
+ * Mono content preserved; the inner column is as wide as the longest
+ * line, gutter included). Rendering starts with the first 100 lines so
+ * very long files stay cheap on low-end phones; "More lines" reveals
+ * the full remainder in place and "Show less" folds back — every line
+ * is reachable, by scroll or by the expander.
+ */
+@Composable
+private fun ActivityCodeBox(change: ChangeItem) {
+    var showAll by remember(change.path, change.diffLines.size) { mutableStateOf(false) }
+    val allLines = change.diffLines
+    val visibleLines = if (showAll) allLines else allLines.take(100)
+    val maxChars = remember(allLines) { allLines.maxOfOrNull { it.text.length } ?: 0 }
+    // Gutter prefix ("1234 5678  + " = 13 chars) + text, ~7.2dp per
+    // mono character at 11sp.
+    val contentWidth = ((maxChars + 14) * 7.2f).dp.coerceAtLeast(240.dp)
+    val horizontalScroll = rememberScrollState()
+    val verticalScroll = rememberScrollState()
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(change.path, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Text("+${change.additions}", color = PocketGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(6.dp))
+                Text("−${change.deletions}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(6.dp))
+            Box(Modifier.fillMaxWidth().horizontalScroll(horizontalScroll)) {
+                Column(
+                    Modifier
+                        .width(contentWidth)
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(verticalScroll),
+                ) {
+                    visibleLines.forEach { line -> DiffLineRow(line) }
+                }
+            }
+            if (allLines.size > 100) {
+                TextButton(
+                    onClick = { showAll = !showAll },
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                ) {
+                    Text(
+                        if (showAll) "Show less" else "More lines (${allLines.size - 100} more)",
+                        fontSize = 12.sp,
+                    )
                 }
             }
         }
@@ -8431,33 +8598,42 @@ private fun ApprovalCard(
             request.affectedPaths.forEach {
                 Text("• $it", fontSize = 12.5.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            // v3.2.34 (U3): one balanced row. The old equal-weight 13sp
+            // row clipped "Allow for session" to "Allow for" and wrapped
+            // "Allow once" onto two lines inside an uneven pill. Now:
+            // weighted widths (session widest), 12sp single-line labels
+            // with wrapping disabled, tight content padding, even 44dp
+            // height — all three labels fit fully at 360dp width.
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
                     onClick = {
                         onApproval(false)
                         onApprovalWithLevel(com.vayro.app.security.PermissionLevel.DENY, false)
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(0.95f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                 ) {
-                    Text("Deny", fontSize = 13.sp)
+                    Text("Deny", fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
                 OutlinedButton(
                     onClick = {
                         onApprovalWithLevel(com.vayro.app.security.PermissionLevel.SESSION, true)
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1.6f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                 ) {
-                    Text("Allow for session", fontSize = 13.sp, maxLines = 1)
+                    Text("Allow for session", fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
                 Button(
                     onClick = {
                         onApproval(true)
                         onApprovalWithLevel(com.vayro.app.security.PermissionLevel.ONCE, true)
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1.05f).height(44.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = com.vayro.app.ui.theme.KodexClay),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                 ) {
-                    Text("Allow once", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text("Allow once", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
             }
         }

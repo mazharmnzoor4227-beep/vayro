@@ -851,6 +851,17 @@ class ClaudeRuntimeBridge(
         }
         val before = textLines(beforeBytes)
         val after = textLines(afterBytes)
+        if (before.isEmpty() || after.isEmpty()) {
+            // New or deleted file: the whole content IS the change. Emit
+            // every line directly (no LCS table needed), so even a very
+            // large new file stays fully visible in the Activity code
+            // view instead of being replaced by a "too large" note.
+            return if (after.isEmpty()) {
+                before.mapIndexed { index, line -> DiffLine(DiffLineType.DELETION, line, index + 1, null) }
+            } else {
+                after.mapIndexed { index, line -> DiffLine(DiffLineType.ADDITION, line, null, index + 1) }
+            }
+        }
         if (before.size > MAX_RENDERED_DIFF_LINES || after.size > MAX_RENDERED_DIFF_LINES) {
             return listOf(
                 DiffLine(
@@ -1112,7 +1123,7 @@ class ClaudeRuntimeBridge(
 
     companion object {
         private const val MAX_DIFF_LINES = 2_000
-        private const val MAX_RENDERED_DIFF_LINES = 600
+        private const val MAX_RENDERED_DIFF_LINES = 1_200
         private const val MAX_DIFF_FILE_BYTES = 1_000_000L
         private const val DIFF_CONTEXT_LINES = 3
         private const val FOREGROUND_PROGRESS_MIN_INTERVAL_MS = 750L

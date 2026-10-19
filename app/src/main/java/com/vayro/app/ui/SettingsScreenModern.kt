@@ -4,6 +4,7 @@ import com.vayro.app.AppCrashLogger
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
@@ -146,6 +147,7 @@ import com.vayro.app.runtime.EnvironmentComponentState
 import com.vayro.app.runtime.EnvironmentManifestComponent
 import com.vayro.app.runtime.EnvironmentUpdateManager
 import com.vayro.app.runtime.RuntimeInstaller
+import com.vayro.app.update.AppUpdateInfo
 import com.vayro.app.ui.theme.AppColorTheme
 import com.vayro.app.ui.theme.AppThemeMode
 import com.vayro.app.ui.theme.PocketGreen
@@ -207,6 +209,8 @@ fun SettingsScreen(
     onClearUpdateManifestUrl: () -> Unit = {},
     onSetUpdateAuthToken: (String) -> Unit = {},
     onCheckForUpdate: () -> Unit = {},
+    onInstallAppUpdate: () -> Unit = {},
+    onShowAppUpdateDialog: () -> Unit = {},
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
@@ -893,6 +897,12 @@ fun SettingsScreen(
                         onClearDebugUpdateManifestUrl()
                     },
                     onCheckNow = onCheckForUpdate,
+                    appUpdate = state.appUpdate,
+                    appUpdateStatus = state.appUpdateStatus,
+                    appUpdateDownloadedBytes = state.appUpdateDownloadedBytes,
+                    appUpdateTotalBytes = state.appUpdateTotalBytes,
+                    onInstallUpdate = onInstallAppUpdate,
+                    onShowAppUpdateDialog = onShowAppUpdateDialog,
                 )
             } }
 
@@ -1864,6 +1874,12 @@ private fun AppUpdateChannelSection(
     onSave: (String, String) -> Unit = { _, _ -> },
     onClear: () -> Unit = {},
     onCheckNow: () -> Unit,
+    appUpdate: AppUpdateInfo? = null,
+    appUpdateStatus: AppUpdateStatus? = null,
+    appUpdateDownloadedBytes: Long = 0L,
+    appUpdateTotalBytes: Long = -1L,
+    onInstallUpdate: () -> Unit = {},
+    onShowAppUpdateDialog: () -> Unit = {},
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     val isOnline = BuildConfig.APP_VARIANT.equals("online", ignoreCase = true)
@@ -1923,6 +1939,67 @@ private fun AppUpdateChannelSection(
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                             maxLines = 1,
                         )
+                    }
+                }
+            }
+        }
+        // v3.2.34 (U1): when a check has found an update, the install
+        // action lives HERE, in place — before, this section only had
+        // "Check now" and the only install button sat in a dialog on
+        // the Projects screen, so Settings could find an update but
+        // never install it.
+        if (appUpdate != null && !BuildConfig.IS_PLAY_BUILD) {
+            Spacer(Modifier.height(10.dp))
+            val installContext = LocalContext.current
+            val canInstall = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                installContext.packageManager.canRequestPackageInstalls()
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Kodex v${appUpdate.versionName} is available",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                when (appUpdateStatus) {
+                    AppUpdateStatus.DOWNLOADING -> {
+                        val progress = if (appUpdateTotalBytes > 0) {
+                            (appUpdateDownloadedBytes.toFloat() / appUpdateTotalBytes.toFloat()).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        }
+                        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                        Text(
+                            "Downloading… ${(progress * 100).toInt()}%",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    AppUpdateStatus.INSTALLING -> {
+                        Text(
+                            "Installing…",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    else -> {
+                        Button(
+                            onClick = { if (canInstall) onInstallUpdate() else onShowAppUpdateDialog() },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(50),
+                        ) {
+                            Text(
+                                "Download and install",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                        if (appUpdateStatus == AppUpdateStatus.PERMISSION_REQUIRED || !canInstall) {
+                            Text(
+                                "Android needs install permission first — tapping the button opens the update dialog, which guides you.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }

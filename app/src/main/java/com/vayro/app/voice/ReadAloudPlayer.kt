@@ -29,10 +29,16 @@ import kotlin.coroutines.resume
  * preferring US/GB and network-quality voices) at a natural rate/pitch.
  *
  * Premium option: when the user saves their own ElevenLabs API key and
- * Voice ID (Settings -> Voice, stored encrypted in [ApiKeyVault]), Listen
- * uses ElevenLabs instead, chunk by chunk. Any ElevenLabs failure falls
- * back to the on-device voice for the same message — Listen never just
- * dies silently.
+ * Voice ID (Settings -> Voice, stored encrypted in [ApiKeyVault]), an
+ * "ElevenLabs" card joins the voice selection on that screen. Which voice
+ * actually speaks is decided by the user's explicit ACTIVE VOICE choice
+ * (prefs "kodex_voice_settings" -> "active_voice_source" = "device" or
+ * "elevenlabs", plus "voice_name" for the device voice) — never by the
+ * mere presence of a saved key. With no explicit choice saved, a saved
+ * key + Voice ID keeps the historical default (ElevenLabs). Any
+ * ElevenLabs failure falls back to the on-device voice for the same
+ * message — Listen never just dies silently — and a fallback never
+ * rewrites the saved selection.
  *
  * Long replies are split into sentence-aware chunks so playback does
  * not cut off. [playingMessageId] is observable state so the chat UI can
@@ -83,10 +89,25 @@ object ReadAloudPlayer {
         val vault = runCatching { ApiKeyVault(appContext) }.getOrNull()
         val apiKey = vault?.get("elevenlabs")?.takeIf { it.isNotBlank() }
         val voiceId = vault?.get("elevenlabs_voice")?.takeIf { it.isNotBlank() }
-        if (apiKey != null && voiceId != null) {
+        // The SELECTED voice wins: the Voice settings screen persists an
+        // explicit active source. "device" always means the on-device
+        // voice (with the saved voice_name applied in speakOnDevice),
+        // even when an ElevenLabs key is saved; "elevenlabs" means the
+        // premium voice. No saved choice -> legacy default (a saved
+        // key + Voice ID implied ElevenLabs before the choice existed).
+        val voicePrefs = appContext.getSharedPreferences("kodex_voice_settings", Context.MODE_PRIVATE)
+        val savedSource = voicePrefs.getString("active_voice_source", null)
+        val useElevenLabs = when (savedSource) {
+            "device" -> false
+            "elevenlabs" -> apiKey != null && voiceId != null
+            else -> apiKey != null && voiceId != null
+        }
+        if (useElevenLabs) {
+            val key = apiKey!!
+            val id = voiceId!!
             playJob = scope.launch {
                 val handled = runCatching {
-                    speakElevenLabs(appContext, apiKey, voiceId, plain, my)
+                    speakElevenLabs(appContext, key, id, plain, my)
                 }.getOrDefault(false)
                 if (!handled && session == my) speakOnDevice(appContext, plain, my)
             }

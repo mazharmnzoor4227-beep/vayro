@@ -382,6 +382,12 @@ data class AppUiState(
      * so the dialog never re-opened and "Check now" looked dead.
      */
     val appUpdatePromptNonce: Long = 0L,
+    /**
+     * Bumped when a voice call is requested from outside the workspace
+     * chat (chat-home composer / "+" sheet). ChatTab observes the nonce
+     * and presents the call once the workspace is open.
+     */
+    val voiceCallRequestNonce: Long = 0L,
     val executionMode: ExecutionMode = ExecutionMode.UNIFIED,
     val activeRoadmap: ActiveRoadmap? = null,
     val scratchpadItems: List<ScratchpadItem> = emptyList(),
@@ -1542,7 +1548,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun dismissAppUpdateError() =
         runtimeCoordinator.dismissAppUpdateError()
 
-
+    /**
+     * Requests a voice call from outside the workspace chat (chat home).
+     * Bumping the nonce is enough: once the workspace chat is composed it
+     * sees the new nonce and presents the call (permission flow included).
+     */
+    fun requestVoiceCall() {
+        _state.update { it.copy(voiceCallRequestNonce = System.currentTimeMillis()) }
+    }
 
     fun finishOnboarding(profile: ProviderProfile, secret: String) =
         runtimeCoordinator.finishOnboarding(profile, secret)
@@ -2297,6 +2310,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun handleNotificationRoute(route: String?) {
         val normalized = route?.trim().orEmpty()
         if (normalized.isBlank()) return
+
+        if (normalized == "update" || normalized == "app-update") {
+            // Update-notification tap: a forced check bumps
+            // appUpdatePromptNonce when an update is available, which is
+            // what opens the root update dialog (PocketDevApp). When the
+            // app is already up to date the check answers with a toast.
+            checkForAppUpdate(force = true)
+            return
+        }
 
         if (normalized.startsWith("browser:") || normalized.startsWith("http://") || normalized.startsWith("https://")) {
             val targetUrl = normalized.removePrefix("browser:").trim()
