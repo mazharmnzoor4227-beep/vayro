@@ -596,6 +596,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         permissionManager = mcpPermissionManager,
         auditLogger = mcpAuditLogger,
         credentialStore = mcpCredentialStore,
+        // v3.2.39 (Scope 1): stdio servers spawn INSIDE the Linux guest —
+        // the only place npx/uvx exist. Discovery and tool calls both run
+        // over this live transport (see GuestMcpProcessFactory).
+        sessionFactory = { server ->
+            com.vayro.app.mcp.McpServerSession(
+                server,
+                processFactory = com.vayro.app.mcp.GuestMcpProcessFactory(
+                    installer = installer,
+                    workspaceDir = File(application.filesDir, "mcp-workspace"),
+                    cacheDir = application.cacheDir,
+                ),
+            )
+        },
     )
     val gitHubClient = com.vayro.app.network.GitHubClient()
 

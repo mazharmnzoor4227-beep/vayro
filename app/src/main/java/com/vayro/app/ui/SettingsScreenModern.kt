@@ -272,6 +272,8 @@ fun SettingsScreen(
     focusSections: Set<SettingsSection> = emptySet(),
     focusTitle: String? = null,
     onFocusBack: (() -> Unit)? = null,
+    // v3.2.39 (Scope 2): hoisted sections-list state (host-owned).
+    focusListState: LazyListState = rememberSaveable(saver = LazyListState.Saver, key = "settings-sections-list-state") { LazyListState() },
 ) {
     val context = LocalContext.current
     val runtimeInstaller = remember { RuntimeInstaller(context) }
@@ -383,9 +385,9 @@ fun SettingsScreen(
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).imePadding(),
-            // U8b: saveable state — leaving a section page and coming
-            // back restores the scroll position instead of the top.
-            state = rememberSaveable(saver = LazyListState.Saver, key = "settings-sections-list-state") { LazyListState() },
+            // U8b + v3.2.39 (Scope 2): the host's list state — leaving a
+            // section page and coming back restores the scroll position.
+            state = focusListState,
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

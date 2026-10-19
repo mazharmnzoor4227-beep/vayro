@@ -139,7 +139,12 @@ object ReadAloudPlayer {
                 if (!handled && session == my) {
                     // v3.2.38 (M1): a failed ElevenLabs attempt is VISIBLE —
                     // the fallback speaks, and the user is told why.
-                    val notice = "ElevenLabs voice failed (${failure[0] ?: "request failed"}) — using the device voice this time."
+                    // v3.2.39 (Scope 3): a known failure class also gets a
+                    // plain sentence ABOVE the technical line — the raw
+                    // detail always stays visible underneath.
+                    val technical = "ElevenLabs voice failed (${failure[0] ?: "request failed"}) — using the device voice this time."
+                    val hint = elevenLabsPlainHint(failure[0])
+                    val notice = if (hint != null) "$hint\n$technical" else technical
                     postNotice(notice)
                     android.widget.Toast.makeText(appContext, notice, android.widget.Toast.LENGTH_LONG).show()
                     speakOnDevice(appContext, plain, my)
@@ -223,7 +228,25 @@ object ReadAloudPlayer {
             val prefs = context.getSharedPreferences("kodex_voice_settings", Context.MODE_PRIVATE)
             val savedName = prefs.getString("voice_name", null)
             if (!savedName.isNullOrBlank()) {
-                engine.voices?.firstOrNull { it.name == savedName }?.let { engine.voice = it }
+                val match = engine.voices?.firstOrNull { it.name == savedName }
+                if (match != null) {
+                    // The stored identity, resolved at speak time — exactly
+                    // the voice the selected card promised.
+                    engine.voice = match
+                } else {
+                    // v3.2.39 (Scope 4): the saved voice has vanished from
+                    // this device (its TTS data changed or was removed).
+                    // Never silently speak with a different voice: use the
+                    // engine's current voice, SAY so, and move the saved
+                    // selection to the voice actually in use.
+                    val fallback = engine.voice
+                    if (fallback != null) {
+                        prefs.edit().putString("voice_name", fallback.name).apply()
+                        val notice = "Your saved voice is no longer on this device — using '${fallback.name}' instead. You can pick another in Voice settings."
+                        postNotice(notice)
+                        android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
             }
             val pace = prefs.getFloat("pace_rate", -1f)
             engine.setSpeechRate(if (pace > 0f) pace else 0.98f)
@@ -401,5 +424,21 @@ object ReadAloudPlayer {
         }
         if (rest.isNotBlank()) chunks += rest
         return chunks.filter { it.isNotBlank() }
+    }
+}
+
+/**
+ * v3.2.39 (Scope 3): a plain-language explanation for a known ElevenLabs
+ * failure class, or null when the failure has no known plain mapping (the
+ * raw technical line then stands on its own). Deliberately TOP-LEVEL and
+ * pure: the player object initializes against the main dispatcher, which
+ * a plain JVM unit test cannot touch — this function can be tested.
+ */
+internal fun elevenLabsPlainHint(reason: String?): String? {
+    val text = reason ?: return null
+    return if (text.contains("402") && text.contains("library", ignoreCase = true)) {
+        "This is a library voice. ElevenLabs' free plan can't use library voices through the API — choose one of your own voices above, or a standard voice."
+    } else {
+        null
     }
 }

@@ -146,9 +146,14 @@ fun SkillsScreen(
     // v3.2.38 (J): optional back arrow — set by the root Skills screen;
     // the Connectors-embedded instance leaves it null (its header has one).
     onBack: (() -> Unit)? = null,
+    // v3.2.39 (Scope 2): hoisted list + search state (host-owned) so the
+    // Skills and MCP lists keep their place across navigation.
+    skillsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver, key = "skills-tab-list-state") { LazyListState() },
+    mcpListState: LazyListState = rememberSaveable(saver = LazyListState.Saver, key = "mcp-tab-list-state") { LazyListState() },
+    queryState: androidx.compose.runtime.MutableState<String> = rememberSaveable { mutableStateOf("") },
 ) {
     var selectedTab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab) }
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by queryState
     var githubUrl by rememberSaveable { mutableStateOf("") }
     var showAddCustomMcpDialog by rememberSaveable { mutableStateOf(false) }
     var runDialogServer by remember { mutableStateOf<McpServerInfo?>(null) }
@@ -214,7 +219,7 @@ fun SkillsScreen(
             // ==================== SKILLS TAB ====================
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                state = rememberSaveable(saver = LazyListState.Saver, key = "skills-tab-list-state") { LazyListState() },
+                state = skillsListState,
                 contentPadding = PaddingValues(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -454,7 +459,7 @@ fun SkillsScreen(
             // ==================== MCP PLATFORM TAB ====================
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                state = rememberSaveable(saver = LazyListState.Saver, key = "mcp-tab-list-state") { LazyListState() },
+                state = mcpListState,
                 contentPadding = PaddingValues(18.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {

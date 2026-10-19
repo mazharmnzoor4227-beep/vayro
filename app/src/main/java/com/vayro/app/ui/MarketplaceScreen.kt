@@ -105,15 +105,23 @@ fun MarketplaceScreen(
     updatesAvailable: Set<String> = emptySet(),
     onUpdateItem: (MarketplaceItem) -> Unit = {},
     onScreenOpened: () -> Unit = {},
+    // v3.2.39 (Scope 2): hoisted list + filter state (host-owned).
+    listState: androidx.compose.foundation.lazy.LazyListState = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
+        androidx.compose.foundation.lazy.LazyListState()
+    },
+    searchQueryState: androidx.compose.runtime.MutableState<String> = rememberSaveable { mutableStateOf("") },
+    categoryState: androidx.compose.runtime.MutableState<MarketplaceCategory?> = rememberSaveable { mutableStateOf<MarketplaceCategory?>(null) },
+    installedOnlyState: androidx.compose.runtime.MutableState<Boolean> = rememberSaveable { mutableStateOf(false) },
+    sortState: androidx.compose.runtime.MutableState<SearchSort> = rememberSaveable { mutableStateOf(SearchSort.RELEVANCE) },
 ) {
-    // v3.2.38 (J): search / filter / sort / scroll survive leaving and
-    // returning (U8b pattern), like every other list in the shell.
-    var searchQuery by rememberSaveable { mutableStateOf("") }
+    // v3.2.38 (J) + v3.2.39 (Scope 2): search / filter / sort / scroll
+    // survive leaving and returning — the state is the host's now.
+    var searchQuery by searchQueryState
     var searchOpen by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
-    var selectedCategory by rememberSaveable { mutableStateOf<MarketplaceCategory?>(null) }
-    var showOnlyInstalled by rememberSaveable { mutableStateOf(false) }
-    var sortBy by rememberSaveable { mutableStateOf(SearchSort.RELEVANCE) }
+    var selectedCategory by categoryState
+    var showOnlyInstalled by installedOnlyState
+    var sortBy by sortState
     // Install state is owned by MarketplaceInstallManager (durable). The screen never
     // mutates install state locally: it renders the manager's set and delegates
     // install/uninstall to the callbacks, which report real results.
@@ -345,9 +353,7 @@ fun MarketplaceScreen(
             // Items List
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                state = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
-                    androidx.compose.foundation.lazy.LazyListState()
-                },
+                state = listState,
                 contentPadding = PaddingValues(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {

@@ -81,6 +81,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import com.vayro.app.marketplace.MarketplaceCategory
+import com.vayro.app.marketplace.SearchSort
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -379,6 +381,27 @@ fun PocketDevApp(
         viewModel.autoUpdateToolsAndSkills()
     }
     val projectsListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
+    // v3.2.39 (Scope 2): the root screens' list + filter states live HERE,
+    // in the root composable that never leaves composition, as plain
+    // remember. They used to be rememberSaveable INSIDE each screen — and
+    // on the user's phone the Settings list still jumped to the top after
+    // a sub-page round trip (About → Back). A state held at this level
+    // cannot be dropped by any branch switch, host swap or registry
+    // restore below it: the screens just read what they are handed.
+    val settingsListState = remember { LazyListState() }
+    val settingsFocusListState = remember { LazyListState() }
+    val chatsListState = remember { LazyListState() }
+    val chatsQueryState = remember { mutableStateOf("") }
+    val chatsFilterPinnedState = remember { mutableStateOf(false) }
+    val providersListState = remember { LazyListState() }
+    val skillsListState = remember { LazyListState() }
+    val mcpListState = remember { LazyListState() }
+    val skillsQueryState = remember { mutableStateOf("") }
+    val marketplaceListState = remember { LazyListState() }
+    val marketplaceQueryState = remember { mutableStateOf("") }
+    val marketplaceCategoryState = remember { mutableStateOf<MarketplaceCategory?>(null) }
+    val marketplaceInstalledOnlyState = remember { mutableStateOf(false) }
+    val marketplaceSortState = remember { mutableStateOf(SearchSort.RELEVANCE) }
     var guestDismissedAuth by rememberSaveable { mutableStateOf(false) }
     var showAuthModal by rememberSaveable { mutableStateOf(false) }
     // Milestone 1: overlay navigation separated into PocketDevNavigator.
@@ -569,6 +592,11 @@ fun PocketDevApp(
         BackHandler(onBack = { navigator.closeOverlay() })
         MarketplaceScreen(
             onBack = { navigator.closeOverlay() },
+            listState = marketplaceListState,
+            searchQueryState = marketplaceQueryState,
+            categoryState = marketplaceCategoryState,
+            installedOnlyState = marketplaceInstalledOnlyState,
+            sortState = marketplaceSortState,
             onInstallItem = { item -> viewModel.installMarketplaceItem(item) },
             onUninstallItem = { item -> viewModel.uninstallMarketplaceItem(item) },
             onPublishItem = { item -> viewModel.publishMarketplaceItem(item) },
@@ -791,6 +819,20 @@ fun PocketDevApp(
             state = state,
             viewModel = viewModel,
             projectsListState = projectsListState,
+            settingsListState = settingsListState,
+            settingsFocusListState = settingsFocusListState,
+            chatsListState = chatsListState,
+            chatsQueryState = chatsQueryState,
+            chatsFilterPinnedState = chatsFilterPinnedState,
+            providersListState = providersListState,
+            skillsListState = skillsListState,
+            mcpListState = mcpListState,
+            skillsQueryState = skillsQueryState,
+            marketplaceListState = marketplaceListState,
+            marketplaceQueryState = marketplaceQueryState,
+            marketplaceCategoryState = marketplaceCategoryState,
+            marketplaceInstalledOnlyState = marketplaceInstalledOnlyState,
+            marketplaceSortState = marketplaceSortState,
             authViewModel = authViewModel,
             onNavigateToAuth = { showAuthModal = true },
             onPushRequest = startGitPush,
@@ -2475,6 +2517,23 @@ private fun RootScreenHost(
     state: AppUiState,
     viewModel: MainViewModel,
     projectsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    // v3.2.39 (Scope 2): root-screen list/filter states, hoisted to
+    // PocketDevApp (never disposed). Defaults keep the old in-screen
+    // behaviour for any other caller.
+    settingsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    settingsFocusListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    chatsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    chatsQueryState: androidx.compose.runtime.MutableState<String> = rememberSaveable { mutableStateOf("") },
+    chatsFilterPinnedState: androidx.compose.runtime.MutableState<Boolean> = rememberSaveable { mutableStateOf(false) },
+    providersListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    skillsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    mcpListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    skillsQueryState: androidx.compose.runtime.MutableState<String> = rememberSaveable { mutableStateOf("") },
+    marketplaceListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
+    marketplaceQueryState: androidx.compose.runtime.MutableState<String> = rememberSaveable { mutableStateOf("") },
+    marketplaceCategoryState: androidx.compose.runtime.MutableState<MarketplaceCategory?> = rememberSaveable { mutableStateOf<MarketplaceCategory?>(null) },
+    marketplaceInstalledOnlyState: androidx.compose.runtime.MutableState<Boolean> = rememberSaveable { mutableStateOf(false) },
+    marketplaceSortState: androidx.compose.runtime.MutableState<SearchSort> = rememberSaveable { mutableStateOf(SearchSort.RELEVANCE) },
     authViewModel: AuthViewModel? = null,
     onNavigateToAuth: () -> Unit = {},
     onPushRequest: () -> Unit = {},
@@ -2742,6 +2801,9 @@ private fun RootScreenHost(
                     onOpenAppFactory = onOpenAppFactory,
                 )
                 RootScreen.CHATS -> ChatsScreen(
+                    listState = chatsListState,
+                    queryState = chatsQueryState,
+                    filterPinnedState = chatsFilterPinnedState,
                     projects = state.projects,
                     pinnedIds = pinnedProjectIds,
                     onOpenDrawer = { drawerOpen = true },
@@ -2794,6 +2856,7 @@ private fun RootScreenHost(
                     onOpenChatHome = { screen = RootScreen.CHAT_HOME },
                 )
                 RootScreen.AGENT -> AgentScreen(
+                    listState = providersListState,
                     state = state,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
@@ -2837,6 +2900,9 @@ private fun RootScreenHost(
                     teamOrchestrator = viewModel.teamOrchestrator,
                 )
                 RootScreen.SKILLS -> key(skillsTabEpoch) { SkillsScreen(
+                    skillsListState = skillsListState,
+                    mcpListState = mcpListState,
+                    queryState = skillsQueryState,
                     onBack = navigateBack,
                     installed = state.skills,
                     results = state.skillSearchResults,
@@ -2897,6 +2963,9 @@ private fun RootScreenHost(
                         },
                     )
                     key(skillsTabEpoch) { SkillsScreen(
+                    skillsListState = skillsListState,
+                    mcpListState = mcpListState,
+                    queryState = skillsQueryState,
                     installed = state.skills,
                     results = state.skillSearchResults,
                     busy = state.skillsBusy,
@@ -2941,6 +3010,7 @@ private fun RootScreenHost(
                 ) }
                 }
                 RootScreen.SETTINGS -> ClaudeSettingsHome(
+                    listState = settingsListState,
                     accountName = hostUser?.displayName?.ifBlank { null }
                         ?: hostUser?.email
                         ?: if (hostUser != null) "Signed in" else "Guest mode",
@@ -2996,6 +3066,11 @@ private fun RootScreenHost(
                     onBack = { screen = RootScreen.SETTINGS },
                 )
                 RootScreen.MARKETPLACE -> MarketplaceScreen(
+                    listState = marketplaceListState,
+                    searchQueryState = marketplaceQueryState,
+                    categoryState = marketplaceCategoryState,
+                    installedOnlyState = marketplaceInstalledOnlyState,
+                    sortState = marketplaceSortState,
                     onBack = navigateBack,
                     onInstallItem = { item -> viewModel.installMarketplaceItem(item) },
                     onUninstallItem = { item -> viewModel.uninstallMarketplaceItem(item) },
@@ -3026,6 +3101,7 @@ private fun RootScreenHost(
                     Box(Modifier.fillMaxSize())
                 }
                 RootScreen.SECTION_PAGE -> SettingsScreen(
+                    focusListState = settingsFocusListState,
                     state = state,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
@@ -8719,9 +8795,6 @@ private fun MessageBubble(
     onPreviewDelivered: (String, String) -> Unit = { _, _ -> },
     onLocateApk: (() -> Unit)? = null,
 ) {
-    val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
-    var copied by remember { mutableStateOf(false) }
     // Links in agent replies get Copy/Open cards under the bubble (max 3).
     val messageLinks = remember(message.id, message.text, message.fromUser) {
         if (message.fromUser) emptyList() else ChatLinkExtractor.extract(message.text).take(3)
@@ -8790,29 +8863,15 @@ private fun MessageBubble(
                         )
                     }
                 }
-                    Box(
+                    // v3.2.39 (Scope 5): the shared copy button — the home
+                    // thread uses this exact component too.
+                    MessageCopyButton(
+                        text = message.text,
+                        fromUser = message.fromUser,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 8.dp)
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .clickable {
-                                clipboardManager.setText(AnnotatedString(message.text))
-                                copied = true
-                                val label = if (message.fromUser) "Prompt copied to clipboard" else "Response copied to clipboard"
-                                Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                            contentDescription = if (message.fromUser) "Copy prompt" else "Copy response",
-                            tint = if (copied) PocketGreen
-                            else if (message.fromUser) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            modifier = Modifier.size(15.dp),
-                        )
-                    }
+                            .padding(end = 8.dp),
+                    )
                 }
                 if (!message.fromUser && message.roadmap != null) {
                     RoadmapCard(
@@ -8844,40 +8903,12 @@ private fun MessageBubble(
             }
         }
         if (!message.fromUser && !isStreaming && message.text.isNotBlank()) {
-            val listeningThis = com.vayro.app.voice.ReadAloudPlayer.playingMessageId == message.id
-            TextButton(
-                onClick = {
-                    com.vayro.app.voice.ReadAloudPlayer.toggle(context, message.id, message.text)
-                },
+            // v3.2.39 (Scope 5): shared with the home thread.
+            MessageListenRow(
+                messageId = message.id,
+                text = message.text,
                 modifier = Modifier.fillMaxWidth(.92f),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        if (listeningThis) Icons.Default.Stop else Icons.Default.VolumeUp,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = if (listeningThis) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        if (listeningThis) "Stop" else "Listen",
-                        fontSize = 12.sp,
-                        color = if (listeningThis) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
-            }
+            )
         }
         if (!isStreaming && messageLinks.isNotEmpty()) {
             Column(
@@ -8909,7 +8940,7 @@ private fun MessageBubble(
 }
 
 @Composable
-private fun ChatLinkCard(
+internal fun ChatLinkCard(
     url: String,
     onOpenLink: ((String) -> Unit)?,
 ) {

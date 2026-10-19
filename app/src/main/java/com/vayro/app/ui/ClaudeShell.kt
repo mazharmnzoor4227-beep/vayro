@@ -57,6 +57,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MoreVert
@@ -932,6 +939,91 @@ private fun ModeSegment(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Per-message actions — SHARED by the workspace MessageBubble and the home
+// thread (v3.2.39, Scope 5). Extracted from the workspace bubble so both
+// surfaces get literally the same components and behaviour, never a copy:
+// Copy is the small circle at the message's bottom-end (check + toast on
+// tap); Listen is the row under an agent message, driven by
+// ReadAloudPlayer.playingMessageId so the playing state matches everywhere
+// and the user's selected voice (device or ElevenLabs) speaks.
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun MessageCopyButton(
+    text: String,
+    fromUser: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    Box(
+        modifier = modifier
+            .size(30.dp)
+            .clip(CircleShape)
+            .clickable {
+                clipboardManager.setText(AnnotatedString(text))
+                copied = true
+                val label = if (fromUser) "Prompt copied to clipboard" else "Response copied to clipboard"
+                Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+            contentDescription = if (fromUser) "Copy prompt" else "Copy response",
+            tint = if (copied) com.vayro.app.ui.theme.PocketGreen
+            else if (fromUser) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            modifier = Modifier.size(15.dp),
+        )
+    }
+}
+
+@Composable
+internal fun MessageListenRow(
+    messageId: String,
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val listeningThis = com.vayro.app.voice.ReadAloudPlayer.playingMessageId == messageId
+    TextButton(
+        onClick = {
+            com.vayro.app.voice.ReadAloudPlayer.toggle(context, messageId, text)
+        },
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (listeningThis) Icons.Default.Stop else Icons.Default.VolumeUp,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = if (listeningThis) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                if (listeningThis) "Stop" else "Listen",
+                fontSize = 12.sp,
+                color = if (listeningThis) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
+}
+
 // v3.2.37 (Part F): one row of the home thread.
 @Composable
 private fun HomeMessageRow(
@@ -1032,23 +1124,68 @@ private fun HomeMessageRow(
                         color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier.widthIn(max = 300.dp),
                     ) {
-                        Text(
-                            message.text,
-                            fontSize = 15.sp,
-                            lineHeight = 21.sp,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        )
+                        // v3.2.39 (Scope 5): the workspace renders user
+                        // messages through MarkdownText with the copy circle
+                        // at the bottom-end — home now does exactly the same.
+                        Box {
+                            SelectionContainer {
+                                MarkdownText(
+                                    markdown = message.text,
+                                    modifier = Modifier.padding(start = 14.dp, end = 44.dp, top = 10.dp, bottom = 10.dp),
+                                )
+                            }
+                            MessageCopyButton(
+                                text = message.text,
+                                fromUser = true,
+                                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 4.dp),
+                            )
+                        }
                     }
                 }
             } else {
-                Text(
-                    message.text,
-                    fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
-                    fontSize = 15.5.sp,
-                    lineHeight = 23.sp,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.fillMaxWidth().padding(end = 24.dp),
-                )
+                // v3.2.39 (Scope 5): home replies used to render as plain
+                // Text — raw **bold** asterisks and list markers showed.
+                // They now render through the SAME MarkdownText as the
+                // workspace (serif, like the workspace's agent messages),
+                // with the workspace's link cards and the shared
+                // Copy + Listen actions.
+                val messageLinks = remember(message.id, message.text) {
+                    com.vayro.app.chat.ChatLinkExtractor.extract(message.text).take(3)
+                }
+                Column(Modifier.fillMaxWidth()) {
+                    Box(Modifier.fillMaxWidth()) {
+                        SelectionContainer {
+                            MarkdownText(
+                                markdown = message.text,
+                                modifier = Modifier.fillMaxWidth().padding(end = 44.dp),
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
+                            )
+                        }
+                        MessageCopyButton(
+                            text = message.text,
+                            fromUser = false,
+                            modifier = Modifier.align(Alignment.BottomEnd),
+                        )
+                    }
+                    if (message.text.isNotBlank()) {
+                        MessageListenRow(
+                            messageId = message.id,
+                            text = message.text,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (messageLinks.isNotEmpty()) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(top = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            messageLinks.forEach { url ->
+                                ChatLinkCard(url = url, onOpenLink = null)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2098,6 +2235,10 @@ private fun SidebarChatRow(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ChatsScreen(
+    // v3.2.39 (Scope 2): hoisted list + filter state (host-owned).
+    listState: LazyListState = rememberSaveable(saver = LazyListState.Saver, key = "chats-list-state") { LazyListState() },
+    queryState: androidx.compose.runtime.MutableState<String> = rememberSaveable { mutableStateOf("") },
+    filterPinnedState: androidx.compose.runtime.MutableState<Boolean> = rememberSaveable { mutableStateOf(false) },
     projects: List<Project>,
     pinnedIds: Set<String>,
     onOpenDrawer: () -> Unit,
@@ -2110,8 +2251,8 @@ internal fun ChatsScreen(
     onOpenHomeThread: (com.vayro.app.data.HomeThread) -> Unit = {},
     onDeleteHomeThread: (com.vayro.app.data.HomeThread) -> Unit = {},
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
-    var filterPinned by rememberSaveable { mutableStateOf(false) }
+    var query by queryState
+    var filterPinned by filterPinnedState
     var filterMenuOpen by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf<Set<String>>(emptySet()) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -2259,7 +2400,7 @@ internal fun ChatsScreen(
             } else {
                 LazyColumn(
                     Modifier.weight(1f).fillMaxWidth(),
-                    state = rememberSaveable(saver = LazyListState.Saver, key = "chats-list-state") { LazyListState() },
+                    state = listState,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
                     if (query.isBlank() && homeThreads.isNotEmpty()) {
@@ -2478,6 +2619,9 @@ internal fun CodeHubScreen(
 
 @Composable
 internal fun ClaudeSettingsHome(
+    // v3.2.39 (Scope 2): hoisted by the host so the scroll position
+    // survives every sub-page round trip (About → Back jumped to the top).
+    listState: LazyListState = rememberSaveable(saver = LazyListState.Saver, key = "settings-home-list-state") { LazyListState() },
     accountName: String,
     accountEmail: String?,
     isGuest: Boolean,
@@ -2566,11 +2710,11 @@ internal fun ClaudeSettingsHome(
             }
             SerifText("Settings", fontSize = 21, modifier = Modifier.align(Alignment.Center))
         }
-        // U8b: saveable list state — Back from a settings page returns
-        // to the exact scroll position, not the top.
+        // U8b + v3.2.39 (Scope 2): the list state is the HOST's — Back from
+        // a settings page returns to the exact scroll position, not the top.
         LazyColumn(
             Modifier.fillMaxSize(),
-            state = rememberSaveable(saver = LazyListState.Saver, key = "settings-home-list-state") { LazyListState() },
+            state = listState,
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -2881,25 +3025,40 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
     var showLanguagePopup by remember { mutableStateOf(false) }
     var showPacePopup by remember { mutableStateOf(false) }
 
+    // v3.2.39 (Scope 4): cards are DISTINCT real voices only — deduped by
+    // the system voice name (the identity that is stored and applied), so
+    // two entries that would speak with the same voice can never appear
+    // as two cards. A phone with 2 real voices honestly shows 2 cards.
     val cards = remember(allVoices) {
-        val english = allVoices.filter { it.locale?.language == "en" }
-        val pool = if (english.size >= 3) english else allVoices
-        pool.sortedWith(
-            compareByDescending<Voice> { it.quality }
-                .thenByDescending { if (it.isNetworkConnectionRequired) 1 else 0 },
-        ).take(6)
+        val bestByName = allVoices.groupBy { it.name }.mapValues { (_, sameName) ->
+            sameName.maxWithOrNull(
+                compareBy<Voice> { it.quality }
+                    .thenBy { if (it.isNetworkConnectionRequired) 1 else 0 },
+            ) ?: sameName.first()
+        }
+        com.vayro.app.voice.pickVoiceCards(
+            bestByName.values.map { v ->
+                com.vayro.app.voice.VoiceCardInfo(
+                    name = v.name,
+                    language = v.locale?.language,
+                    quality = v.quality,
+                    networkRequired = v.isNetworkConnectionRequired,
+                )
+            },
+        ).mapNotNull { bestByName[it.name] }
     }
     val selectedVoice = remember(cards, allVoices, selectedVoiceName) {
         allVoices.firstOrNull { it.name == selectedVoiceName } ?: cards.firstOrNull()
     }
 
-    fun previewVoice(voice: Voice) {
-        if (!ttsReady) return
-        runCatching {
-            tts.voice = voice
-            tts.setSpeechRate(pace)
-            tts.speak("Hi, I'm your Kodex voice. Ask me anything.", TextToSpeech.QUEUE_FLUSH, null, "voice-preview")
-        }
+    fun previewSelectedVoice() {
+        // v3.2.39 (Scope 4): a card's preview speaks through
+        // ReadAloudPlayer — the SAME path Listen and voice calls use —
+        // with the selection the tap just saved. (It used to speak through
+        // this screen's private TTS engine, a second path that could sound
+        // right here while Listen spoke differently.)
+        ReadAloudPlayer.stop()
+        ReadAloudPlayer.toggle(context, "kodex-voice-test", "Hi, I'm your Kodex voice. Ask me anything.")
     }
 
     fun selectVoice(voice: Voice, preview: Boolean) {
@@ -2909,7 +3068,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
             .putString(VOICE_KEY_NAME, voice.name)
             .putString(VOICE_KEY_SOURCE, "device")
             .apply()
-        if (preview) previewVoice(voice)
+        if (preview) previewSelectedVoice()
     }
 
     if (showLanguagePopup && allVoices.isEmpty()) {
@@ -2955,7 +3114,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                 val rate = key.toFloatOrNull() ?: 1.0f
                 pace = rate
                 prefs.edit().putFloat(VOICE_KEY_PACE, rate).apply()
-                selectedVoice?.let { previewVoice(it) }
+                selectedVoice?.let { previewSelectedVoice() }
             },
             onDismiss = { showPacePopup = false },
         )
@@ -3034,6 +3193,16 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                                     Text(
                                         voice.locale?.getDisplayName(java.util.Locale.ENGLISH) ?: "Voice",
                                         fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    // v3.2.39 (Scope 4): the REAL system
+                                    // name of this voice, under the
+                                    // friendly label — never hidden.
+                                    Text(
+                                        voice.name,
+                                        fontSize = 10.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -3176,6 +3345,21 @@ private fun ElevenLabsSelectionCard(voiceIdMasked: String, selected: Boolean, on
 }
 
 @Composable
+/**
+ * v3.2.39 (Scope 3): the human part of an ElevenLabs error body —
+ * {"detail":{"message":"…"}} or {"detail":"…"} — mirroring the extraction
+ * ReadAloudPlayer does for playback failures.
+ */
+private fun elevenLabsErrorDetail(body: String): String =
+    runCatching {
+        val detail = org.json.JSONObject(body).opt("detail")
+        when (detail) {
+            is org.json.JSONObject -> detail.optString("message").ifBlank { detail.toString() }
+            is String -> detail
+            else -> body.take(200)
+        }
+    }.getOrDefault(body.take(200)).ifBlank { "no details" }
+
 private fun ElevenLabsVoiceCard(onConnectionChanged: () -> Unit = {}) {
     val context = LocalContext.current
     val vault = remember { ApiKeyVault(context) }
@@ -3183,11 +3367,81 @@ private fun ElevenLabsVoiceCard(onConnectionChanged: () -> Unit = {}) {
     var voiceId by remember { mutableStateOf(vault.get("elevenlabs_voice") ?: "") }
     var hasKey by remember { mutableStateOf(vault.get("elevenlabs") != null) }
     var status by remember { mutableStateOf<String?>(null) }
+    // v3.2.39 (Scope 3): pick the voice from the user's OWN ElevenLabs
+    // account instead of hunting for an ID to paste.
+    val scope = rememberCoroutineScope()
+    var voicesLoading by remember { mutableStateOf(false) }
+    var voiceChoices by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
+    var voicesError by remember { mutableStateOf<String?>(null) }
+
+    fun loadMyVoices() {
+        val key = vault.get("elevenlabs") ?: run {
+            voicesError = "Save your ElevenLabs API key first, then load your voices."
+            return
+        }
+        voicesLoading = true
+        voicesError = null
+        scope.launch {
+            val result = runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val conn = (java.net.URL("https://api.elevenlabs.io/v1/voices").openConnection() as java.net.HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        setRequestProperty("xi-api-key", key)
+                        connectTimeout = 15000
+                        readTimeout = 15000
+                    }
+                    try {
+                        val code = conn.responseCode
+                        val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                            ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                        if (code !in 200..299) {
+                            // The real reason, not a guess — the same
+                            // detail extraction the player uses.
+                            throw IllegalStateException("HTTP $code — " + elevenLabsErrorDetail(body))
+                        }
+                        val voices = org.json.JSONObject(body).optJSONArray("voices")
+                            ?: throw IllegalStateException("ElevenLabs sent an unexpected reply (no voices list).")
+                        buildList {
+                            for (i in 0 until voices.length()) {
+                                val v = voices.optJSONObject(i) ?: continue
+                                val id = v.optString("voice_id")
+                                val name = v.optString("name")
+                                if (id.isBlank() || name.isBlank()) continue
+                                val category = when (v.optString("category").lowercase()) {
+                                    "premade" -> "Premade"
+                                    "generated" -> "Designed"
+                                    "cloned" -> "Cloned"
+                                    "professional" -> "Professional"
+                                    else -> v.optString("category")
+                                        .replaceFirstChar { it.uppercase() }
+                                        .ifBlank { "Voice" }
+                                }
+                                add("$name · $category" to id)
+                            }
+                        }
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
+            }
+            voicesLoading = false
+            result.onSuccess { list ->
+                if (list.isEmpty()) {
+                    voicesError = "Your ElevenLabs account has no voices yet. Add one in the ElevenLabs app or website, then try again."
+                } else {
+                    voiceChoices = list
+                }
+            }.onFailure { e ->
+                voicesError = e.message ?: "Could not load your voices. Check your connection and try again."
+            }
+        }
+    }
+
     ShellCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Premium voice — ElevenLabs", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Optional: paste your own ElevenLabs API key and a Voice ID. Saving adds an ElevenLabs card to the Active voice row above — tap it there to make it the voice Kodex speaks with. Both are stored encrypted on this device only and are never logged or shared.",
+                "Optional: paste your own ElevenLabs API key, then paste a Voice ID — or pick one of your own voices below. Saving adds an ElevenLabs card to the Active voice row above — tap it there to make it the voice Kodex speaks with. Both are stored encrypted on this device only and are never logged or shared.",
                 fontSize = 12.5.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -3210,6 +3464,56 @@ private fun ElevenLabsVoiceCard(onConnectionChanged: () -> Unit = {}) {
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
             )
+            // v3.2.39 (Scope 3): …or pick one of your own voices — the list
+            // comes from YOUR account, so every entry is a voice your plan
+            // can actually use.
+            if (voicesLoading) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ThinkingOrb(Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Loading your voices…",
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { loadMyVoices() },
+                    enabled = hasKey,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Choose from my voices")
+                }
+            }
+            if (!hasKey) {
+                Text(
+                    "Save your API key first — then you can pick one of your own voices here.",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            voicesError?.let {
+                Text(it, fontSize = 11.5.sp, color = MaterialTheme.colorScheme.error)
+            }
+            voiceChoices?.let { choices ->
+                ShellRadioPopup(
+                    title = "Your ElevenLabs voices",
+                    options = choices.map { (label, id) -> Triple(null, label, id) },
+                    selectedKey = voiceId,
+                    onSelect = { id ->
+                        voiceChoices = null
+                        // Fills the field AND saves — the same vault
+                        // write a manual paste + Save performs.
+                        voiceId = id
+                        vault.put("elevenlabs_voice", id)
+                        status = "Voice saved: ${choices.firstOrNull { it.second == id }?.first ?: id}. Tap the ElevenLabs card in Active voice above to speak with this voice."
+                        onConnectionChanged()
+                    },
+                    onDismiss = { voiceChoices = null },
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = {

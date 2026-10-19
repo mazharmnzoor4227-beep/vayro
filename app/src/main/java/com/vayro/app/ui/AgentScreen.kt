@@ -217,6 +217,10 @@ fun AgentScreen(
     onClearGeminiApiKey: () -> Unit = {},
     onSetGeminiApiModel: (String) -> Unit = {},
     teamOrchestrator: AgentTeamOrchestrator? = null,
+    // v3.2.39 (Scope 2): hoisted catalog scroll state (host-owned). The
+    // catalog list used to get a fresh default state on every visit, so
+    // it always opened at the top.
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
 ) {
     LaunchedEffect(Unit) { onRefreshInstalledAgents() }
     val scope = rememberCoroutineScope()
@@ -885,6 +889,7 @@ fun AgentScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .imePadding(),
+            state = listState,
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
