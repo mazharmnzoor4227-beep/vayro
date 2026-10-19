@@ -145,6 +145,11 @@ class McpServerSession(
     // v3.2.38 (Part Q): the FIRST start downloads the server package
     // (npx -y / uvx) — 15s was never enough on a phone connection.
     private val startTimeoutMs: Long = 120_000,
+    // v3.2.40 (Scope C): while a first start is still DOWNLOADING (the
+    // guest's stderr is growing, no stdout yet), the handshake deadline
+    // keeps extending — a slow download is progress, not a hang. This
+    // is the absolute cap on the whole start so nothing waits forever.
+    private val maxStartTotalMs: Long = 300_000,
     private val maxRestarts: Int = 3,
     private val restartBackoffMs: Long = 2_000,
     private val clock: () -> Long = System::currentTimeMillis
@@ -157,6 +162,23 @@ class McpServerSession(
     @Volatile
     var lastFailureReason: String? = null
         private set
+
+    /**
+     * v3.2.40 (Scope C): the live start stage, for the UI's busy label —
+     * "Starting …" while spawning, "Downloading packages …" while a
+     * first start pulls its package, "… waiting for the server to
+     * answer" during the handshake itself. Null when not starting.
+     */
+    @Volatile
+    var startupStageLabel: String? = null
+        private set
+
+    /** The stage a start is in / died in: spawn | download | handshake. */
+    @Volatile
+    private var startStage: String = "spawn"
+
+    /** Total stderr lines harvested this start (download-progress signal). */
+    private var stderrLinesSeen = 0
 
     private val diagBuffer = ArrayDeque<String>()
 
@@ -175,6 +197,9 @@ class McpServerSession(
         synchronized(lock) {
             if (state == McpSessionState.RUNNING || state == McpSessionState.INITIALIZING) return true
             state = McpSessionState.STARTING
+            startStage = "spawn"
+            stderrLinesSeen = 0
+            startupStageLabel = "Starting ${server.name} — launching inside the Linux runtime…"
             return try {
                 process = processFactory.start(
                     server.command,
@@ -183,23 +208,37 @@ class McpServerSession(
                     server.workingDir?.let { File(it) }
                 )
                 state = McpSessionState.INITIALIZING
+                startStage = "handshake"
+                startupStageLabel = "Starting ${server.name} — waiting for the server to answer…"
                 if (performHandshake()) {
                     state = McpSessionState.RUNNING
                     lastFailureReason = null
+                    startupStageLabel = null
                     true
                 } else {
                     val proc = process
                     val reason = when {
-                        proc == null -> "server process missing during startup"
-                        !proc.isAlive() -> "server exited during startup" +
+                        proc == null -> "spawn: server process missing during startup"
+                        !proc.isAlive() -> "$startStage: server exited during startup" +
                             (proc.exitCode()?.let { " (exit code $it)" } ?: "")
-                        else -> "server did not answer the initialize handshake within ${startTimeoutMs / 1000}s"
+                        startStage == "download" ->
+                            "download: the server was still downloading its package when the " +
+                                "${maxStartTotalMs / 1000}s start limit hit — the download resumes " +
+                                "from cache on the next try, so a retry is faster"
+                        else -> "handshake: server did not answer the initialize handshake " +
+                            "within ${startTimeoutMs / 1000}s"
                     }
                     fail(reason)
                     false
                 }
             } catch (t: Throwable) {
-                fail("process start failed: ${t.message}")
+                // Factory failures arrive stage-prefixed already
+                // (probe: / spawn:); anything else is a spawn failure.
+                if (t is McpConfigurationException) {
+                    fail(t.message ?: "spawn: process start failed")
+                } else {
+                    fail("spawn: process start failed: ${t.message}")
+                }
                 false
             }
         }
@@ -280,6 +319,7 @@ class McpServerSession(
         val lines = process?.drainStderr().orEmpty()
         if (lines.isEmpty()) return
         synchronized(lock) {
+            stderrLinesSeen += lines.size
             lines.forEach { diagBuffer.addLast(it) }
             while (diagBuffer.size > 50) diagBuffer.removeFirst()
         }
@@ -321,13 +361,39 @@ class McpServerSession(
     private fun performHandshake(): Boolean {
         val proc = process ?: return false
         val req = McpProtocol.initializeRequest("vayro", "3.0")
-        val deadline = clock() + startTimeoutMs
+        val startedAt = clock()
+        var deadline = startedAt + startTimeoutMs
+        val hardCap = startedAt + maxStartTotalMs
         proc.writeLine(req.toString())
+        var sawStdout = false
         while (true) {
             val remaining = deadline - clock()
             if (remaining <= 0) return false
-            val line = proc.readLine(remaining) ?: return false
+            // Poll in short slices so a dead process fails fast and a
+            // downloading one is recognised while it works.
+            val line = proc.readLine(minOf(remaining, 1_000L))
+            if (line == null) {
+                if (!proc.isAlive) return false
+                // v3.2.40 (Scope C): no stdout yet, but the guest's
+                // stderr is GROWING — that is a first start downloading
+                // its package (uv / pip / npm all report to stderr).
+                // Downloading is progress: name the stage for the UI and
+                // push the deadline out, bounded by the total cap.
+                val before = stderrLinesSeen
+                harvestDiagnostics()
+                if (!sawStdout && stderrLinesSeen > before) {
+                    startStage = "download"
+                    startupStageLabel = "Downloading packages for ${server.name} (first start)…"
+                    deadline = minOf(clock() + startTimeoutMs, hardCap)
+                }
+                continue
+            }
             if (line.isBlank()) continue
+            sawStdout = true
+            if (startStage == "download") {
+                startStage = "handshake"
+                startupStageLabel = "Starting ${server.name} — waiting for the server to answer…"
+            }
             val json = runCatching { JSONObject(line) }.getOrNull() ?: continue
             if (json.isNull("id")) continue // notification; keep waiting
             if (json.opt("id").toString() != req.opt("id").toString()) continue
@@ -346,6 +412,7 @@ class McpServerSession(
         // "could not be started: " with an EMPTY reason — for every server.
         harvestDiagnostics()
         lastFailureReason = reason
+        startupStageLabel = null
         killProcess()
         state = McpSessionState.FAILED
     }

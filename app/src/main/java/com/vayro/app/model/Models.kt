@@ -561,4 +561,8 @@ data class ActivityItem(
     val detail: String,
     val isComplete: Boolean = true,
     val isCommand: Boolean = false,
+    // v3.2.40 (Scope D): when this step STARTED (epoch millis; 0 = not
+    // tracked, e.g. restored history). The Activity sheet's running row
+    // counts its live elapsed from here.
+    val startedAtMillis: Long = 0L,
 )

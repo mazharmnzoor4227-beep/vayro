@@ -203,4 +203,143 @@ class GuestMcpTransportTest {
         assertTrue(mcpRunnerComponent("npx")!!.contains("Node.js"))
         assertNull(mcpRunnerComponent("ruby"))
     }
+
+    // ------------------------------------------------------------------
+    // v3.2.40 (Scope C): device-failure hardening
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `spawn environment forces unbuffered python output`() {
+        // The device root cause: a Python server whose stdout is a file
+        // block-buffers its initialize answer past the handshake
+        // deadline. The spawn env must force unbuffered output even
+        // when the server's own config says otherwise.
+        val env = mcpSpawnEnvironment(mapOf("FOO" to "bar", "PYTHONUNBUFFERED" to "0"))
+        assertEquals("1", env["PYTHONUNBUFFERED"])
+        assertEquals("utf-8", env["PYTHONIOENCODING"])
+        assertEquals("bar", env["FOO"])
+    }
+
+    @Test
+    fun `guest wrapper and probe are POSIX sh`() {
+        for (script in listOf(MCP_GUEST_WRAPPER_SCRIPT, MCP_PROBE_SCRIPT)) {
+            assertFalse("bashism [[ in: $script", script.contains("[["))
+            assertFalse("bashism ]] in: $script", script.contains("]]"))
+            assertFalse("bashism function in: $script", script.contains("function "))
+            assertFalse("bashism <<< in: $script", script.contains("<<<"))
+        }
+        // stderr is redirected BEFORE the server execs, so the protocol
+        // stream can never carry stderr chatter.
+        val redirectAt = MCP_GUEST_WRAPPER_SCRIPT.indexOf("exec 2>")
+        val serverAt = MCP_GUEST_WRAPPER_SCRIPT.indexOf("exec \"\$prog\"")
+        assertTrue(redirectAt >= 0 && serverAt > redirectAt)
+        // The probe sees a bootstrapped runner where the wrapper does.
+        assertTrue(MCP_PROBE_SCRIPT.contains("\$HOME/.local/bin/"))
+    }
+
+    /** A scripted process: silent stdout for a while, stderr that grows (a download), then the answer. */
+    private class ScriptedProcess(
+        private val nullReadsBeforeAnswer: Int,
+        private val stderrLines: List<String>,
+        private val alive: Boolean = true,
+    ) : McpManagedProcess {
+        private var reads = 0
+        private var stderrIndex = 0
+
+        @Volatile
+        private var initializeRequest: JSONObject? = null
+
+        override fun writeLine(line: String) {
+            val json = runCatching { JSONObject(line) }.getOrNull() ?: return
+            if (json.optString("method") == "initialize") initializeRequest = json
+        }
+
+        override fun readLine(timeoutMs: Long): String? {
+            reads++
+            if (reads <= nullReadsBeforeAnswer) {
+                Thread.sleep(25)
+                return null
+            }
+            val req = initializeRequest ?: return null
+            return testRpcOk(
+                req,
+                JSONObject()
+                    .put("protocolVersion", McpProtocolVersion.PROTOCOL_VERSION)
+                    .put("capabilities", JSONObject())
+                    .put("serverInfo", JSONObject().put("name", "fake").put("version", "0.1")),
+            )
+        }
+
+        override fun drainStderr(): List<String> =
+            if (stderrIndex < stderrLines.size) listOf(stderrLines[stderrIndex++]) else emptyList()
+
+        override fun isAlive(): Boolean = alive
+        override fun destroyGracefully(graceMs: Long): Boolean = true
+        override fun destroyForcibly() = Unit
+        override fun exitCode(): Int? = if (alive) null else 1
+    }
+
+    private fun factoryFor(process: McpManagedProcess): McpProcessFactory = object : McpProcessFactory {
+        override fun start(
+            command: String,
+            args: List<String>,
+            env: Map<String, String>,
+            workingDir: File?,
+        ): McpManagedProcess = process
+    }
+
+    @Test
+    fun `handshake deadline extends while the server downloads`() {
+        val stderr = (1..40).map { "Downloading package chunk $it" }
+        val process = ScriptedProcess(nullReadsBeforeAnswer = 30, stderrLines = stderr)
+        val session = McpServerSession(
+            testStdioServer(),
+            factoryFor(process),
+            ioTimeoutMs = 5_000,
+            startTimeoutMs = 300,
+            maxStartTotalMs = 30_000,
+            restartBackoffMs = 0,
+        )
+        val labels = mutableSetOf<String>()
+        val worker = Thread {
+            val started = session.start(emptyMap())
+            synchronized(labels) { labels += "result:$started" }
+        }
+        worker.start()
+        // 30 silent reads x 25ms ≈ 750ms — far past the 300ms handshake
+        // budget. Only the download extensions can save this start, and
+        // the busy label must say "Downloading" while it happens.
+        val deadline = System.currentTimeMillis() + 10_000
+        while (worker.isAlive && System.currentTimeMillis() < deadline) {
+            session.startupStageLabel?.let { synchronized(labels) { labels += it } }
+            Thread.sleep(10)
+        }
+        worker.join(10_000)
+        assertTrue("start must succeed on download progress", "result:true" in labels)
+        assertEquals(McpSessionState.RUNNING, session.state)
+        assertTrue(
+            "the busy stage must name the download",
+            labels.any { it.contains("Downloading") },
+        )
+        session.stop()
+    }
+
+    @Test
+    fun `a server that dies mid start fails fast with its stage named`() {
+        val process = ScriptedProcess(nullReadsBeforeAnswer = Int.MAX_VALUE, stderrLines = emptyList(), alive = false)
+        val session = McpServerSession(
+            testStdioServer(),
+            factoryFor(process),
+            ioTimeoutMs = 5_000,
+            startTimeoutMs = 30_000,
+            restartBackoffMs = 0,
+        )
+        val began = System.currentTimeMillis()
+        assertFalse(session.start(emptyMap()))
+        val elapsed = System.currentTimeMillis() - began
+        assertTrue("a dead process must not burn the handshake budget (took ${elapsed}ms)", elapsed < 10_000)
+        val reason = session.lastFailureReason.orEmpty()
+        assertTrue("reason must name the stage: $reason", reason.startsWith("handshake:"))
+        assertTrue("reason must say the server exited: $reason", reason.contains("exited"))
+    }
 }

@@ -9,6 +9,7 @@ import com.vayro.app.mcp.McpRegistry
 import com.vayro.app.mcp.McpServerInfo
 import com.vayro.app.mcp.McpToolRegistry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -109,10 +110,27 @@ class McpCoordinator(
             // v3.2.38 (Part Q): the busy message tells the truth about a
             // first start — the package downloads before the handshake.
             host.updateState { it.copy(mcpBusy = true, mcpSelectedServerId = server.id, mcpMessage = "Starting ${server.name}... a first start downloads its package, so this can take a minute.") }
+            // v3.2.40 (Scope C): mirror the session's live start stage
+            // into the busy banner — "Downloading packages…" while the
+            // guest pulls the package, so the wait reads as progress.
+            val stageJob = host.scope.launch {
+                while (true) {
+                    delay(700)
+                    val label = toolRegistry.startupStageFor(server.id) ?: continue
+                    host.updateState {
+                        if (it.mcpBusy && it.mcpSelectedServerId == server.id) {
+                            it.copy(mcpMessage = label)
+                        } else {
+                            it
+                        }
+                    }
+                }
+            }
             // Registry discovery does blocking process I/O: keep it off Main.
             val res = withContext(Dispatchers.IO) {
                 runCatching { toolRegistry.discover(server.id, host.state().activeProject?.id) }
             }
+            stageJob.cancel()
             res.onSuccess { discovered ->
                 val tools = discovered.map { tool ->
                     com.vayro.app.runtime.McpToolDefinition(

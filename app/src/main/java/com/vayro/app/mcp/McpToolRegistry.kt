@@ -93,6 +93,15 @@ class McpToolRegistry(
         }
     }
 
+    /**
+     * v3.2.40 (Scope C): the live start stage of a server whose start is
+     * in flight ("Starting …" / "Downloading packages …"), or null when
+     * no start is running — the UI's busy banner shows it verbatim so a
+     * first start's download phase is never mistaken for a hang.
+     */
+    fun startupStageFor(serverId: String): String? =
+        synchronized(lock) { sessions[serverId]?.startupStageLabel }
+
     private fun auditServerSpawn(server: McpServerInfo, projectId: String?) {
         val firstCustomSpawn = !server.isBuiltIn && !registry.hasSpawnedBefore(server.id)
         if (firstCustomSpawn) registry.markSpawned(server.id)

@@ -20,11 +20,11 @@ import java.util.concurrent.TimeUnit
  *
  * The native spawn merges the child's stdout and stderr into one output
  * file, which would corrupt the NDJSON stream (stderr chatter is not JSON).
- * So the guest command is a small bash wrapper that redirects the SERVER's
- * stderr to its own log file inside the guest workspace BEFORE exec'ing the
- * server. After that redirect, the native output file carries the server's
- * stdout ONLY — pure NDJSON — and stderr is tailed separately (host side,
- * through the workspace bind) into the diagnostics ring buffer.
+ * So the guest command is a small POSIX sh wrapper that redirects the
+ * SERVER's stderr to its own log file inside the guest workspace BEFORE
+ * exec'ing the server. After that redirect, the native output file carries
+ * the server's stdout ONLY — pure NDJSON — and stderr is tailed separately
+ * (host side, through the workspace bind) into the diagnostics ring buffer.
  *
  * stdin stays the native spawn's live pipe, so writes are real-time.
  *
@@ -39,6 +39,27 @@ import java.util.concurrent.TimeUnit
 private const val TAIL_POLL_MS = 40L
 private const val STDERR_RING_CAPACITY = 200
 private const val PROBE_TIMEOUT_MS = 45_000L
+
+/**
+ * v3.2.40 (Scope C): the environment every guest MCP server spawns with.
+ *
+ * PYTHONUNBUFFERED is FORCED, and this is the device root cause it fixes:
+ * the guest's stdout is redirected to a plain FILE (the native spawn's
+ * output file), and a Python process whose stdout is a file BLOCK-buffers
+ * it — the MCP initialize answer (a few hundred bytes) sat in the
+ * server's stdio buffer, never reached the tail reader, and discovery
+ * died by timeout even though the server was running fine. Node's stdout
+ * writes are unbuffered syscalls, so Node servers never hit this; there
+ * is no Node equivalent to set. The value is forced (not defaulted) on
+ * purpose: a server config that set it to 0 would silently re-break the
+ * transport. Pure — unit-tested.
+ */
+internal fun mcpSpawnEnvironment(env: Map<String, String>): Map<String, String> =
+    buildMap {
+        putAll(env)
+        put("PYTHONUNBUFFERED", "1")
+        put("PYTHONIOENCODING", "utf-8")
+    }
 
 /** Which runtime component a missing MCP runner belongs to, for messages. */
 internal fun mcpRunnerComponent(program: String): String? = when (program) {
@@ -250,7 +271,7 @@ class GuestMcpProcessFactory(
     ): McpManagedProcess {
         if (!installer.isInstalled()) {
             throw McpConfigurationException(
-                "The Linux runtime is not set up yet, so MCP servers cannot " +
+                "spawn: The Linux runtime is not set up yet, so MCP servers cannot " +
                     "start. Finish the runtime setup (reopen Kodex and complete " +
                     "setup, or Settings → Linux runtime), then try again."
             )
@@ -259,7 +280,7 @@ class GuestMcpProcessFactory(
         require(argv.isNotEmpty()) { "MCP server has an empty command" }
         val program = argv.first().substringAfterLast('/')
 
-        checkRunner(program)
+        checkRunner(program, env)
 
         val runtime = installer.installedRuntime()
         val stamp = System.nanoTime().toString()
@@ -269,9 +290,9 @@ class GuestMcpProcessFactory(
         val stdoutFile = File(cacheDir, "mcp-stdout-$stamp.log")
 
         val guestCommand = buildList {
-            add("/bin/bash")
+            add("/bin/sh")
             add("-c")
-            add(WRAPPER_SCRIPT)
+            add(MCP_GUEST_WRAPPER_SCRIPT)
             add("kodex-mcp")
             add(guestStderrPath)
             addAll(argv)
@@ -281,14 +302,14 @@ class GuestMcpProcessFactory(
                 proot = runtime.proot,
                 rootfs = runtime.rootfs,
                 workspace = workspaceDir,
-                environment = env,
+                environment = mcpSpawnEnvironment(env),
                 guestCommand = guestCommand,
                 guestWorkspacePath = "/workspace",
                 outputFile = stdoutFile,
             )
         } catch (t: Throwable) {
             throw McpConfigurationException(
-                "The server process could not be launched inside the Linux " +
+                "spawn: The server process could not be launched inside the Linux " +
                     "runtime: ${t.message ?: "unknown launch error"}"
             )
         }
@@ -300,32 +321,38 @@ class GuestMcpProcessFactory(
      * runner is missing from the guest. A probe boot costs a second or two;
      * confirmed runners are cached for the life of the app process.
      */
-    private fun checkRunner(program: String) {
+    private fun checkRunner(program: String, env: Map<String, String>) {
         if (program in confirmedPresent) return
-        val probe = probeGuest(program) ?: return // probe failed: let the real spawn speak
+        val probe = probeGuest(program, env) ?: return // probe failed: let the real spawn speak
         val problem = mcpRunnerProblem(
             program = program,
             programFound = probe[program] == true,
             hasPython = probe["python3"] == true,
             hasNode = probe["node"] == true,
         )
-        if (problem != null) throw McpConfigurationException(problem)
+        if (problem != null) throw McpConfigurationException("probe: $problem")
         if (probe[program] == true) confirmedPresent.add(program)
     }
 
-    /** Runs `command -v` for the program + python3 + node inside the guest. */
-    private fun probeGuest(program: String): Map<String, Boolean>? {
+    /**
+     * Runs `command -v` for the program + python3 + node inside the guest.
+     * v3.2.40 (Scope C): the probe now runs with the SAME environment map
+     * the real spawn will get (probe/spawn parity — a PATH or HOME set in
+     * the server's own config can no longer make the probe answer about
+     * a different guest than the one that spawns), and it also counts a
+     * previously bootstrapped `$HOME/.local/bin/<program>` as found,
+     * exactly where the wrapper looks for it.
+     */
+    private fun probeGuest(program: String, env: Map<String, String>): Map<String, Boolean>? {
         val runtime = runCatching { installer.installedRuntime() }.getOrNull() ?: return null
         val outFile = File(cacheDir, "mcp-probe-${System.nanoTime()}.log")
-        val script = "for p in \"\$1\" python3 node; do " +
-            "if command -v \"\$p\" >/dev/null 2>&1; then echo \"HAVE \$p\"; else echo \"MISS \$p\"; fi; done"
         val process = runCatching {
             installer.process(
                 proot = runtime.proot,
                 rootfs = runtime.rootfs,
                 workspace = workspaceDir,
-                environment = emptyMap(),
-                guestCommand = listOf("/bin/bash", "-c", script, "kodex-mcp-probe", program),
+                environment = mcpSpawnEnvironment(env),
+                guestCommand = listOf("/bin/sh", "-c", MCP_PROBE_SCRIPT, "kodex-mcp-probe", program),
                 guestWorkspacePath = "/workspace",
                 outputFile = outFile,
             )
@@ -353,34 +380,44 @@ class GuestMcpProcessFactory(
         return found
     }
 
-    private companion object {
-        /**
-         * Guest wrapper (bash). Arguments after the script name are
-         * <stderr-path> <program> [args...]. stderr is redirected to its own
-         * file BEFORE anything else runs, so the spawn's output file carries
-         * stdout only. All wrapper chatter goes to stderr, never stdout.
-         * ($ signs are escaped for Kotlin string templates.)
-         */
-        val WRAPPER_SCRIPT: String =
-            "err=\"\$1\"; shift\n" +
-            "mkdir -p \"\$(dirname \"\$err\")\"\n" +
-            ": > \"\$err\"\n" +
-            "exec 2>\"\$err\"\n" +
-            "prog=\"\$1\"; shift\n" +
-            "if [ \"\$prog\" = \"uvx\" ] && ! command -v uvx >/dev/null 2>&1; then\n" +
-            "  if command -v uv >/dev/null 2>&1; then\n" +
-            "    exec uv tool run \"\$@\"\n" +
-            "  fi\n" +
-            "  if command -v python3 >/dev/null 2>&1; then\n" +
-            "    if [ ! -x \"\$HOME/.local/bin/uvx\" ]; then\n" +
-            "      echo \"Kodex: installing the uv tool runner (one-time setup)...\"\n" +
-            "      python3 -m pip install --user --disable-pip-version-check uv >>\"\$err\" 2>&1 || { echo \"Kodex: could not install the uv tool runner. Check the connection and try again.\"; exit 127; }\n" +
-            "    fi\n" +
-            "    exec \"\$HOME/.local/bin/uvx\" \"\$@\"\n" +
-            "  fi\n" +
-            "  echo \"Kodex: 'uvx' is not available inside the Linux runtime.\"\n" +
-            "  exit 127\n" +
-            "fi\n" +
-            "exec \"\$prog\" \"\$@\""
-    }
 }
+
+/**
+ * Guest wrapper (POSIX sh — v3.2.40 Scope C: it runs under the guest's
+ * /bin/sh, so it must never grow a bashism). Arguments after the script
+ * name are <stderr-path> <program> [args...]. stderr is redirected to
+ * its own file BEFORE anything else runs, so the spawn's output file
+ * carries stdout only. All wrapper chatter goes to stderr, never
+ * stdout. ($ signs are escaped for Kotlin string templates.)
+ */
+internal val MCP_GUEST_WRAPPER_SCRIPT: String =
+"err=\"\$1\"; shift\n" +
+        "mkdir -p \"\$(dirname \"\$err\")\"\n" +
+        ": > \"\$err\"\n" +
+        "exec 2>\"\$err\"\n" +
+        "prog=\"\$1\"; shift\n" +
+        "if [ \"\$prog\" = \"uvx\" ] && ! command -v uvx >/dev/null 2>&1; then\n" +
+        "  if command -v uv >/dev/null 2>&1; then\n" +
+        "    exec uv tool run \"\$@\"\n" +
+        "  fi\n" +
+        "  if command -v python3 >/dev/null 2>&1; then\n" +
+        "    if [ ! -x \"\$HOME/.local/bin/uvx\" ]; then\n" +
+        "      echo \"Kodex: installing the uv tool runner (one-time setup)...\"\n" +
+        "      python3 -m pip install --user --disable-pip-version-check uv >>\"\$err\" 2>&1 || { echo \"Kodex: could not install the uv tool runner. Check the connection and try again.\"; exit 127; }\n" +
+        "    fi\n" +
+        "    exec \"\$HOME/.local/bin/uvx\" \"\$@\"\n" +
+        "  fi\n" +
+        "  echo \"Kodex: 'uvx' is not available inside the Linux runtime.\"\n" +
+        "  exit 127\n" +
+        "fi\n" +
+        "exec \"\$prog\" \"\$@\""
+
+/**
+ * The runner probe (POSIX sh): prints HAVE/MISS for the requested
+ * program plus python3 and node. A program also counts as found when a
+ * previous bootstrap left it executable at $HOME/.local/bin/<program> —
+ * the exact fallback the wrapper itself uses for uvx.
+ */
+internal val MCP_PROBE_SCRIPT: String =
+    "for p in \"\$1\" python3 node; do " +
+    "if command -v \"\$p\" >/dev/null 2>&1 || [ -x \"\$HOME/.local/bin/\$p\" ]; then echo \"HAVE \$p\"; else echo \"MISS \$p\"; fi; done"
