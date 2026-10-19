@@ -148,6 +148,34 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getBoolean("haptics_enabled", true)
         set(value) { preferences.edit().putBoolean("haptics_enabled", value).commit() }
 
+    /** v3.2.37 (F2): ProviderKind name powering home chat replies; blank = first connected catalog provider. */
+    var chatProviderKind: String
+        get() = preferences.getString("chat_provider_kind", "") ?: ""
+        set(value) { preferences.edit().putString("chat_provider_kind", value).commit() }
+
+    /** v3.2.37 (F): the home thread currently open on the chat home. */
+    var activeHomeThreadId: String
+        get() = preferences.getString("active_home_thread_id", "") ?: ""
+        set(value) { preferences.edit().putString("active_home_thread_id", value).commit() }
+
+    /** v3.2.37 (C): per-provider "Auto-switch keys" toggle; default ON. */
+    fun autoSwitchKeys(providerId: String): Boolean =
+        preferences.getBoolean("autoswitch_" + providerId, true)
+
+    fun setAutoSwitchKeys(providerId: String, enabled: Boolean) {
+        preferences.edit().putBoolean("autoswitch_" + providerId, enabled).commit()
+    }
+
+    /** v3.2.37 (G): "Keep working in background" — gates the run foreground service. Default ON. */
+    var keepWorkingInBackground: Boolean
+        get() = preferences.getBoolean("keep_working_background", true)
+        set(value) { preferences.edit().putBoolean("keep_working_background", value).commit() }
+
+    /** v3.2.37 (G): the battery-optimization hint is shown once, never nagged. */
+    var batteryHintSeen: Boolean
+        get() = preferences.getBoolean("battery_hint_seen", false)
+        set(value) { preferences.edit().putBoolean("battery_hint_seen", value).commit() }
+
     /** Projects/chats the user pinned in the sidebar or Chats screen. */
     var pinnedProjectIds: Set<String>
         get() = preferences.getStringSet("pinned_project_ids", emptySet()) ?: emptySet()

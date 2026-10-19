@@ -136,6 +136,139 @@ class ProviderApiClient {
         }
     }
 
+    /** One turn of a plain chat conversation for [chatCompletion]. */
+    data class ChatTurn(val role: String, val content: String)
+
+    /**
+     * v3.2.37 (Part F2): one real chat completion against any catalog
+     * provider, in that provider's own wire shape. Returns the reply text;
+     * throws [ChatApiException] carrying the HTTP code so callers can run
+     * key failover (the shared [com.vayro.app.data.ApiKeyFailoverCoordinator]
+     * classifies quota/rate/auth failures from the code + message).
+     */
+    suspend fun chatCompletion(
+        baseUrl: String,
+        model: String,
+        apiKey: String,
+        protocol: ProviderProtocol,
+        turns: List<ChatTurn>,
+        systemPrompt: String? = null,
+        maxTokens: Int = 2048,
+    ): String = withContext(Dispatchers.IO) {
+        if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
+            throw ChatApiException(0, "This provider is not fully set up yet.", null)
+        }
+        val endpoint = messagesEndpoint(baseUrl, protocol)
+        val body = chatBody(model, protocol, turns, systemPrompt, maxTokens)
+        val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 15_000, readTimeoutMs = 90_000)
+        when {
+            response.code in 200..299 -> {
+                val text = parseChatText(response.body, protocol)
+                if (text.isBlank()) throw ChatApiException(0, "The provider replied with an empty message.", null)
+                text
+            }
+            response.code > 0 -> throw ChatApiException(
+                response.code,
+                friendlyHttpError(response.code),
+                providerErrorMessage(response.body),
+            )
+            else -> throw ChatApiException(0, response.error ?: "Network connection failed", null)
+        }
+    }
+
+    private fun chatBody(
+        model: String,
+        protocol: ProviderProtocol,
+        turns: List<ChatTurn>,
+        systemPrompt: String?,
+        maxTokens: Int,
+    ): String = when (protocol) {
+        ProviderProtocol.OPENAI_RESPONSES -> JSONObject()
+            .put("model", model)
+            .put("max_output_tokens", maxTokens)
+            .put(
+                "input",
+                JSONArray().apply {
+                    if (!systemPrompt.isNullOrBlank()) {
+                        put(JSONObject().put("role", "system").put("content", systemPrompt))
+                    }
+                    turns.forEach { turn ->
+                        put(JSONObject().put("role", turn.role).put("content", turn.content))
+                    }
+                },
+            )
+            .toString()
+        ProviderProtocol.OPENAI_CHAT -> JSONObject()
+            .put("model", model)
+            .put("max_tokens", maxTokens)
+            .put(
+                "messages",
+                JSONArray().apply {
+                    if (!systemPrompt.isNullOrBlank()) {
+                        put(JSONObject().put("role", "system").put("content", systemPrompt))
+                    }
+                    turns.forEach { turn ->
+                        put(JSONObject().put("role", turn.role).put("content", turn.content))
+                    }
+                },
+            )
+            .toString()
+        else -> JSONObject()
+            .put("model", model)
+            .put("max_tokens", maxTokens)
+            .apply {
+                if (!systemPrompt.isNullOrBlank()) put("system", systemPrompt)
+                put(
+                    "messages",
+                    JSONArray().apply {
+                        turns.forEach { turn ->
+                            put(JSONObject().put("role", turn.role).put("content", turn.content))
+                        }
+                    },
+                )
+            }
+            .toString()
+    }
+
+    private fun parseChatText(body: String, protocol: ProviderProtocol): String = runCatching {
+        val root = JSONObject(body)
+        when (protocol) {
+            ProviderProtocol.OPENAI_CHAT -> {
+                val message = root.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
+                when (val content = message?.opt("content")) {
+                    is String -> content
+                    is JSONArray -> buildString {
+                        for (i in 0 until content.length()) {
+                            val part = content.optJSONObject(i) ?: continue
+                            append(part.optString("text"))
+                        }
+                    }
+                    else -> ""
+                }
+            }
+            ProviderProtocol.OPENAI_RESPONSES -> {
+                root.optString("output_text").ifBlank {
+                    buildString {
+                        val output = root.optJSONArray("output") ?: JSONArray()
+                        for (i in 0 until output.length()) {
+                            val content = output.optJSONObject(i)?.optJSONArray("content") ?: continue
+                            for (j in 0 until content.length()) {
+                                append(content.optJSONObject(j)?.optString("text").orEmpty())
+                            }
+                        }
+                    }
+                }
+            }
+            else -> buildString {
+                val content = root.optJSONArray("content") ?: JSONArray()
+                for (i in 0 until content.length()) {
+                    val block = content.optJSONObject(i) ?: continue
+                    if (block.optString("type") == "text") append(block.optString("text"))
+                }
+            }
+        }
+    }.getOrDefault("")
+
     private fun request(
         endpoint: String,
         method: String,
@@ -324,6 +457,13 @@ class ProviderApiClient {
         const val MAX_RESPONSE_CHARS = 10 * 1024 * 1024
     }
 }
+
+/** A chat call failed; [httpCode] 0 means the request never got a response. */
+class ChatApiException(
+    val httpCode: Int,
+    message: String,
+    val providerMessage: String? = null,
+) : Exception(message)
 
 object ModelResponseParser {
     fun parse(json: String): List<DiscoveredModel> = runCatching {

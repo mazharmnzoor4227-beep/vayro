@@ -92,12 +92,13 @@ object NotificationCoordinator {
         title: String,
         detail: String,
         failed: Boolean,
+        route: String? = null,
     ): Notification = NotificationCompat.Builder(context, RESULT_CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_notification)
         .setContentTitle(title)
         .setContentText(detail)
         .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
-        .setContentIntent(openAppIntent(context))
+        .setContentIntent(openAppIntent(context, route))
         .setAutoCancel(true)
         .setCategory(if (failed) NotificationCompat.CATEGORY_ERROR else NotificationCompat.CATEGORY_STATUS)
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -127,11 +128,11 @@ object NotificationCoordinator {
         )
     }
 
-    fun postResult(context: Context, title: String, detail: String, failed: Boolean) {
+    fun postResult(context: Context, title: String, detail: String, failed: Boolean, route: String? = null) {
         ensureChannels(context)
         context.getSystemService(NotificationManager::class.java).notify(
             RESULT_NOTIFICATION_ID,
-            result(context, title, detail, failed),
+            result(context, title, detail, failed, route),
         )
     }
 

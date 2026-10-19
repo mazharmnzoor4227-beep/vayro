@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
@@ -202,6 +203,12 @@ fun AgentScreen(
     onRemoveAntigravityAccount: (String) -> Unit = {},
     onToggleAntigravityAutoRoundRobin: (Boolean) -> Unit = {},
     onToggleGeminiApiMode: (Boolean) -> Unit = {},
+    // v3.2.37 (Parts C + F2): API-key catalog wiring.
+    chatProviderKind: ProviderKind? = null,
+    onSelectChatProvider: (ProviderKind) -> Unit = {},
+    autoSwitchFor: (ProviderKind) -> Boolean = { true },
+    onToggleAutoSwitch: (ProviderKind, Boolean) -> Unit = { _, _ -> },
+    keyExhaustedAt: (ProviderKind, String) -> Long? = { _, _ -> null },
     onSaveGeminiApiKey: (String) -> Unit = {},
     onClearGeminiApiKey: () -> Unit = {},
     onSetGeminiApiModel: (String) -> Unit = {},
@@ -1278,6 +1285,26 @@ fun AgentScreen(
                         },
                     )
                 }
+            }
+
+            // ── 2.5 v3.2.37 (Part C): Connect with API key ──
+            item {
+                ApiKeyCatalogSection(
+                    connectedKinds = com.vayro.app.data.ProviderCatalog.chatKinds.filter {
+                        getSavedApiKeys(it).isNotEmpty()
+                    },
+                    chatProviderKind = chatProviderKind,
+                    onSelectChatProvider = onSelectChatProvider,
+                    getSavedApiKeys = getSavedApiKeys,
+                    onAddApiKey = onAddApiKey,
+                    onActivateApiKey = onActivateApiKey,
+                    onRemoveApiKey = onRemoveApiKey,
+                    onSaveProvider = onSaveProvider,
+                    onValidateProvider = onValidateProvider,
+                    autoSwitchFor = autoSwitchFor,
+                    onToggleAutoSwitch = onToggleAutoSwitch,
+                    keyExhaustedAt = keyExhaustedAt,
+                )
             }
 
             // ── 3. Runtime Updates Card (per-tab: only the viewed agent's updates) ──
@@ -2891,4 +2918,372 @@ private fun defaultModelsForProvider(kind: ProviderKind): List<DiscoveredModel> 
     else -> if (kind.defaultModel.isNotBlank()) listOf(
         DiscoveredModel(kind.defaultModel, "${kind.title} Default (${kind.defaultModel})")
     ) else emptyList()
+}
+
+// ---------------------------------------------------------------------------
+// v3.2.37 (Part C + F2): "Connect with API key" catalog.
+//
+// Every row is a real provider in the existing system: connecting writes
+// the key into the encrypted vault pool (same storage the agent provider
+// editor above uses), and the provider becomes selectable for agents and
+// for home chat. Test & Connect runs the same real validation call as the
+// main editor (a minimal chat/messages request). Pakistan availability of
+// every listed provider was verified at build time; NVIDIA NIM is excluded
+// on purpose (Pakistani phone verification fails there).
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun ApiKeyCatalogSection(
+    connectedKinds: List<ProviderKind>,
+    chatProviderKind: ProviderKind?,
+    onSelectChatProvider: (ProviderKind) -> Unit,
+    getSavedApiKeys: (ProviderKind) -> List<ApiKeyInfo>,
+    onAddApiKey: (ProviderKind, String, String) -> List<ApiKeyInfo>,
+    onActivateApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
+    onRemoveApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
+    onSaveProvider: (ProviderProfile, String) -> Unit,
+    onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
+    autoSwitchFor: (ProviderKind) -> Boolean,
+    onToggleAutoSwitch: (ProviderKind, Boolean) -> Unit,
+    keyExhaustedAt: (ProviderKind, String) -> Long?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column {
+            Text(
+                "Connect with API key",
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Add a key once — the provider works for chat and for your agents. Keys are encrypted on this phone.",
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        // F2 control: which connected provider answers home chat.
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Chat replies use", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(2.dp))
+                if (connectedKinds.isEmpty()) {
+                    Text(
+                        "No API provider is connected yet. Connect one below and home chat answers with it. Until then, chat uses your current agent provider when it has a key.",
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "Home chat and voice-call replies come from this provider. Work tasks keep using your agent.",
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    connectedKinds.forEach { kind ->
+                        val selected = kind == chatProviderKind
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { onSelectChatProvider(kind) }
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            AgentSelectionDot(selected = selected)
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                kind.title,
+                                fontSize = 14.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (selected) {
+                                Text(
+                                    "Answering chat",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        com.vayro.app.data.ProviderCatalog.entries.forEach { entry ->
+            CatalogProviderCard(
+                entry = entry,
+                getSavedApiKeys = getSavedApiKeys,
+                onAddApiKey = onAddApiKey,
+                onActivateApiKey = onActivateApiKey,
+                onRemoveApiKey = onRemoveApiKey,
+                onSaveProvider = onSaveProvider,
+                onValidateProvider = onValidateProvider,
+                autoSwitchFor = autoSwitchFor,
+                onToggleAutoSwitch = onToggleAutoSwitch,
+                keyExhaustedAt = keyExhaustedAt,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CatalogProviderCard(
+    entry: com.vayro.app.data.CatalogProvider,
+    getSavedApiKeys: (ProviderKind) -> List<ApiKeyInfo>,
+    onAddApiKey: (ProviderKind, String, String) -> List<ApiKeyInfo>,
+    onActivateApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
+    onRemoveApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
+    onSaveProvider: (ProviderProfile, String) -> Unit,
+    onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
+    autoSwitchFor: (ProviderKind) -> Boolean,
+    onToggleAutoSwitch: (ProviderKind, Boolean) -> Unit,
+    keyExhaustedAt: (ProviderKind, String) -> Long?,
+) {
+    val kind = entry.kind
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var keys by remember(kind) { mutableStateOf(getSavedApiKeys(kind)) }
+    val connected = keys.isNotEmpty()
+    var newKey by remember(kind) { mutableStateOf("") }
+    var newKeyName by remember(kind) { mutableStateOf("") }
+    var testing by remember(kind) { mutableStateOf(false) }
+    var status by remember(kind) { mutableStateOf<String?>(null) }
+    var statusOk by remember(kind) { mutableStateOf(false) }
+    var showAdvanced by remember(kind) { mutableStateOf(false) }
+    var baseUrl by remember(kind) { mutableStateOf(kind.defaultBaseUrl) }
+    var model by remember(kind) { mutableStateOf(kind.defaultModel) }
+    var autoSwitch by remember(kind) { mutableStateOf(autoSwitchFor(kind)) }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(kind.title, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        entry.note,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (connected) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(8.dp).background(Color(0xFF58C9A3), CircleShape),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Connected",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(entry.keyPageUrl))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Text("Get API key", fontWeight = FontWeight.SemiBold)
+            }
+            if (connected) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Saved keys (${keys.size})",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                keys.forEach { info ->
+                    val exhaustedAt = keyExhaustedAt(kind, info.id)
+                    val resting = exhaustedAt != null &&
+                        System.currentTimeMillis() - exhaustedAt < com.vayro.app.data.ApiKeyFailoverCoordinator.QUOTA_COOLDOWN_MS
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = !info.isActive) {
+                                keys = onActivateApiKey(kind, info.id)
+                            }
+                            .padding(horizontal = 8.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AgentSelectionDot(selected = info.isActive)
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                info.name,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (info.isActive) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                            )
+                            val sub = when {
+                                resting -> {
+                                    val until = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                        .format(java.util.Date(exhaustedAt!! + com.vayro.app.data.ApiKeyFailoverCoordinator.QUOTA_COOLDOWN_MS))
+                                    "Limit reached · resting until about $until"
+                                }
+                                info.isActive -> "Active key"
+                                else -> "Tap to make active"
+                            }
+                            Text(sub, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(
+                            onClick = { keys = onRemoveApiKey(kind, info.id) },
+                            modifier = Modifier.size(32.dp),
+                        ) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Remove key", modifier = Modifier.size(17.dp))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Auto-switch keys", fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "When a key hits its limit, Kodex moves to the next key by itself and work continues.",
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = autoSwitch,
+                        onCheckedChange = { on ->
+                            autoSwitch = on
+                            onToggleAutoSwitch(kind, on)
+                        },
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = newKey,
+                onValueChange = { newKey = it },
+                label = { Text(if (connected) "Add another key" else "Paste your API key") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+            )
+            if (connected) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = newKeyName,
+                    onValueChange = { newKeyName = it },
+                    label = { Text("Key name (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                )
+            }
+            status?.let { message ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    message,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = if (statusOk) Color(0xFF58C9A3) else MaterialTheme.colorScheme.error,
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Button(
+                enabled = newKey.isNotBlank() && !testing,
+                onClick = {
+                    val keyValue = newKey.trim()
+                    scope.launch {
+                        testing = true
+                        status = "Testing the key with ${kind.title}…"
+                        statusOk = true
+                        val profile = ProviderProfile(kind, baseUrl.trim(), model.trim())
+                        when (val result = onValidateProvider(profile, keyValue, emptyList())) {
+                            is ConnectionValidation.Success -> {
+                                keys = onAddApiKey(
+                                    kind,
+                                    newKeyName.trim().ifBlank { "${kind.title} Key" },
+                                    keyValue,
+                                )
+                                newKey = ""
+                                newKeyName = ""
+                                status = "Connected. ${kind.title} is ready to use."
+                                statusOk = true
+                            }
+                            is ConnectionValidation.Failure -> {
+                                status = listOf(result.message, result.providerMessage)
+                                    .filterNotNull().joinToString(" ")
+                                statusOk = false
+                            }
+                        }
+                        testing = false
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                if (testing) {
+                    CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (connected) "Test & add key" else "Test & Connect", fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(4.dp))
+            TextButton(onClick = { showAdvanced = !showAdvanced }) {
+                Text(if (showAdvanced) "Hide advanced" else "Advanced — endpoint & model", fontSize = 12.5.sp)
+            }
+            if (showAdvanced) {
+                OutlinedTextField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it },
+                    label = { Text("Base URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it },
+                    label = { Text("Model") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        onSaveProvider(ProviderProfile(kind, baseUrl.trim(), model.trim()), "")
+                        status = "Endpoint and model saved."
+                        statusOk = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                ) {
+                    Text("Save endpoint & model", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
 }

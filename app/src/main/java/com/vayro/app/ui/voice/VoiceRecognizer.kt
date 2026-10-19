@@ -20,8 +20,16 @@ data class VoiceInputState(
     val committed: String = "",
     /** Live words from the current, still-open segment. */
     val partial: String = "",
-    /** Fatal problem worth a toast (permission, network, unavailable). Pauses are not errors. */
+    /** Fatal problem, human wording first (permission, unavailable). Pauses are not errors. */
     val error: String? = null,
+    /** Raw SpeechRecognizer error code behind [error], for support. */
+    val errorCode: Int? = null,
+    /** True while a dropped voice service is being reconnected automatically. */
+    val reconnecting: Boolean = false,
+    /** Human line shown while [reconnecting] (e.g. "Voice service dropped — reconnecting…"). */
+    val reconnectMessage: String? = null,
+    /** Soft, non-fatal line (e.g. "Didn't catch that") — a pause the user may want to see. */
+    val softMessage: String? = null,
 ) {
     val fullText: String
         get() = listOf(committed, partial).filter { it.isNotBlank() }.joinToString(" ").trim()
@@ -51,12 +59,51 @@ class VoiceRecognizer(context: Context) {
 
         /** How long [finish] waits for the final words before completing anyway. */
         private const val FINISH_TIMEOUT_MS = 1200L
+
+        // v3.2.37 (A2): SpeechRecognizer.ERROR_SERVER_DISCONNECTED (11) is an
+        // API 31+ constant; the literal is inlined here so older runtimes are
+        // safe. A dropped recognition service is transient on many devices —
+        // the call must heal itself instead of dying on the first error.
+        const val ERROR_SERVER_DISCONNECTED: Int = 11
+
+        /** Consecutive heal attempts before a transient error becomes fatal. */
+        private const val MAX_HEAL_ATTEMPTS = 3
+
+        /** Backoff before each heal attempt (index 0 = first retry). */
+        private val HEAL_BACKOFF_MS = longArrayOf(500L, 800L, 1200L)
+
+        /** Human-first wording for a recognizer error code. */
+        fun humanError(error: Int): String = when (error) {
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is off"
+            ERROR_SERVER_DISCONNECTED -> "Voice service disconnected"
+            SpeechRecognizer.ERROR_NETWORK,
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network problem"
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice service is busy"
+            SpeechRecognizer.ERROR_SERVER -> "Voice service problem"
+            SpeechRecognizer.ERROR_NO_MATCH,
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Didn't catch that"
+            SpeechRecognizer.ERROR_AUDIO -> "Microphone problem"
+            SpeechRecognizer.ERROR_CLIENT -> "Voice input problem"
+            else -> "Voice input problem"
+        }
+
+        /** True for errors that justify destroying + recreating the recognizer and trying again. */
+        fun isTransient(error: Int): Boolean = when (error) {
+            ERROR_SERVER_DISCONNECTED,
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+            SpeechRecognizer.ERROR_NETWORK,
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+            SpeechRecognizer.ERROR_SERVER -> true
+            else -> false
+        }
     }
 
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var recognizer: SpeechRecognizer? = null
+    private var healAttempts = 0
+    private var healRunnable: Runnable? = null
     private var wantsListening = false
     private var finishing = false
     private var released = false
@@ -84,6 +131,7 @@ class VoiceRecognizer(context: Context) {
         }
         wantsListening = true
         finishing = false
+        healAttempts = 0
         _state.value = VoiceInputState(listening = true)
         beginSession()
     }
@@ -159,8 +207,42 @@ class VoiceRecognizer(context: Context) {
         callback?.invoke(text)
     }
 
+    /**
+     * v3.2.37 (A2) self-heal: the recognizer that just errored is destroyed
+     * NOW (never startListening against a session that is still tearing
+     * down), then a fresh one is created after a short backoff. Bounded:
+     * after [MAX_HEAL_ATTEMPTS] consecutive failures the error is surfaced
+     * as a human line with its code.
+     */
+    private fun heal(error: Int) {
+        recognizer?.destroy()
+        recognizer = null
+        healRunnable?.let { mainHandler.removeCallbacks(it) }
+        if (healAttempts >= MAX_HEAL_ATTEMPTS) {
+            failFatally(humanError(error), error)
+            return
+        }
+        val backoff = HEAL_BACKOFF_MS[healAttempts.coerceIn(0, HEAL_BACKOFF_MS.lastIndex)]
+        healAttempts++
+        val line = when (error) {
+            ERROR_SERVER_DISCONNECTED -> "Voice service dropped — reconnecting…"
+            SpeechRecognizer.ERROR_NETWORK,
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network problem — reconnecting…"
+            else -> "Voice service busy — reconnecting…"
+        }
+        _state.update { it.copy(listening = true, reconnecting = true, reconnectMessage = line) }
+        val runnable = Runnable {
+            healRunnable = null
+            if (wantsListening && !finishing && !released) beginSession()
+        }
+        healRunnable = runnable
+        mainHandler.postDelayed(runnable, backoff)
+    }
+
     private fun teardown() {
         wantsListening = false
+        healRunnable?.let { mainHandler.removeCallbacks(it) }
+        healRunnable = null
         mainHandler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         recognizer = null
@@ -168,21 +250,29 @@ class VoiceRecognizer(context: Context) {
         if (!released) _state.value = VoiceInputState()
     }
 
-    private fun failFatally(message: String) {
+    private fun failFatally(message: String, code: Int? = null) {
         wantsListening = false
+        healRunnable?.let { mainHandler.removeCallbacks(it) }
+        healRunnable = null
         mainHandler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         recognizer = null
         level = 0f
-        _state.value = VoiceInputState(error = message)
+        _state.value = VoiceInputState(error = message, errorCode = code)
     }
 
     private fun Bundle?.firstResult(): String? =
         this?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) = Unit
-        override fun onBeginningOfSpeech() = Unit
+        override fun onReadyForSpeech(params: Bundle?) {
+            healAttempts = 0
+            _state.update { it.copy(reconnecting = false, reconnectMessage = null) }
+        }
+
+        override fun onBeginningOfSpeech() {
+            _state.update { it.copy(softMessage = null) }
+        }
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
         override fun onEndOfSpeech() {
@@ -195,7 +285,7 @@ class VoiceRecognizer(context: Context) {
 
         override fun onPartialResults(partialResults: Bundle?) {
             val text = partialResults.firstResult() ?: return
-            _state.update { it.copy(partial = text) }
+            _state.update { it.copy(partial = text, softMessage = null) }
         }
 
         override fun onResults(results: Bundle?) {
@@ -206,24 +296,29 @@ class VoiceRecognizer(context: Context) {
 
         override fun onError(error: Int) {
             level = 0f
-            when (error) {
+            when {
                 // A pause, not a failure: keep whatever was heard and listen on.
-                SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                // Surfaced only as a soft line ("Didn't catch that"), never an error.
+                error == SpeechRecognizer.ERROR_NO_MATCH ||
+                    error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
                     commitSegment(_state.value.partial)
+                    if (!finishing) {
+                        _state.update { it.copy(softMessage = humanError(error)) }
+                    }
                     onSegmentEnded()
                 }
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                SpeechRecognizer.ERROR_CLIENT -> {
+                // A dropped/busy voice service: destroy, wait, recreate, resume.
+                isTransient(error) -> {
+                    if (finishing) {
+                        completeFinish()
+                    } else if (wantsListening) {
+                        heal(error)
+                    }
+                }
+                error == SpeechRecognizer.ERROR_CLIENT -> {
                     if (finishing) completeFinish() else if (wantsListening) restartLater(350)
                 }
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-                    failFatally("Microphone permission is missing")
-                SpeechRecognizer.ERROR_NETWORK,
-                SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
-                SpeechRecognizer.ERROR_SERVER ->
-                    failFatally("Voice recognition needs an internet connection")
-                else -> failFatally("Voice input failed ($error)")
+                else -> failFatally(humanError(error), error)
             }
         }
     }

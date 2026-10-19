@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v3.2.37 (Part H): monochrome layer for Android 13 themed icons —
+     the same K geometry as ic_launcher_foreground, single-color. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M37,31 h10 v46 h-10 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,50 L60,31 L71,31 L55,50 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M55,52 L71,77 L60,77 L44,54 Z" />
+</vector>

@@ -16,6 +16,8 @@ import com.vayro.app.files.SharedExport
 import com.vayro.app.BuildConfig
 import com.vayro.app.AppCrashLogger
 import com.vayro.app.data.ApiKeyVault
+import com.vayro.app.data.ApiKeyFailoverCoordinator
+import com.vayro.app.network.ChatApiException
 import com.vayro.app.data.ApiKeyInfo
 import com.vayro.app.data.AppPreferences
 import com.vayro.app.core.result.OperationResult
@@ -403,6 +405,13 @@ data class AppUiState(
      * and presents the call once the workspace is open.
      */
     val voiceCallRequestNonce: Long = 0L,
+    /** v3.2.37 (Part F): persisted home (normal chat) threads — separate from workspace projects. */
+    val homeThreads: List<com.vayro.app.data.HomeThread> = emptyList(),
+    val activeHomeThreadId: String = "",
+    /** True while the home-chat engine is waiting for a reply. */
+    val homeSending: Boolean = false,
+    /** Title of the provider answering home chat ("" = none connected yet). */
+    val homeChatProviderName: String = "",
     val executionMode: ExecutionMode = ExecutionMode.UNIFIED,
     val activeRoadmap: ActiveRoadmap? = null,
     val scratchpadItems: List<ScratchpadItem> = emptyList(),
@@ -536,6 +545,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return projectBridgePool.getOrCreate(projectId, kind, rootPath, viewModelScope) { pid, event -> onRuntimeEvent(pid, event) }
     }
     private val providerApi = ProviderApiClient()
+    // v3.2.37 (Parts C/F/F2/G): home chat + key health stores.
+    private val homeChatStore = com.vayro.app.data.HomeChatStore(application)
+    private val keyHealthStore = com.vayro.app.data.KeyHealthStore(application)
+    private val homeFailover = ApiKeyFailoverCoordinator()
+    private var homeChatJob: Job? = null
     private val skillManager = SkillManager(application)
     private val editorCheckpoints = WorkspaceCheckpoints(application.filesDir)
     val sessionManager = com.vayro.app.session.AgentSessionManager(application)
@@ -865,6 +879,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     init {
         AppCrashLogger.log("MainViewModel.init entered")
+        // v3.2.37 (Part F): restore home chat threads (never workspace projects).
+        runCatching {
+            val threads = homeChatStore.load()
+            val activeId = preferences.activeHomeThreadId
+                .takeIf { id -> threads.any { it.id == id } }
+                ?: threads.firstOrNull()?.id.orEmpty()
+            _state.update { it.copy(homeThreads = threads, activeHomeThreadId = activeId) }
+        }
+        refreshHomeChatProviderLabel()
         // GitHub's official CLI owns its OAuth credential. Remove credentials from
         // the retired custom OAuth implementation and discover the real CLI status.
         runCatching { vault.remove(LEGACY_GITHUB_TOKEN_KEY) }
@@ -1480,6 +1503,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshActiveApiKey(kind: ProviderKind) {
+        // v3.2.37 (F2): connecting/removing a catalog key changes what
+        // answers home chat — keep the home provider label honest.
+        refreshHomeChatProviderLabel()
         if (_state.value.provider.kind != kind) return
         val keys = vault.list(kind.name)
         _state.update { current ->
@@ -3780,6 +3806,297 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return t.split(Regex("\\s+")).size <= 5
     }
 
+    // ------------------------------------------------------------------
+    // v3.2.37 (Parts F + F2 + C): home chat — normal conversation only.
+    //
+    // Home threads live in HomeChatStore, NOT in the project store: they
+    // have no folder, no runtime session and never appear as workspace
+    // projects. A task typed at home is not teleported: it gets a
+    // "This is a job for Work" handoff card, and only the user's tap on
+    // "Open in Work" creates a real project (the host wires that through
+    // the existing quick-project + pending-prompt flow) and calls
+    // [noteHomeTaskMoved] to leave the receipt in this thread.
+    //
+    // Replies come from the API-key providers (Part C catalog chain):
+    // the user-selected chat provider first, then the other connected
+    // catalog providers in catalog order. Inside a provider, keys come
+    // from the encrypted vault pool; with "Auto-switch keys" ON a
+    // quota/rate/auth failure marks the key exhausted (KeyHealthStore,
+    // persistent), activates the next key and the reply still lands —
+    // with a visible "Switched to key N" line in the thread. With the
+    // toggle OFF only the active key is tried and the error is reported.
+    // If NO catalog provider is connected, the current workspace provider
+    // is tried when it is key-backed (the honest fallback); otherwise a
+    // plain message explains how to connect a key — chat is never blocked
+    // silently.
+    // ------------------------------------------------------------------
+
+    private fun activeHomeThread(): com.vayro.app.data.HomeThread? =
+        _state.value.homeThreads.firstOrNull { it.id == _state.value.activeHomeThreadId }
+            ?: _state.value.homeThreads.firstOrNull()
+
+    private fun persistHomeThreads() {
+        val threads = _state.value.homeThreads
+        viewModelScope.launch(Dispatchers.IO) { homeChatStore.save(threads) }
+    }
+
+    private fun appendHomeMessage(threadId: String, message: com.vayro.app.data.HomeChatMessage) {
+        _state.update { st ->
+            st.copy(
+                homeThreads = st.homeThreads.map { thread ->
+                    if (thread.id != threadId) thread else thread.copy(
+                        messages = thread.messages + message,
+                        updatedAtMillis = System.currentTimeMillis(),
+                        title = if (message.fromUser && thread.messages.none { it.fromUser }) {
+                            message.text.trim().take(42).ifBlank { thread.title }
+                        } else {
+                            thread.title
+                        },
+                    )
+                },
+            )
+        }
+        persistHomeThreads()
+    }
+
+    fun newHomeThread() {
+        val thread = com.vayro.app.data.HomeThread()
+        _state.update {
+            it.copy(homeThreads = listOf(thread) + it.homeThreads, activeHomeThreadId = thread.id)
+        }
+        preferences.activeHomeThreadId = thread.id
+        persistHomeThreads()
+    }
+
+    fun openHomeThread(id: String) {
+        if (_state.value.homeThreads.none { it.id == id }) return
+        _state.update { it.copy(activeHomeThreadId = id) }
+        preferences.activeHomeThreadId = id
+    }
+
+    fun deleteHomeThread(id: String) {
+        val remaining = _state.value.homeThreads.filterNot { it.id == id }
+        _state.update { st ->
+            st.copy(
+                homeThreads = remaining,
+                activeHomeThreadId = if (st.activeHomeThreadId == id) {
+                    remaining.firstOrNull()?.id.orEmpty()
+                } else {
+                    st.activeHomeThreadId
+                },
+            )
+        }
+        preferences.activeHomeThreadId = _state.value.activeHomeThreadId
+        persistHomeThreads()
+    }
+
+    /** Catalog providers (Part C) with at least one saved key, in catalog order. */
+    fun connectedChatProviders(): List<ProviderKind> =
+        com.vayro.app.data.ProviderCatalog.chatKinds.filter { vault.list(it.name).isNotEmpty() }
+
+    /** The provider that answers home chat: the user's pick when connected, else the first connected. */
+    fun resolvedChatProvider(): ProviderKind? {
+        val connected = connectedChatProviders()
+        if (connected.isEmpty()) return null
+        val chosen = runCatching { ProviderKind.valueOf(preferences.chatProviderKind) }.getOrNull()
+        return chosen?.takeIf { it in connected } ?: connected.first()
+    }
+
+    fun setChatProvider(kind: ProviderKind) {
+        preferences.chatProviderKind = kind.name
+        refreshHomeChatProviderLabel()
+    }
+
+    private fun refreshHomeChatProviderLabel() {
+        _state.update { it.copy(homeChatProviderName = resolvedChatProvider()?.title ?: "") }
+    }
+
+    fun autoSwitchKeys(kind: ProviderKind): Boolean = preferences.autoSwitchKeys(kind.name)
+
+    fun setAutoSwitchKeys(kind: ProviderKind, enabled: Boolean) =
+        preferences.setAutoSwitchKeys(kind.name, enabled)
+
+    fun keyExhaustedAt(kind: ProviderKind, keyId: String): Long? =
+        keyHealthStore.exhaustedAt(kind.name, keyId)
+
+    fun keepWorkingInBackground(): Boolean = preferences.keepWorkingInBackground
+
+    fun setKeepWorkingInBackground(enabled: Boolean) {
+        preferences.keepWorkingInBackground = enabled
+    }
+
+    fun sendHomeMessage(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank() || _state.value.homeSending) return
+        val thread = activeHomeThread() ?: run {
+            newHomeThread()
+            activeHomeThread() ?: return
+        }
+        appendHomeMessage(thread.id, com.vayro.app.data.HomeChatMessage(fromUser = true, text = trimmed))
+        if (!isConversationalTurn(trimmed, hasAttachments = false, mentionedPaths = emptyList())) {
+            // A job, not a chat: show the handoff card. Nothing is created
+            // or sent anywhere until the user taps "Open in Work".
+            appendHomeMessage(
+                thread.id,
+                com.vayro.app.data.HomeChatMessage(
+                    fromUser = false,
+                    text = "This is a job for Work",
+                    kind = "handoff",
+                    taskText = trimmed,
+                ),
+            )
+            return
+        }
+        _state.update { it.copy(homeSending = true) }
+        homeChatJob = viewModelScope.launch { runHomeChat(thread.id) }
+    }
+
+    fun stopHomeChat() {
+        homeChatJob?.cancel()
+        _state.update { it.copy(homeSending = false) }
+    }
+
+    /** Leaves the "Moved to Work" receipt in the home thread after a handoff tap. */
+    fun noteHomeTaskMoved(taskText: String, projectName: String) {
+        val thread = activeHomeThread() ?: return
+        appendHomeMessage(
+            thread.id,
+            com.vayro.app.data.HomeChatMessage(
+                fromUser = false,
+                text = "Moved to Work",
+                kind = "work_note",
+                taskText = taskText,
+                projectName = projectName,
+            ),
+        )
+    }
+
+    private fun homeProfileFor(kind: ProviderKind): ProviderProfile {
+        val current = _state.value.provider
+        return if (current.kind == kind) current else ProviderProfile(kind)
+    }
+
+    private suspend fun runHomeChat(threadId: String) {
+        try {
+            val thread = _state.value.homeThreads.firstOrNull { it.id == threadId } ?: return
+            val turns = thread.messages.filter { it.kind == "text" }.takeLast(20).map {
+                ProviderApiClient.ChatTurn(if (it.fromUser) "user" else "assistant", it.text)
+            }
+            val switches = mutableListOf<String>()
+            var reply: String? = null
+            var lastError: String? = null
+            var anyConnected = false
+            val chain = buildList {
+                resolvedChatProvider()?.let { add(it) }
+                addAll(connectedChatProviders())
+            }.distinct()
+            for (kind in chain) {
+                if (reply != null) break
+                val credentials = vault.credentials(kind.name)
+                if (credentials.isEmpty()) continue
+                anyConnected = true
+                val profile = homeProfileFor(kind)
+                val autoSwitch = preferences.autoSwitchKeys(kind.name)
+                val ordered = if (!autoSwitch) {
+                    listOf(credentials.first())
+                } else {
+                    val healthy = credentials.filterNot { keyHealthStore.inCooldown(kind.name, it.id) }
+                    val resting = credentials.filter { keyHealthStore.inCooldown(kind.name, it.id) }
+                    healthy + resting
+                }
+                for ((index, credential) in ordered.withIndex()) {
+                    try {
+                        val text = providerApi.chatCompletion(
+                            baseUrl = profile.resolvedBaseUrl,
+                            model = profile.model,
+                            apiKey = credential.secret,
+                            protocol = kind.protocol,
+                            turns = turns,
+                            systemPrompt = HOME_CHAT_SYSTEM_PROMPT,
+                        )
+                        if (!credential.isActive) vault.activate(kind.name, credential.id)
+                        keyHealthStore.clear(kind.name, credential.id)
+                        reply = text
+                        break
+                    } catch (e: ChatApiException) {
+                        val reason = "HTTP ${e.httpCode} " + (e.providerMessage ?: e.message ?: "")
+                        lastError = e.providerMessage ?: e.message
+                        if (autoSwitch && homeFailover.recordFailure(credential.id, reason)) {
+                            keyHealthStore.markExhausted(kind.name, credential.id)
+                            val next = ordered.getOrNull(index + 1)
+                            if (next != null) {
+                                vault.activate(kind.name, next.id)
+                                val fromPos = credentials.indexOfFirst { it.id == credential.id } + 1
+                                val toPos = credentials.indexOfFirst { it.id == next.id } + 1
+                                val why = if (ApiKeyFailoverCoordinator.isQuotaFailure(reason)) {
+                                    "key $fromPos limit reached"
+                                } else {
+                                    "key $fromPos was rejected"
+                                }
+                                switches += "Switched to key $toPos \u2014 $why"
+                                continue
+                            }
+                        }
+                        // Not a key failure (or no key left): this provider is done.
+                        break
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        lastError = e.message
+                        break
+                    }
+                }
+            }
+            if (reply == null) {
+                reply = tryWorkspaceProviderFallback(turns, chain.toSet())
+            }
+            switches.forEach { line ->
+                appendHomeMessage(
+                    threadId,
+                    com.vayro.app.data.HomeChatMessage(fromUser = false, text = line, kind = "system"),
+                )
+            }
+            val finalText = reply ?: if (!anyConnected) {
+                "I can chat here as soon as an API key is connected. Open Providers & Agents and " +
+                    "connect a free key (OpenRouter or Groq, for example) \u2014 then ask me again. " +
+                    "For coding work, tap Work and the agent will handle it there."
+            } else {
+                "I could not get a reply from any connected provider" +
+                    (lastError?.let { " ($it)" } ?: "") +
+                    ". Check the keys in Providers & Agents, or try again in a moment."
+            }
+            appendHomeMessage(
+                threadId,
+                com.vayro.app.data.HomeChatMessage(fromUser = false, text = finalText),
+            )
+        } finally {
+            _state.update { it.copy(homeSending = false) }
+        }
+    }
+
+    /**
+     * F2 fallback: when no catalog provider is connected, the workspace's
+     * current provider still answers home chat if it is key-backed (the
+     * pre-v3.2.37 default path). One attempt, active key only.
+     */
+    private suspend fun tryWorkspaceProviderFallback(
+        turns: List<ProviderApiClient.ChatTurn>,
+        alreadyTried: Set<ProviderKind>,
+    ): String? {
+        val profile = _state.value.provider
+        if (profile.kind == ProviderKind.CLAUDE || profile.kind in alreadyTried) return null
+        val secret = vault.get(profile.kind.name) ?: return null
+        return runCatching {
+            providerApi.chatCompletion(
+                baseUrl = profile.resolvedBaseUrl,
+                model = profile.model,
+                apiKey = secret,
+                protocol = profile.kind.protocol,
+                turns = turns,
+                systemPrompt = HOME_CHAT_SYSTEM_PROMPT,
+            )
+        }.getOrNull()
+    }
+
     fun sendPrompt(prompt: String) {
         if (permissionPolicyEngine.isEmergencyKillSwitchEngaged()) {
             _state.update { it.copy(toastMessage = "Emergency kill switch is ACTIVE — agent sessions are blocked until it is turned off.") }
@@ -3907,6 +4224,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, project.name)
                     putExtra(RuntimeExecutionService.EXTRA_AGENT_NAME, _state.value.agentKind.title)
                     putExtra(RuntimeExecutionService.EXTRA_DETAIL, "${_state.value.agentKind.title} is starting work in ${project.name}")
+                    putExtra(RuntimeExecutionService.EXTRA_ROUTE, "project/${project.slug}")
                 },
             )
         }
@@ -4948,6 +5266,7 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
                     putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, project.name)
                     putExtra(RuntimeExecutionService.EXTRA_AGENT_NAME, _state.value.agentKind.title)
                     putExtra(RuntimeExecutionService.EXTRA_DETAIL, "${_state.value.agentKind.title} is resuming task in ${project.name}")
+                    putExtra(RuntimeExecutionService.EXTRA_ROUTE, "project/${project.slug}")
                 },
             )
         }
@@ -5994,6 +6313,13 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
     }
 
     companion object {
+        /** v3.2.37 (F2): home chat answers as a chat assistant, never as a coding agent. */
+        const val HOME_CHAT_SYSTEM_PROMPT: String =
+            "You are Kodex, the friendly assistant inside the Kodex app. This is a normal chat: " +
+                "answer helpfully and concisely, in the same language the user writes in. " +
+                "Do not claim to have edited files, run commands or built anything \u2014 " +
+                "coding work happens in the Work workspace, not here."
+
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
         private const val MAX_PROCESS_OUTPUT_BYTES = 512 * 1024

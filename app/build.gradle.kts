@@ -27,7 +27,7 @@ val hasUploadSigning = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { !it.isNullOrBlank() }
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.36"
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.37"
 val runtimeReleaseBaseUrl =
     "https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v$appVersionName"
 val appUpdateManifestUrl =
@@ -86,7 +86,7 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 74
+        versionCode = 75
         versionName = appVersionName
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
 

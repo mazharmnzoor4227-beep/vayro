@@ -43,6 +43,17 @@ enum class ProviderKind(
     ),
     OPENAI("OpenAI API", "Use your OpenAI API key", ProviderProtocol.OPENAI_CHAT, "https://api.openai.com/v1", "gpt-5-codex"),
     CUSTOM("Custom API", "Anthropic-compatible endpoint", ProviderProtocol.ANTHROPIC_GATEWAY, "", "", true),
+    // v3.2.37 (Part C) — API-key catalog providers. All are OpenAI-compatible
+    // chat endpoints (Google AI Studio via its OpenAI-compatible surface), so
+    // one wire protocol covers them; Pakistan availability was verified at
+    // build time for every entry here. NVIDIA NIM is deliberately absent
+    // from the catalog (Pakistani phone verification fails there).
+    GROQ("Groq", "Very fast replies · free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+    GOOGLE_AI_STUDIO("Google AI Studio", "Gemini models · free tier available", ProviderProtocol.OPENAI_CHAT, "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
+    MISTRAL("Mistral AI", "Free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.mistral.ai/v1", "mistral-small-latest"),
+    CEREBRAS("Cerebras", "Very fast replies · free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.cerebras.ai/v1", "llama-3.3-70b"),
+    COHERE("Cohere", "Free trial tier available", ProviderProtocol.OPENAI_CHAT, "https://api.cohere.ai/compatibility/v1", "command-a-03-2025"),
+    XAI("xAI Grok", "Paid · Grok models", ProviderProtocol.OPENAI_CHAT, "https://api.x.ai/v1", "grok-3-mini"),
 }
 
 /**
@@ -103,6 +114,13 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
     ProviderKind.CUSTOM,
+    ProviderKind.GROQ,
+    ProviderKind.GOOGLE_AI_STUDIO,
+    ProviderKind.MISTRAL,
+    ProviderKind.CEREBRAS,
+    ProviderKind.COHERE,
+    ProviderKind.XAI,
+    ProviderKind.OPENAI,
 )
 
 val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
@@ -110,11 +128,25 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.OPENCODE_ZEN,
     ProviderKind.NVIDIA_NIM,
     ProviderKind.CUSTOM,
+    ProviderKind.GROQ,
+    ProviderKind.GOOGLE_AI_STUDIO,
+    ProviderKind.MISTRAL,
+    ProviderKind.CEREBRAS,
+    ProviderKind.COHERE,
+    ProviderKind.XAI,
+    ProviderKind.OPENAI,
 )
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
     ProviderKind.OPENCODE_ZEN -> "openai-responses"
     ProviderKind.NVIDIA_NIM -> "openai-completions"
+    ProviderKind.GROQ,
+    ProviderKind.GOOGLE_AI_STUDIO,
+    ProviderKind.MISTRAL,
+    ProviderKind.CEREBRAS,
+    ProviderKind.COHERE,
+    ProviderKind.XAI,
+    ProviderKind.OPENAI -> "openai-completions"
     else -> "anthropic-messages"
 }
 
@@ -172,13 +204,23 @@ fun agentsForPicker(freeModeOnly: Boolean): List<AgentKind> =
 /** Provider choices shown for the selected coding agent. */
 fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
     AgentKind.DEEPSEEK_HARNESS -> ProviderKind.entries.filter { it in DEEPSEEK_HARNESS_PROVIDERS }
-    AgentKind.CLAUDE_CODE -> ProviderKind.entries.filterNot { it == ProviderKind.OPENCODE_ZEN || it == ProviderKind.OPENAI }
+    AgentKind.CLAUDE_CODE -> ProviderKind.entries.filterNot {
+        it == ProviderKind.OPENCODE_ZEN || it == ProviderKind.OPENAI ||
+            it == ProviderKind.GROQ || it == ProviderKind.GOOGLE_AI_STUDIO ||
+            it == ProviderKind.MISTRAL || it == ProviderKind.CEREBRAS ||
+            it == ProviderKind.COHERE || it == ProviderKind.XAI
+    }
     AgentKind.ANTIGRAVITY -> emptyList()
     // Codex authenticates with an OpenAI API key, stored under its own vault
     // slot ("OPENAI") so it can never overwrite the Custom agent's key.
     AgentKind.CODEX -> listOf(ProviderKind.OPENAI)
     // Custom agent is pure bring-your-own-API: OpenAI-compatible and Claude-compatible endpoints only.
-    AgentKind.CUSTOM -> listOf(ProviderKind.CUSTOM, ProviderKind.ANTHROPIC, ProviderKind.LLM_ROUTER)
+    AgentKind.CUSTOM -> listOf(
+        ProviderKind.CUSTOM, ProviderKind.ANTHROPIC, ProviderKind.LLM_ROUTER,
+        ProviderKind.GROQ, ProviderKind.GOOGLE_AI_STUDIO, ProviderKind.MISTRAL,
+        ProviderKind.CEREBRAS, ProviderKind.COHERE, ProviderKind.XAI,
+        ProviderKind.OPENAI, ProviderKind.DEEPSEEK,
+    )
 }
 
 /** [providersForAgent] narrowed to [FREE_MODE_PROVIDERS] when Free Mode is on. */

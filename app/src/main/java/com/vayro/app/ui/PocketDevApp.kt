@@ -2628,6 +2628,17 @@ private fun RootScreenHost(
     // section; Back from a section returns here with the drawer re-opened
     // (inventory rule R1), and Back with the drawer open just closes it.
     var drawerOpen by rememberSaveable { mutableStateOf(false) }
+    // v3.2.37 (Part E): the drawer is pre-composed (mounted at idle, then
+    // kept mounted) and animated by this shared Animatable — transform and
+    // alpha only. The content behind reads the same value in a graphicsLayer
+    // to scale/dim, so one draw-phase value drives the whole transition.
+    val drawerProgressAnim = remember { Animatable(0f) }
+    var drawerMounted by remember { mutableStateOf(false) }
+    LaunchedEffect(drawerOpen) { if (drawerOpen) drawerMounted = true }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(700)
+        drawerMounted = true
+    }
     var skillsInitialTab by rememberSaveable { mutableIntStateOf(0) }
     var skillsTabEpoch by rememberSaveable { mutableIntStateOf(0) }
     BackHandler(enabled = drawerOpen) { drawerOpen = false }
@@ -2671,6 +2682,54 @@ private fun RootScreenHost(
     val terminalLiveOutput by viewModel.terminalLiveOutput.collectAsStateWithLifecycle()
     val terminalCurrentCommand by viewModel.terminalCurrentCommand.collectAsStateWithLifecycle()
 
+    // v3.2.37 (Parts F/F2): the home thread + its voice call. The call is
+    // hosted HERE, over the home thread — its replies come from the same
+    // API-provider routing as typed home chat, never from a workspace.
+    val activeHomeThread = state.homeThreads.firstOrNull { it.id == state.activeHomeThreadId }
+        ?: state.homeThreads.firstOrNull()
+    val homeCallRecognizer = remember { VoiceRecognizer(shellContext) }
+    DisposableEffect(homeCallRecognizer) { onDispose { homeCallRecognizer.release() } }
+    var homeCallActive by remember { mutableStateOf(false) }
+    val homeCallPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            homeCallActive = true
+        } else {
+            Toast.makeText(shellContext, "Microphone permission is required for voice calls", Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun startHomeCall() {
+        if (!homeCallRecognizer.isAvailable()) {
+            Toast.makeText(shellContext, "Voice recognition not supported on this device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            shellContext.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            homeCallPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            homeCallActive = true
+        }
+    }
+    val homeCallMessages = (activeHomeThread?.messages ?: emptyList()).mapNotNull { message ->
+        when (message.kind) {
+            "text" -> ChatMessage(
+                id = message.id,
+                fromUser = message.fromUser,
+                text = message.text,
+                createdAt = java.time.Instant.ofEpochMilli(message.createdAtMillis),
+            )
+            "handoff" -> ChatMessage(
+                id = message.id,
+                fromUser = false,
+                text = "This sounds like a job for Work. I put a card in the chat — tap Open in Work when you are ready.",
+                createdAt = java.time.Instant.ofEpochMilli(message.createdAtMillis),
+            )
+            else -> null
+        }
+    }
+
     if (showPrivacyPolicy) {
         PrivacyPolicyScreen(
             onBack = { showPrivacyPolicy = false },
@@ -2690,7 +2749,18 @@ private fun RootScreenHost(
                 onSignOut = { authViewModel?.signOut() },
             )
         }
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .graphicsLayer {
+                    // Part E depth: content settles back a touch as the
+                    // drawer opens. Draw-phase only — no recomposition.
+                    val p = drawerProgressAnim.value
+                    scaleX = 1f - 0.03f * p
+                    scaleY = 1f - 0.03f * p
+                },
+        ) {
             val componentUpdates = com.vayro.app.update.ComponentUpdateNotifier.updatesAvailable
             if (componentUpdates.isNotEmpty() && screen != RootScreen.SETTINGS) {
                 val bannerText = "Update available for " + componentUpdates.first() +
@@ -2736,13 +2806,36 @@ private fun RootScreenHost(
                     appUpdateAvailable = state.appUpdate != null,
                     onOpenDrawer = { drawerOpen = true },
                     onOpenUpdate = onShowAppUpdate,
-                    onSend = onHomeSend,
+                    // v3.2.37 (Part F): home sends stay HOME. Conversational
+                    // turns are answered in this thread by the API providers
+                    // (Part F2); a task gets the "Open in Work" handoff card
+                    // instead of a silent teleport into a quick project.
+                    // Attachments still go to Work (they need a workspace).
+                    onSend = { text -> viewModel.sendHomeMessage(text) },
                     onAttach = onHomeAttach,
-                    onVoiceCall = onHomeVoiceCall,
+                    onVoiceCall = { startHomeCall() },
                     onSelectAgent = viewModel::selectAgent,
                     onMoreAgents = { screen = RootScreen.AGENT },
                     onOpenConnectors = { screen = RootScreen.CONNECTORS },
                     onPushToGitHub = onPushRequest,
+                    homeMessages = activeHomeThread?.messages ?: emptyList(),
+                    homeSending = state.homeSending,
+                    homeProviderName = state.homeChatProviderName,
+                    onNewChat = { viewModel.newHomeThread() },
+                    onOpenWork = { screen = RootScreen.PROJECTS },
+                    onOpenInWork = { task ->
+                        // The one deliberate bridge home -> Work: reuse the
+                        // quick-project + pending-prompt delivery, then
+                        // leave the receipt in the home thread.
+                        onHomeSend(task)
+                        val projectName = viewModel.state.value.activeProject?.name
+                            ?: viewModel.state.value.projects.firstOrNull()?.name
+                            ?: "Work"
+                        viewModel.noteHomeTaskMoved(task, projectName)
+                    },
+                    onGitHubBuild = onOpenCloudHybrid,
+                    onOpenTerminal = { showQuickTerminal = true },
+                    onOpenAppFactory = onOpenAppFactory,
                 )
                 RootScreen.CHATS -> ChatsScreen(
                     projects = state.projects,
@@ -2751,6 +2844,12 @@ private fun RootScreenHost(
                     onOpenProject = { project -> viewModel.openProject(project) },
                     onNewChat = { viewModel.createQuickProject() },
                     onDeleteProjects = { ids -> ids.forEach { viewModel.deleteProject(it) } },
+                    homeThreads = state.homeThreads,
+                    onOpenHomeThread = { thread ->
+                        viewModel.openHomeThread(thread.id)
+                        screen = RootScreen.CHAT_HOME
+                    },
+                    onDeleteHomeThread = { thread -> viewModel.deleteHomeThread(thread.id) },
                 )
                 RootScreen.CODE -> CodeHubScreen(
                     onBack = {
@@ -3012,6 +3111,11 @@ private fun RootScreenHost(
                     onAddApiKey = viewModel::addApiKey,
                     onActivateApiKey = viewModel::activateApiKey,
                     onRemoveApiKey = viewModel::removeApiKey,
+                    chatProviderKind = viewModel.resolvedChatProvider(),
+                    onSelectChatProvider = viewModel::setChatProvider,
+                    autoSwitchFor = { kind -> viewModel.autoSwitchKeys(kind) },
+                    onToggleAutoSwitch = { kind, on -> viewModel.setAutoSwitchKeys(kind, on) },
+                    keyExhaustedAt = { kind, id -> viewModel.keyExhaustedAt(kind, id) },
                     onInstallDevStack = viewModel::installDevStack,
                     onUpdateDevStack = viewModel::updateDevStack,
                     onRemoveDevStack = viewModel::removeDevStack,
@@ -3064,8 +3168,27 @@ private fun RootScreenHost(
         }
     }
 }
-    if (drawerOpen) {
+    if (homeCallActive) {
+        VoiceCallScreen(
+            recognizer = homeCallRecognizer,
+            messages = homeCallMessages,
+            isRunning = state.homeSending,
+            approval = null,
+            onSend = { text -> viewModel.sendHomeMessage(text) },
+            onApproval = {},
+            onApprovalWithLevel = { _, _ -> },
+            onClose = { homeCallActive = false },
+            onRequestMicPermission = { homeCallPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+        )
+    }
+    if (drawerMounted) {
         KodexSidebar(
+            visible = drawerOpen,
+            progressAnim = drawerProgressAnim,
+            onOpenWork = {
+                drawerOpen = false
+                screen = RootScreen.PROJECTS
+            },
             userInitial = (hostUser?.displayName?.firstOrNull() ?: hostUser?.email?.firstOrNull() ?: 'K')
                 .uppercaseChar().toString(),
             userName = hostUser?.displayName?.ifBlank { null } ?: hostUser?.email ?: "Guest",
@@ -5401,6 +5524,10 @@ private fun WorkspaceScreen(
     }
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
+    // v3.2.37 (A2): while the voice call is up, the workspace chrome hides
+    // so the call is a clean full-screen surface (no project header or
+    // bottom bar bleeding through). Workspace state itself is untouched.
+    var voiceCallOverlayActive by remember { mutableStateOf(false) }
     // Medium: the recovery + interrupted-session banners truncate their
     // status text; tapping a banner expands it to the full message.
     var recoveryExpanded by remember { mutableStateOf(false) }
@@ -5573,7 +5700,7 @@ private fun WorkspaceScreen(
     }
     Scaffold(
         topBar = {
-            if (selectedTab != WorkspaceTab.PREVIEW && selectedTab != WorkspaceTab.TERMINAL) {
+            if (!voiceCallOverlayActive && selectedTab != WorkspaceTab.PREVIEW && selectedTab != WorkspaceTab.TERMINAL) {
                 Surface(
                     color = MaterialTheme.colorScheme.background,
                     modifier = Modifier.statusBarsPadding(),
@@ -5646,7 +5773,7 @@ private fun WorkspaceScreen(
             }
         },
         bottomBar = {
-            if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            if (!keyboardVisible && !voiceCallOverlayActive) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
                     NavigationBarItem(
                         selected = tab != WorkspaceTab.HOME && selectedTab == tab,
@@ -5773,6 +5900,7 @@ private fun WorkspaceScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (selectedTab) {
                 WorkspaceTab.CHAT, WorkspaceTab.HOME -> ChatTab(
+                    onCallActiveChange = { voiceCallOverlayActive = it },
                     messages = state.messages,
                     approval = state.pendingApproval,
                     liveProcess = state.liveProcess,
@@ -6560,6 +6688,7 @@ private fun FilesTab(
 
 @Composable
 private fun ChatTab(
+    onCallActiveChange: (Boolean) -> Unit = {},
     messages: List<ChatMessage>,
     approval: ToolRequest?,
     liveProcess: List<ActivityItem>,
@@ -6833,6 +6962,10 @@ private fun ChatTab(
     }
 
     var voiceCallActive by remember { mutableStateOf(false) }
+    // v3.2.37 (A2): tell the workspace chrome when the call takes over the
+    // screen, so the header/bottom bar stop bleeding through the overlay.
+    LaunchedEffect(voiceCallActive) { onCallActiveChange(voiceCallActive) }
+    DisposableEffect(Unit) { onDispose { onCallActiveChange(false) } }
 
     fun startVoiceCall() {
         if (!voiceRecognizer.isAvailable()) {
@@ -7452,6 +7585,7 @@ private fun ChatTab(
             onApproval = onApproval,
             onApprovalWithLevel = onApprovalWithLevel,
             onClose = { voiceCallActive = false },
+            onRequestMicPermission = { callPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
         )
     }
 }
@@ -7489,6 +7623,7 @@ private fun VoiceCallScreen(
     onApproval: (Boolean) -> Unit,
     onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit,
     onClose: () -> Unit,
+    onRequestMicPermission: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val voiceState by recognizer.state.collectAsState()
@@ -7548,6 +7683,16 @@ private fun VoiceCallScreen(
         if (err != null && phase == VoiceCallPhase.LISTENING) {
             statusLine = err
             statusIsError = true
+        }
+    }
+
+    // v3.2.37 (A2): while the recognizer heals itself (destroy + recreate +
+    // backoff inside VoiceRecognizer), the status line says so — the user
+    // watches it reconnect instead of staring at a frozen call.
+    LaunchedEffect(voiceState.reconnecting, voiceState.reconnectMessage) {
+        if (voiceState.reconnecting && phase == VoiceCallPhase.LISTENING) {
+            statusLine = voiceState.reconnectMessage ?: "Reconnecting\u2026"
+            statusIsError = false
         }
     }
 
@@ -7739,7 +7884,23 @@ private fun VoiceCallScreen(
                     onApprovalWithLevel = onApprovalWithLevel,
                 )
             } else {
-                VoiceCallOrb(phase = phase, level = level, speaking = speakingNow)
+                Box(contentAlignment = Alignment.Center) {
+                    // One cheap radial wash behind the orb — no blur, no stack.
+                    Box(
+                        Modifier
+                            .size(330.dp)
+                            .background(
+                                brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                                    colors = listOf(
+                                        com.vayro.app.ui.theme.KodexClay.copy(alpha = 0.13f),
+                                        Color.Transparent,
+                                    ),
+                                ),
+                                shape = CircleShape,
+                            ),
+                    )
+                    VoiceCallOrb(phase = phase, level = level, speaking = speakingNow)
+                }
                 Spacer(Modifier.height(30.dp))
                 Text(
                     when (phase) {
@@ -7778,11 +7939,45 @@ private fun VoiceCallScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (statusIsError && voiceState.errorCode != null) {
+                        Text(
+                            "Error ${voiceState.errorCode}",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                     if (voiceState.error != null && phase == VoiceCallPhase.LISTENING) {
-                        TextButton(onClick = { recognizer.start() }) {
-                            Text("Try listening again")
+                        if (voiceState.errorCode == 9) {
+                            // ERROR_INSUFFICIENT_PERMISSIONS: the fix is the
+                            // system permission, not another restart.
+                            TextButton(onClick = onRequestMicPermission) {
+                                Text("Allow microphone")
+                            }
+                        } else {
+                            TextButton(onClick = {
+                                // A fresh session, not a plain restart of
+                                // the broken one (A2/A3): tear down first,
+                                // then start clean.
+                                recognizer.cancel()
+                                statusLine = null
+                                statusIsError = false
+                                recognizer.start()
+                            }) {
+                                Text("Try listening again")
+                            }
                         }
                     }
+                } else if (phase == VoiceCallPhase.LISTENING && !voiceState.reconnecting && voiceState.softMessage != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        voiceState.softMessage!!,
+                        fontSize = 12.5.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
             Spacer(Modifier.weight(1f))
@@ -7848,7 +8043,14 @@ private fun VoiceCallOrb(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            tween(if (phase == VoiceCallPhase.THINKING) 5000 else 16000, easing = LinearEasing),
+            tween(
+                when (phase) {
+                    VoiceCallPhase.THINKING -> 5000
+                    VoiceCallPhase.SPEAKING -> 9000
+                    else -> 16000
+                },
+                easing = LinearEasing,
+            ),
             RepeatMode.Restart,
         ),
         label = "call-spin",
@@ -7861,16 +8063,25 @@ private fun VoiceCallOrb(
     )
     val clay = com.vayro.app.ui.theme.KodexClay
     val soft = MaterialTheme.colorScheme.onSurface
-    Canvas(Modifier.size(190.dp)) {
+    Canvas(Modifier.size(224.dp)) {
         val center = size.minDimension / 2f
         val baseR = size.minDimension * 0.30f
+        // v3.2.37 (A3): state-driven energy — LISTENING follows the live mic
+        // level, SPEAKING surges while the reply is actually playing,
+        // THINKING keeps its faster weave, idle phases breathe slowly.
         val energy = when (phase) {
-            VoiceCallPhase.LISTENING -> 0.25f + level.coerceIn(0f, 1f) * 0.9f
+            VoiceCallPhase.LISTENING -> 0.30f + level.coerceIn(0f, 1f) * 1.15f
             VoiceCallPhase.SENT -> 0.45f
-            VoiceCallPhase.THINKING -> 0.55f
-            VoiceCallPhase.SPEAKING -> if (speaking) 0.5f else 0.3f
+            VoiceCallPhase.THINKING -> 0.60f
+            VoiceCallPhase.SPEAKING -> if (speaking) 0.95f else 0.35f
         }
-        val pulse = 1f + 0.05f * sin(breathe.toDouble()).toFloat() + 0.10f * energy * sin((breathe * 2f).toDouble()).toFloat()
+        val speakingSurge = if (phase == VoiceCallPhase.SPEAKING && speaking) {
+            0.07f * sin((breathe * 3f).toDouble()).toFloat()
+        } else {
+            0f
+        }
+        val pulse = 1f + 0.05f * sin(breathe.toDouble()).toFloat() +
+            0.10f * energy * sin((breathe * 2f).toDouble()).toFloat() + speakingSurge
         val count = 110
         val golden = 2.399963f
         for (i in 0 until count) {
@@ -9110,7 +9321,7 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.foundation.Image(
-            painter = painterResource(id = R.drawable.vayro_logo),
+            painter = painterResource(id = R.drawable.kodex_mark),
             contentDescription = "Kodex",
             modifier = Modifier.fillMaxSize(),
         )

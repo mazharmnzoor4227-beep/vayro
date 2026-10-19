@@ -13,8 +13,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -41,6 +43,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -56,6 +59,8 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Create
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.AttachFile
@@ -229,7 +234,7 @@ internal fun ShellLogo(modifier: Modifier = Modifier, size: Int = 56) {
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.foundation.Image(
-            painter = painterResource(id = R.drawable.vayro_logo),
+            painter = painterResource(id = R.drawable.kodex_mark),
             contentDescription = "Kodex",
             modifier = Modifier.fillMaxSize(),
         )
@@ -382,6 +387,12 @@ internal fun ShellPopupMenu(
     items: List<Pair<String, () -> Unit>>,
 ) {
     if (!expanded) return
+    // v3.2.37 (Part E): popups fade/scale in from their corner — transform
+    // and alpha only, 160 ms, no layout work.
+    val popAnim = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        popAnim.animateTo(1f, tween(durationMillis = 160, easing = ShellEase))
+    }
     androidx.compose.ui.window.Popup(
         alignment = Alignment.TopEnd,
         offset = IntOffset(0, 52),
@@ -392,7 +403,14 @@ internal fun ShellPopupMenu(
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             shadowElevation = 6.dp,
-            modifier = Modifier.padding(end = 12.dp),
+            modifier = Modifier
+                .padding(end = 12.dp)
+                .graphicsLayer {
+                    alpha = popAnim.value
+                    scaleX = 0.96f + 0.04f * popAnim.value
+                    scaleY = 0.96f + 0.04f * popAnim.value
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)
+                },
         ) {
             Column(Modifier.padding(vertical = 6.dp)) {
                 items.forEach { (label, action) ->
@@ -639,6 +657,193 @@ internal fun SelectAgentSheet(
 // ---------------------------------------------------------------------------
 
 @Composable
+// v3.2.37 (Part F): the visible door into the workspace world from home.
+@Composable
+private fun WorkPill(onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 1.dp,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(16.dp), tint = KodexClay)
+            Spacer(Modifier.width(7.dp))
+            Text("Work", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(3.dp))
+            Text(
+                "projects · terminal · builds",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+// v3.2.37 (Part F): one row of the home thread.
+@Composable
+private fun HomeMessageRow(
+    message: com.vayro.app.data.HomeChatMessage,
+    movedProjectName: String?,
+    onOpenInWork: (String) -> Unit,
+) {
+    when (message.kind) {
+        "system" -> {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        message.text,
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    )
+                }
+            }
+        }
+        "work_note" -> {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = KodexClay,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "Moved to Work" + (message.projectName.takeIf { it.isNotBlank() }?.let { " \u00B7 $it" } ?: ""),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        "handoff" -> {
+            ShellCard {
+                Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(19.dp), tint = KodexClay)
+                        Spacer(Modifier.width(9.dp))
+                        Text("This is a job for Work", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        message.taskText,
+                        fontSize = 13.5.sp,
+                        lineHeight = 19.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    if (movedProjectName != null) {
+                        Text(
+                            "Moved to Work \u00B7 $movedProjectName",
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = KodexClay,
+                            modifier = Modifier.clickable { onOpenInWork(message.taskText) },
+                        ) {
+                            Text(
+                                "Open in Work",
+                                color = Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Work has the terminal, files and builds for jobs like this. Chat stays here.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+        else -> {
+            if (message.fromUser) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.widthIn(max = 300.dp),
+                    ) {
+                        Text(
+                            message.text,
+                            fontSize = 15.sp,
+                            lineHeight = 21.sp,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    message.text,
+                    fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
+                    fontSize = 15.5.sp,
+                    lineHeight = 23.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.fillMaxWidth().padding(end = 24.dp),
+                )
+            }
+        }
+    }
+}
+
+// v3.2.37 (Part D): the home top-bar work menu — a custom app-styled sheet
+// (never the system popup), wired to the same handlers as the "+" sheet
+// and the drawer Quick actions.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WorkActionsSheet(
+    onDismiss: () -> Unit,
+    onPushToGitHub: () -> Unit,
+    onGitHubBuild: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onOpenFactory: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = null,
+    ) {
+        Column(Modifier.padding(bottom = 26.dp)) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close", modifier = Modifier.size(21.dp))
+                }
+                Text(
+                    "Work",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            AttachRow(Icons.Outlined.CloudUpload, "Push to GitHub", onClick = onPushToGitHub)
+            AttachRow(Icons.Outlined.CloudUpload, "Build APK (GitHub)", onClick = onGitHubBuild)
+            AttachRow(Icons.Outlined.Terminal, "Terminal", onClick = onOpenTerminal)
+            AttachRow(Icons.Outlined.Factory, "App Factory", onClick = onOpenFactory)
+        }
+    }
+}
+
 internal fun ChatHomeScreen(
     agentKind: AgentKind,
     freeModeEnabled: Boolean,
@@ -652,11 +857,22 @@ internal fun ChatHomeScreen(
     onOpenConnectors: () -> Unit,
     onPushToGitHub: () -> Unit = {},
     onVoiceCall: () -> Unit = {},
+    // v3.2.37 (Parts D/F/F2): home thread + work actions.
+    homeMessages: List<com.vayro.app.data.HomeChatMessage> = emptyList(),
+    homeSending: Boolean = false,
+    homeProviderName: String = "",
+    onNewChat: () -> Unit = {},
+    onOpenWork: () -> Unit = {},
+    onOpenInWork: (String) -> Unit = {},
+    onGitHubBuild: () -> Unit = {},
+    onOpenTerminal: () -> Unit = {},
+    onOpenAppFactory: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var prompt by rememberSaveable { mutableStateOf("") }
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
+    var workSheetOpen by rememberSaveable { mutableStateOf(false) }
     var agentSheetOpen by rememberSaveable { mutableStateOf(false) }
     var showYouTubeDialog by rememberSaveable { mutableStateOf(false) }
     var showTikTokDialog by rememberSaveable { mutableStateOf(false) }
@@ -782,6 +998,15 @@ internal fun ChatHomeScreen(
             },
         )
     }
+    if (workSheetOpen) {
+        WorkActionsSheet(
+            onDismiss = { workSheetOpen = false },
+            onPushToGitHub = { workSheetOpen = false; onPushToGitHub() },
+            onGitHubBuild = { workSheetOpen = false; onGitHubBuild() },
+            onOpenTerminal = { workSheetOpen = false; onOpenTerminal() },
+            onOpenFactory = { workSheetOpen = false; onOpenAppFactory() },
+        )
+    }
     if (agentSheetOpen) {
         SelectAgentSheet(
             selected = agentKind,
@@ -860,14 +1085,42 @@ internal fun ChatHomeScreen(
         }
     }
     val canSend = prompt.isNotBlank()
+    val hasThread = homeMessages.isNotEmpty()
+    val threadListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(homeMessages.size, homeSending) {
+        if (hasThread) {
+            val last = (homeMessages.size - 1 + if (homeSending) 1 else 0).coerceAtLeast(0)
+            threadListState.animateScrollToItem(last)
+        }
+    }
 
     Column(Modifier.fillMaxSize().imePadding()) {
+        // v3.2.37 (Part D): polished top bar — custom menu chip on the left;
+        // New Chat + work menu (custom sheet, never the system popup) and
+        // the update bell on the right. Status-bar inset preserved.
         Row(
-            Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 6.dp),
+            Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onOpenDrawer) {
-                Icon(Icons.Outlined.Menu, contentDescription = "Menu", modifier = Modifier.size(23.dp))
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                shadowElevation = 1.dp,
+                modifier = Modifier.size(38.dp).clickable(onClick = onOpenDrawer),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(
+                            Modifier.width(17.dp).height(2.dp)
+                                .background(MaterialTheme.colorScheme.onSurface, RoundedCornerShape(1.dp)),
+                        )
+                        Box(
+                            Modifier.width(11.dp).height(2.dp)
+                                .background(MaterialTheme.colorScheme.onSurface, RoundedCornerShape(1.dp)),
+                        )
+                    }
+                }
             }
             Spacer(Modifier.weight(1f))
             if (appUpdateAvailable) {
@@ -883,18 +1136,70 @@ internal fun ChatHomeScreen(
                     }
                 }
             }
+            IconButton(onClick = onNewChat) {
+                Icon(Icons.Outlined.Create, contentDescription = "New chat", modifier = Modifier.size(21.dp))
+            }
+            IconButton(onClick = { workSheetOpen = true }) {
+                Icon(Icons.Default.MoreVert, contentDescription = "Work actions", modifier = Modifier.size(22.dp))
+            }
         }
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                ShellLogo(size = 60)
-                Spacer(Modifier.height(18.dp))
-                SerifText(greeting, fontSize = 28)
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "What should we build today?",
-                    fontSize = 14.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+        if (!hasThread) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    ShellLogo(size = 60)
+                    Spacer(Modifier.height(18.dp))
+                    SerifText(greeting, fontSize = 28)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Ask me anything — or open Work for projects and builds.",
+                        fontSize = 14.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(18.dp))
+                    WorkPill(onClick = onOpenWork)
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                WorkPill(onClick = onOpenWork)
+            }
+            androidx.compose.foundation.lazy.LazyColumn(
+                state = threadListState,
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp),
+            ) {
+                items(homeMessages.size) { index ->
+                    val message = homeMessages[index]
+                    HomeMessageRow(
+                        message = message,
+                        movedProjectName = homeMessages.firstOrNull {
+                            it.kind == "work_note" && it.taskText == message.taskText &&
+                                it.createdAtMillis >= message.createdAtMillis
+                        }?.projectName,
+                        onOpenInWork = onOpenInWork,
+                    )
+                }
+                if (homeSending) {
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = KodexClay,
+                            )
+                            Spacer(Modifier.width(9.dp))
+                            Text(
+                                "Thinking…",
+                                fontSize = 13.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
             }
         }
         Column(
@@ -966,17 +1271,21 @@ internal fun ChatHomeScreen(
                             IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
                                 Icon(Icons.Outlined.Add, contentDescription = "Add to chat", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            // v3.2.37 (F2): the pill names the provider that
+                            // answers HOME chat (not the workspace agent);
+                            // tapping it opens Providers & Agents, where
+                            // "Chat replies use" is chosen.
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier.clickable { agentSheetOpen = true },
+                                modifier = Modifier.clickable { onMoreAgents() },
                             ) {
                                 Row(
                                     Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        agentKind.title.removeSuffix(" CLI").removeSuffix(" Harness"),
+                                        homeProviderName.ifBlank { "Connect a key" },
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1,
@@ -1003,11 +1312,9 @@ internal fun ChatHomeScreen(
                                     Icon(Icons.Outlined.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
                                 }
                             } else {
-                                // Same behaviour as the workspace composer
-                                // (v3.2.34, U2): the waveform button starts
-                                // a voice call — the host opens/creates the
-                                // chat and presents the call there. The Mic
-                                // button beside it stays dictation.
+                                // Waveform button = voice call (unchanged
+                                // behavior); the host now presents the call
+                                // over THIS home thread (Part F2 routing).
                                 Box(
                                     modifier = Modifier
                                         .size(36.dp)
@@ -1063,6 +1370,9 @@ private fun SidebarSectionLabel(text: String) {
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun KodexSidebar(
+    visible: Boolean,
+    progressAnim: Animatable<Float, AnimationVector1D>,
+    onOpenWork: () -> Unit = {},
     userInitial: String,
     userName: String,
     projects: List<Project>,
@@ -1088,27 +1398,19 @@ internal fun KodexSidebar(
     onOpenTerminal: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { shown = true }
-    val scope = rememberCoroutineScope()
-    fun requestClose() {
-        scope.launch {
-            shown = false
-            delay(190)
-            onClose()
-        }
+    // v3.2.37 (Part E): the drawer stays COMPOSED after its first mount
+    // (the host pre-warms it), and only transform/alpha animate — driven
+    // by the host-owned Animatable so the content behind can scale/dim in
+    // the same draw pass. No layout offsets, no first-frame composition
+    // racing the slide (the old stutter).
+    LaunchedEffect(visible) {
+        progressAnim.animateTo(
+            targetValue = if (visible) 1f else 0f,
+            animationSpec = tween(durationMillis = 300, easing = ShellEase),
+        )
     }
-    val offsetX by animateFloatAsState(
-        targetValue = if (shown) 0f else -340f,
-        animationSpec = tween(durationMillis = 300, easing = ShellEase),
-        label = "sidebar_offset",
-    )
-    val scrimAlpha by animateFloatAsState(
-        targetValue = if (shown) 0.5f else 0f,
-        animationSpec = tween(durationMillis = 250, easing = ShellEase),
-        label = "sidebar_scrim",
-    )
-    BackHandler(onBack = { requestClose() })
+    fun requestClose() = onClose()
+    BackHandler(enabled = visible, onBack = { requestClose() })
 
     var menuProject by remember { mutableStateOf<Project?>(null) }
     var renameProject by remember { mutableStateOf<Project?>(null) }
@@ -1217,15 +1519,18 @@ internal fun KodexSidebar(
     val pinned = remember(projects, pinnedIds) { projects.filter { it.id in pinnedIds } }
     val recents = remember(projects) { projects.sortedByDescending { it.updatedAtMillis }.take(8) }
 
-    Box(Modifier.fillMaxSize()) {
+    val progress = progressAnim.value
+    val panelWidthPx = with(androidx.compose.ui.platform.LocalDensity.current) { 336.dp.toPx() }
+    Box(if (!visible && progress == 0f) Modifier.size(0.dp) else Modifier.fillMaxSize()) {
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = scrimAlpha))
+                .graphicsLayer { alpha = 0.5f * progress }
+                .background(Color.Black)
                 .clickable(
                     indication = null,
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                    onClick = { requestClose() },
+                    onClick = { if (visible) requestClose() },
                 ),
         )
         Surface(
@@ -1233,7 +1538,7 @@ internal fun KodexSidebar(
                 .align(Alignment.CenterStart)
                 .fillMaxHeight()
                 .width(320.dp)
-                .offset { IntOffset(offsetX.toInt(), 0) }
+                .graphicsLayer { translationX = -panelWidthPx * (1f - progress) }
                 .pointerInput(Unit) {
                     var totalDrag = 0f
                     detectHorizontalDragGestures(
@@ -1281,6 +1586,10 @@ internal fun KodexSidebar(
                         thickness = 0.7.dp,
                         color = MaterialTheme.colorScheme.outlineVariant,
                     )
+                    SidebarRow(Icons.Outlined.Code, "Work") {
+                        onClose()
+                        onOpenWork()
+                    }
                     SidebarRow(Icons.Outlined.ChatBubbleOutline, "Chats") {
                         onClose()
                         onOpenChats()
@@ -1473,6 +1782,11 @@ internal fun ChatsScreen(
     onOpenProject: (Project) -> Unit,
     onNewChat: () -> Unit,
     onDeleteProjects: (List<String>) -> Unit,
+    // v3.2.37 (Part F): home (normal chat) threads are listed among chats,
+    // above the Work projects they are deliberately separate from.
+    homeThreads: List<com.vayro.app.data.HomeThread> = emptyList(),
+    onOpenHomeThread: (com.vayro.app.data.HomeThread) -> Unit = {},
+    onDeleteHomeThread: (com.vayro.app.data.HomeThread) -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var filterPinned by rememberSaveable { mutableStateOf(false) }
@@ -1583,7 +1897,7 @@ internal fun ChatsScreen(
                     )
                 }
             }
-            if (visible.isEmpty()) {
+            if (visible.isEmpty() && homeThreads.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
                         if (query.isNotBlank()) "No chats match your search." else "No chats yet. Start a new chat to begin.",
@@ -1597,6 +1911,69 @@ internal fun ChatsScreen(
                     state = rememberSaveable(saver = LazyListState.Saver, key = "chats-list-state") { LazyListState() },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
+                    if (query.isBlank() && homeThreads.isNotEmpty()) {
+                        item {
+                            Text(
+                                "Home chats",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            )
+                        }
+                        items(homeThreads, key = { "home-" + it.id }) { thread ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable { onOpenHomeThread(thread) }
+                                    .padding(horizontal = 12.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Outlined.ChatBubbleOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = KodexClay,
+                                )
+                                Spacer(Modifier.width(11.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        thread.title,
+                                        fontSize = 14.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        thread.messages.lastOrNull { it.kind == "text" }?.text
+                                            ?: "Empty chat",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                IconButton(onClick = { onDeleteHomeThread(thread) }) {
+                                    Icon(
+                                        Icons.Outlined.Delete,
+                                        contentDescription = "Delete chat",
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        item {
+                            Text(
+                                "Work projects",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
                     items(visible, key = { it.id }) { project ->
                         val selected = project.id in selection
                         Row(
@@ -2865,6 +3242,88 @@ internal fun NotificationsPage(onBack: () -> Unit) {
                             fontSize = 12.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+            // v3.2.37 (Part G): background-work control + one-time battery hint.
+            ShellCard {
+                val prefs = remember { com.vayro.app.data.AppPreferences(context) }
+                var keepWorking by remember { mutableStateOf(prefs.keepWorkingInBackground) }
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(13.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Keep working in background", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            if (keepWorking) {
+                                "Kodex keeps working when you leave the app, and tells you when a task finishes."
+                            } else {
+                                "Off: Kodex may pause when you leave the app. Tasks resume from where they stopped when you come back."
+                            },
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    ShellSwitch(checked = keepWorking) { on ->
+                        keepWorking = on
+                        prefs.keepWorkingInBackground = on
+                    }
+                }
+                if (keepWorking) {
+                    val powerManager = remember {
+                        context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+                    }
+                    var ignoringBattery by remember {
+                        mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+                    }
+                    var hintSeen by remember { mutableStateOf(prefs.batteryHintSeen) }
+                    if (!ignoringBattery && !hintSeen) {
+                        ShellCardDivider()
+                        Column(Modifier.padding(16.dp)) {
+                            Text("Battery limit can stop long tasks", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                "Android is limiting Kodex's battery use. Allow unrestricted battery so long tasks can finish in the background.",
+                                fontSize = 12.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = KodexClay,
+                                    modifier = Modifier.clickable {
+                                        runCatching {
+                                            context.startActivity(
+                                                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                                                    .setData(Uri.parse("package:" + context.packageName))
+                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                            )
+                                        }
+                                        prefs.batteryHintSeen = true
+                                        hintSeen = true
+                                        ignoringBattery =
+                                            powerManager.isIgnoringBatteryOptimizations(context.packageName)
+                                    },
+                                ) {
+                                    Text(
+                                        "Allow",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    )
+                                }
+                                TextButton(onClick = {
+                                    prefs.batteryHintSeen = true
+                                    hintSeen = true
+                                }) { Text("Not now") }
+                            }
+                        }
                     }
                 }
             }

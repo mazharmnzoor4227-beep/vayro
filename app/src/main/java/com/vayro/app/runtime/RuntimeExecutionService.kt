@@ -34,7 +34,14 @@ class RuntimeExecutionService : Service() {
         var projectName: String,
         var agentName: String,
         var detail: String,
+        val startedAtMillis: Long = System.currentTimeMillis(),
+        var route: String? = null,
     )
+
+    private fun elapsedLabel(startedAtMillis: Long): String {
+        val seconds = ((System.currentTimeMillis() - startedAtMillis) / 1000L).coerceAtLeast(0L)
+        return if (seconds < 60L) seconds.toString() + "s" else (seconds / 60).toString() + "m " + (seconds % 60).toString() + "s"
+    }
 
     private val sessions = mutableMapOf<String, SessionNotification>()
 
@@ -54,7 +61,7 @@ class RuntimeExecutionService : Service() {
             NotificationCoordinator.running(
                 context = this,
                 title = "Kodex is working",
-                detail = info.detail,
+                detail = info.detail + " \u00B7 " + elapsedLabel(info.startedAtMillis),
                 canStop = canStop,
                 sessionId = sessions.keys.first(),
             )
@@ -81,6 +88,15 @@ class RuntimeExecutionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // v3.2.37 (Part G): Settings -> Notifications -> "Keep working in
+        // background" (default ON). When OFF, Kodex does not hold a
+        // foreground service: runs continue in-process while the app lives,
+        // but Android may pause them once the user leaves. The Settings copy
+        // says exactly that; nothing stronger is promised.
+        if (!com.vayro.app.data.AppPreferences(this).keepWorkingInBackground) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: "legacy"
         val projectName = intent?.getStringExtra(EXTRA_PROJECT_NAME)?.takeIf { it.isNotBlank() }
         val agentName = intent?.getStringExtra(EXTRA_AGENT_NAME)?.takeIf { it.isNotBlank() }
@@ -99,11 +115,18 @@ class RuntimeExecutionService : Service() {
                 val info = sessions[sessionId] ?: return START_STICKY
                 if (projectName != null) info.projectName = projectName
                 if (agentName != null) info.agentName = agentName
+                intent?.getStringExtra(EXTRA_ROUTE)?.takeIf { it.isNotBlank() }?.let { info.route = it }
                 info.detail = intent?.getStringExtra(EXTRA_DETAIL)?.takeIf { it.isNotBlank() }
                     ?: "${info.agentName} is working in ${info.projectName}"
                 notificationManager().notify(
                     sessionNotificationId(sessionId),
-                    NotificationCoordinator.running(this, "Kodex is working", info.detail, canStop, sessionId),
+                    NotificationCoordinator.running(
+                        this,
+                        "Kodex is working",
+                        info.detail + " \u00B7 " + elapsedLabel(info.startedAtMillis),
+                        canStop,
+                        sessionId,
+                    ),
                 )
                 refreshForegroundNotification()
             }
@@ -113,6 +136,7 @@ class RuntimeExecutionService : Service() {
                 detail = intent?.getStringExtra(EXTRA_DETAIL)
                     ?: "${agentName ?: "Agent"} finished working in ${projectName ?: "your project"}.",
                 failed = false,
+                route = intent?.getStringExtra(EXTRA_ROUTE) ?: sessions[sessionId]?.route,
             )
             ACTION_FAILED -> finishTask(
                 sessionId = sessionId,
@@ -120,6 +144,7 @@ class RuntimeExecutionService : Service() {
                 detail = intent?.getStringExtra(EXTRA_DETAIL)
                     ?: "${agentName ?: "Agent"} could not finish the task.",
                 failed = true,
+                route = intent?.getStringExtra(EXTRA_ROUTE) ?: sessions[sessionId]?.route,
             )
             ACTION_CANCELLED -> {
                 sessions.remove(sessionId)
@@ -132,7 +157,13 @@ class RuntimeExecutionService : Service() {
                     agentName = agentName ?: "Coding agent",
                     detail = intent?.getStringExtra(EXTRA_DETAIL)?.takeIf { it.isNotBlank() }
                         ?: "${agentName ?: "Coding agent"} is working in ${projectName ?: "your project"}",
+                    route = intent?.getStringExtra(EXTRA_ROUTE)?.takeIf { it.isNotBlank() },
                 )
+                // A bridge re-firing ACTION_START for a session the
+                // ViewModel already announced must not wipe the deep-link
+                // route or restart the elapsed clock.
+                val previous = sessions[sessionId]
+                if (info.route == null) info.route = previous?.route
                 sessions[sessionId] = info
                 notificationManager().notify(
                     sessionNotificationId(sessionId),
@@ -145,10 +176,13 @@ class RuntimeExecutionService : Service() {
         return START_STICKY
     }
 
-    private fun finishTask(sessionId: String, title: String, detail: String, failed: Boolean) {
+    private fun finishTask(sessionId: String, title: String, detail: String, failed: Boolean, route: String? = null) {
         sessions.remove(sessionId)
         notificationManager().cancel(sessionNotificationId(sessionId))
-        NotificationCoordinator.postResult(this, title, detail, failed)
+        // v3.2.37 (Part G): the completion notification deep-links into the
+        // run's project (route "project/<id>"), whose chat holds the
+        // delivered card for the finished run.
+        NotificationCoordinator.postResult(this, title, detail, failed, route)
         stopIfIdle()
     }
 
@@ -215,6 +249,7 @@ class RuntimeExecutionService : Service() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_CAN_STOP = "can_stop"
         const val EXTRA_SESSION_ID = "session_id"
+        const val EXTRA_ROUTE = "route"
 
         private const val MAX_WAKE_LOCK_MS = 90 * 60 * 1_000L
     }
