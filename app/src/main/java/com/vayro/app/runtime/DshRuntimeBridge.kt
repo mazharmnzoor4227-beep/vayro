@@ -756,6 +756,15 @@ internal object DshRouteMapper {
                 defaultModel = model,
                 custom = DshCustomRoute(profile.dshApi.ifBlank { "anthropic-messages" }, profile.resolvedBaseUrl),
             )
+            // v3.2.37 (Part C): the API catalog kinds are OpenAI-shaped —
+            // they run on dsh through an openai-completions custom route.
+            ProviderKind.GROQ, ProviderKind.GOOGLE_AI_STUDIO, ProviderKind.MISTRAL,
+            ProviderKind.CEREBRAS, ProviderKind.COHERE, ProviderKind.XAI -> DshRoute(
+                name = "mh-" + profile.kind.name.lowercase(),
+                keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
+                defaultModel = model,
+                custom = DshCustomRoute("openai-completions", profile.resolvedBaseUrl),
+            )
             ProviderKind.CLAUDE -> throw IllegalArgumentException("Claude subscription login is not supported by DeepSeek Harness")
             ProviderKind.OPENAI -> throw IllegalArgumentException("OpenAI provider is not supported by DeepSeek Harness")
         }

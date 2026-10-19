@@ -2901,6 +2901,11 @@ private fun RootScreenHost(
                     onAddApiKey = viewModel::addApiKey,
                     onActivateApiKey = viewModel::activateApiKey,
                     onRemoveApiKey = viewModel::removeApiKey,
+                    chatProviderKind = viewModel.resolvedChatProvider(),
+                    onSelectChatProvider = viewModel::setChatProvider,
+                    autoSwitchFor = { kind -> viewModel.autoSwitchKeys(kind) },
+                    onToggleAutoSwitch = { kind, on -> viewModel.setAutoSwitchKeys(kind, on) },
+                    keyExhaustedAt = { kind, id -> viewModel.keyExhaustedAt(kind, id) },
                     onSelectAgent = viewModel::selectAgent,
                     onInstallAgent = viewModel::installAgent,
                     onCancelAgentInstall = viewModel::cancelAgentInstall,
@@ -3111,11 +3116,6 @@ private fun RootScreenHost(
                     onAddApiKey = viewModel::addApiKey,
                     onActivateApiKey = viewModel::activateApiKey,
                     onRemoveApiKey = viewModel::removeApiKey,
-                    chatProviderKind = viewModel.resolvedChatProvider(),
-                    onSelectChatProvider = viewModel::setChatProvider,
-                    autoSwitchFor = { kind -> viewModel.autoSwitchKeys(kind) },
-                    onToggleAutoSwitch = { kind, on -> viewModel.setAutoSwitchKeys(kind, on) },
-                    keyExhaustedAt = { kind, id -> viewModel.keyExhaustedAt(kind, id) },
                     onInstallDevStack = viewModel::installDevStack,
                     onUpdateDevStack = viewModel::updateDevStack,
                     onRemoveDevStack = viewModel::removeDevStack,
@@ -3665,6 +3665,12 @@ private fun ProviderChoiceRow(
         ProviderKind.OPENCODE_ZEN -> Color(0xFF22C55E)
         ProviderKind.NVIDIA_NIM -> Color(0xFF76B900)
         ProviderKind.OPENAI -> Color(0xFF10A37F)
+        ProviderKind.GROQ -> Color(0xFFE4572E)
+        ProviderKind.GOOGLE_AI_STUDIO -> Color(0xFF7C9FF5)
+        ProviderKind.MISTRAL -> Color(0xFFFF7000)
+        ProviderKind.CEREBRAS -> Color(0xFF6290C8)
+        ProviderKind.COHERE -> Color(0xFF39594D)
+        ProviderKind.XAI -> Color(0xFFB8B8B8)
         ProviderKind.CUSTOM -> PocketOrange
     }
     val mark = when (provider) {
@@ -3676,6 +3682,12 @@ private fun ProviderChoiceRow(
         ProviderKind.OPENCODE_ZEN -> "Z"
         ProviderKind.NVIDIA_NIM -> "NV"
         ProviderKind.OPENAI -> "AI"
+        ProviderKind.GROQ -> "GQ"
+        ProviderKind.GOOGLE_AI_STUDIO -> "GM"
+        ProviderKind.MISTRAL -> "M"
+        ProviderKind.CEREBRAS -> "CB"
+        ProviderKind.COHERE -> "CO"
+        ProviderKind.XAI -> "X"
         ProviderKind.CUSTOM -> "<>"
     }
 

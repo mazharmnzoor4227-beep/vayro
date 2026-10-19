@@ -656,7 +656,6 @@ internal fun SelectAgentSheet(
 // takes over.
 // ---------------------------------------------------------------------------
 
-@Composable
 // v3.2.37 (Part F): the visible door into the workspace world from home.
 @Composable
 private fun WorkPill(onClick: () -> Unit) {
