@@ -118,7 +118,12 @@ class RealMcpProcessFactory : McpProcessFactory {
         env: Map<String, String>,
         workingDir: File?
     ): McpManagedProcess {
-        val pb = ProcessBuilder(listOf(command) + args)
+        // v3.2.38 (Part Q): a command entered as one line ("npx -y pkg")
+        // used to become a SINGLE argv element — a program name with
+        // spaces in it — so every stdio server failed to exec. Tokenize
+        // defensively; catalog presets now store program + args apart.
+        val argv = command.trim().split(Regex("\\s+")).filter { it.isNotBlank() } + args
+        val pb = ProcessBuilder(argv)
         workingDir?.let { pb.directory(it) }
         pb.environment().putAll(env)
         pb.redirectErrorStream(false)
@@ -137,6 +142,9 @@ class McpServerSession(
     val server: McpServerInfo,
     private val processFactory: McpProcessFactory = RealMcpProcessFactory(),
     private val ioTimeoutMs: Long = 15_000,
+    // v3.2.38 (Part Q): the FIRST start downloads the server package
+    // (npx -y / uvx) — 15s was never enough on a phone connection.
+    private val startTimeoutMs: Long = 120_000,
     private val maxRestarts: Int = 3,
     private val restartBackoffMs: Long = 2_000,
     private val clock: () -> Long = System::currentTimeMillis
@@ -144,6 +152,13 @@ class McpServerSession(
     @Volatile
     var state: McpSessionState = McpSessionState.IDLE
         private set
+
+    /** Why the last start failed — never blank once a start was attempted. */
+    @Volatile
+    var lastFailureReason: String? = null
+        private set
+
+    private val diagBuffer = ArrayDeque<String>()
 
     private var process: McpManagedProcess? = null
     private var restartsUsed = 0
@@ -170,9 +185,17 @@ class McpServerSession(
                 state = McpSessionState.INITIALIZING
                 if (performHandshake()) {
                     state = McpSessionState.RUNNING
+                    lastFailureReason = null
                     true
                 } else {
-                    fail("initialize handshake failed")
+                    val proc = process
+                    val reason = when {
+                        proc == null -> "server process missing during startup"
+                        !proc.isAlive() -> "server exited during startup" +
+                            (proc.exitCode()?.let { " (exit code $it)" } ?: "")
+                        else -> "server did not answer the initialize handshake within ${startTimeoutMs / 1000}s"
+                    }
+                    fail(reason)
                     false
                 }
             } catch (t: Throwable) {
@@ -248,7 +271,19 @@ class McpServerSession(
     }
 
     /** Last stderr lines captured from the server process (diagnostics). */
-    fun diagnostics(): List<String> = process?.drainStderr() ?: emptyList()
+    fun diagnostics(): List<String> {
+        harvestDiagnostics()
+        return synchronized(lock) { diagBuffer.toList() }
+    }
+
+    private fun harvestDiagnostics() {
+        val lines = process?.drainStderr().orEmpty()
+        if (lines.isEmpty()) return
+        synchronized(lock) {
+            lines.forEach { diagBuffer.addLast(it) }
+            while (diagBuffer.size > 50) diagBuffer.removeFirst()
+        }
+    }
 
     private fun <T> rpc(req: JSONObject, parse: (JSONObject) -> T): T {
         val proc = synchronized(lock) {
@@ -286,7 +321,7 @@ class McpServerSession(
     private fun performHandshake(): Boolean {
         val proc = process ?: return false
         val req = McpProtocol.initializeRequest("vayro", "3.0")
-        val deadline = clock() + ioTimeoutMs
+        val deadline = clock() + startTimeoutMs
         proc.writeLine(req.toString())
         while (true) {
             val remaining = deadline - clock()
@@ -305,6 +340,12 @@ class McpServerSession(
     }
 
     private fun fail(reason: String) {
+        // v3.2.38 (Part Q): harvest stderr and KEEP the reason BEFORE the
+        // process reference is dropped. The old order nulled the process
+        // first, so diagnostics() returned nothing and the UI showed
+        // "could not be started: " with an EMPTY reason — for every server.
+        harvestDiagnostics()
+        lastFailureReason = reason
         killProcess()
         state = McpSessionState.FAILED
     }

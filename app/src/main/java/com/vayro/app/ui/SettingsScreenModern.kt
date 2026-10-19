@@ -149,7 +149,6 @@ import com.vayro.app.runtime.EnvironmentManifestComponent
 import com.vayro.app.runtime.EnvironmentUpdateManager
 import com.vayro.app.runtime.RuntimeInstaller
 import com.vayro.app.update.AppUpdateInfo
-import com.vayro.app.ui.theme.AppColorTheme
 import com.vayro.app.ui.theme.AppThemeMode
 import com.vayro.app.ui.theme.PocketGreen
 import com.vayro.app.ui.theme.PocketOrange
@@ -172,7 +171,51 @@ import com.vayro.app.auth.ui.ChangePasswordDialog
 import com.vayro.app.auth.ui.DeleteAccountDialog
 import com.vayro.app.auth.ui.EditDisplayNameDialog
 
-enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, VOICE, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS }
+enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, VOICE, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS, ABOUT }
+
+/**
+ * v3.2.38 (Part K): hosts the three account dialogs (edit display name,
+ * change password, delete account) driven by [AuthViewModel]'s uiState.
+ * Shared by the classic Settings screen and the new Profile page, whose
+ * Edit buttons flip the same uiState flags — the dialogs must be composed
+ * on whichever surface the user is actually looking at.
+ */
+@Composable
+internal fun AuthAccountDialogs(authViewModel: AuthViewModel?) {
+    val authVm = authViewModel ?: return
+    val authUiState by authVm.uiState.collectAsStateWithLifecycle()
+    val authStateVal by authVm.authState.collectAsStateWithLifecycle()
+    val userVal = when (authStateVal) {
+        is AuthState.Authenticated -> (authStateVal as AuthState.Authenticated).user
+        is AuthState.EmailVerificationRequired -> (authStateVal as AuthState.EmailVerificationRequired).user
+        else -> null
+    }
+
+    if (authUiState.showEditNameDialog && userVal != null) {
+        EditDisplayNameDialog(
+            currentName = userVal.displayName ?: "",
+            isLoading = authUiState.isLoading,
+            onDismiss = { authVm.showEditName(false) },
+            onSubmit = { newName -> authVm.updateDisplayName(newName) },
+        )
+    }
+    if (authUiState.showChangePasswordDialog) {
+        ChangePasswordDialog(
+            isLoading = authUiState.isLoading,
+            onDismiss = { authVm.showChangePassword(false) },
+            onSubmit = { cur, new, confirm -> authVm.changePassword(cur, new, confirm) },
+        )
+    }
+    if (authUiState.showDeleteAccountDialog) {
+        val isEmail = userVal?.provider == AuthProviderType.EMAIL
+        DeleteAccountDialog(
+            isEmailProvider = isEmail,
+            isLoading = authUiState.isLoading,
+            onDismiss = { authVm.showDeleteAccount(false) },
+            onConfirm = { pass -> authVm.deleteAccount(pass) },
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -182,7 +225,6 @@ fun SettingsScreen(
     onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
     onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
     onSetThemeMode: (AppThemeMode) -> Unit,
-    onSetColorTheme: (AppColorTheme) -> Unit = {},
     onPing: () -> Unit,
     onClearTerminal: () -> Unit,
     getSavedApiKey: (ProviderKind) -> String,
@@ -264,40 +306,11 @@ fun SettingsScreen(
         )
     }
 
-    authViewModel?.let { authVm ->
-        val authUiState by authVm.uiState.collectAsStateWithLifecycle()
-        val authStateVal by authVm.authState.collectAsStateWithLifecycle()
-        val userVal = when (authStateVal) {
-            is AuthState.Authenticated -> (authStateVal as AuthState.Authenticated).user
-            is AuthState.EmailVerificationRequired -> (authStateVal as AuthState.EmailVerificationRequired).user
-            else -> null
-        }
-
-        if (authUiState.showEditNameDialog && userVal != null) {
-            EditDisplayNameDialog(
-                currentName = userVal.displayName ?: "",
-                isLoading = authUiState.isLoading,
-                onDismiss = { authVm.showEditName(false) },
-                onSubmit = { newName -> authVm.updateDisplayName(newName) },
-            )
-        }
-        if (authUiState.showChangePasswordDialog) {
-            ChangePasswordDialog(
-                isLoading = authUiState.isLoading,
-                onDismiss = { authVm.showChangePassword(false) },
-                onSubmit = { cur, new, confirm -> authVm.changePassword(cur, new, confirm) },
-            )
-        }
-        if (authUiState.showDeleteAccountDialog) {
-            val isEmail = userVal?.provider == AuthProviderType.EMAIL
-            DeleteAccountDialog(
-                isEmailProvider = isEmail,
-                isLoading = authUiState.isLoading,
-                onDismiss = { authVm.showDeleteAccount(false) },
-                onConfirm = { pass -> authVm.deleteAccount(pass) },
-            )
-        }
-    }
+    // v3.2.38 (Part K): the account dialogs live in a shared host so the
+    // new Profile page can open them too — before, they were composed only
+    // inside this screen, so Profile's Edit buttons silently did nothing
+    // unless the classic Settings happened to be in the tree.
+    AuthAccountDialogs(authViewModel)
 
     fun toggle(section: SettingsSection) {
         expanded = if (expanded == section) null else section
@@ -493,6 +506,16 @@ fun SettingsScreen(
                                     modifier = Modifier.fillMaxWidth().height(4.dp),
                                     color = PocketOrange,
                                 )
+                            }
+                            // v3.2.38 (Part K): the manual "update all" run
+                            // existed in the view model but no control ever
+                            // called it — wire it here, under its own card.
+                            TextButton(
+                                onClick = onUpdateAllToolsAndSkills,
+                                enabled = !state.autoUpdatingToolsOrSkills,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Update all tools & skills now", fontSize = 12.sp)
                             }
                         }
                     }
@@ -907,6 +930,7 @@ fun SettingsScreen(
                     appUpdateTotalBytes = state.appUpdateTotalBytes,
                     onInstallUpdate = onInstallAppUpdate,
                     onShowAppUpdateDialog = onShowAppUpdateDialog,
+                    startExpanded = focusMode,
                 )
             } }
 
@@ -1115,7 +1139,10 @@ fun SettingsScreen(
                 }
             } }
 
-            if (!focusMode || SettingsSection.CONTRIBUTORS in focusSections) { item {
+            // v3.2.38 (Part K): the About footer (version, privacy, license
+            // status, tour replay) is its own section now, so the About
+            // page no longer drags the Developer cards along with it.
+            if (!focusMode || SettingsSection.ABOUT in focusSections) { item {
                 Surface(
                     color = Color.Transparent,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -1188,6 +1215,35 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onReplayAppTour() }
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Replay app tour", fontWeight = FontWeight.Medium)
+                        Text(
+                            "See the welcome tour again",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Replay the tour",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 Spacer(Modifier.height(18.dp))
             } }
@@ -1771,50 +1827,7 @@ private fun SelectionDot(selected: Boolean) {
     }
 }
 
-private fun colorThemeIcon(theme: AppColorTheme): ImageVector = when (theme) {
-    AppColorTheme.KODEX_LIME -> Icons.Default.FlashOn
-    AppColorTheme.SOFT_LIME -> Icons.Default.Spa
-    AppColorTheme.MONO -> Icons.Default.Contrast
-    AppColorTheme.PAPER -> Icons.Default.Description
-    AppColorTheme.OCEAN -> Icons.Default.Waves
-    AppColorTheme.VIOLET -> Icons.Default.Nightlight
-    AppColorTheme.AMBER -> Icons.Default.LocalFireDepartment
-    AppColorTheme.TEAL -> Icons.Default.WaterDrop
-    AppColorTheme.NONE -> Icons.Default.Palette
-}
 
-/**
- * Color-theme picker box: same surface, shape and selected treatment as
- * [ModernThemeChoice], plus three dots previewing the theme's own
- * background / surface / primary colors.
- */
-@Composable
-private fun ModernColorThemeChoice(theme: AppColorTheme, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val scheme = theme.colorScheme
-    Surface(
-        modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = if (selected) PocketOrange.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(Modifier.padding(vertical = 11.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, theme.displayName, Modifier.size(20.dp), tint = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(5.dp))
-            Text(theme.displayName, fontSize = 11.sp, maxLines = 1, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(scheme.background, scheme.surface, scheme.primary).forEach { dotColor ->
-                    Box(
-                        Modifier
-                            .size(9.dp)
-                            .background(dotColor, CircleShape)
-                            .border(0.75.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -1884,8 +1897,11 @@ private fun AppUpdateChannelSection(
     appUpdateTotalBytes: Long = -1L,
     onInstallUpdate: () -> Unit = {},
     onShowAppUpdateDialog: () -> Unit = {},
+    // v3.2.38 (Part K): on its own App updates page the section opens
+    // expanded — the full update system in place, no extra tap.
+    startExpanded: Boolean = false,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(startExpanded) }
     val isOnline = BuildConfig.APP_VARIANT.equals("online", ignoreCase = true)
 
     SettingsAccordion(

@@ -74,12 +74,28 @@ class McpCoordinator(
 
     fun toggleMcpServer(serverId: String, enabled: Boolean) {
         mcpRegistry.toggleServer(serverId, enabled)
+        if (!enabled) {
+            // A disabled server's tools are not usable — stop claiming them.
+            toolRegistry.stopServer(serverId)
+            host.updateState {
+                it.copy(
+                    mcpToolCounts = it.mcpToolCounts - serverId,
+                    mcpServerErrors = it.mcpServerErrors - serverId
+                )
+            }
+        }
         refreshMcpServers()
     }
 
     fun removeMcpServer(serverId: String) {
         toolRegistry.stopServer(serverId)
         mcpRegistry.removeServerAndCredentials(serverId, credentialStore)
+        host.updateState {
+            it.copy(
+                mcpToolCounts = it.mcpToolCounts - serverId,
+                mcpServerErrors = it.mcpServerErrors - serverId
+            )
+        }
         refreshMcpServers()
     }
 
@@ -90,7 +106,9 @@ class McpCoordinator(
 
     fun discoverMcpTools(server: McpServerInfo) {
         host.scope.launch {
-            host.updateState { it.copy(mcpBusy = true, mcpSelectedServerId = server.id, mcpMessage = "Discovering tools for ${server.name}...") }
+            // v3.2.38 (Part Q): the busy message tells the truth about a
+            // first start — the package downloads before the handshake.
+            host.updateState { it.copy(mcpBusy = true, mcpSelectedServerId = server.id, mcpMessage = "Starting ${server.name}... a first start downloads its package, so this can take a minute.") }
             // Registry discovery does blocking process I/O: keep it off Main.
             val res = withContext(Dispatchers.IO) {
                 runCatching { toolRegistry.discover(server.id, host.state().activeProject?.id) }
@@ -104,9 +122,24 @@ class McpCoordinator(
                         serverId = server.id,
                     )
                 }
-                host.updateState { it.copy(mcpBusy = false, mcpTools = tools, mcpMessage = "Found ${tools.size} tools") }
+                host.updateState {
+                    it.copy(
+                        mcpBusy = false,
+                        mcpTools = tools,
+                        mcpMessage = "Found ${tools.size} tools",
+                        mcpToolCounts = it.mcpToolCounts + (server.id to tools.size),
+                        mcpServerErrors = it.mcpServerErrors - server.id
+                    )
+                }
             }.onFailure { err ->
-                host.updateState { it.copy(mcpBusy = false, mcpMessage = "Tool discovery failed: ${err.message}") }
+                val detail = err.message?.takeIf { it.isNotBlank() } ?: "unknown error (no detail reported)"
+                host.updateState {
+                    it.copy(
+                        mcpBusy = false,
+                        mcpMessage = "Tool discovery failed: $detail",
+                        mcpServerErrors = it.mcpServerErrors + (server.id to detail)
+                    )
+                }
             }
         }
     }

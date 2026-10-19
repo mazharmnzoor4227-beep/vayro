@@ -78,6 +78,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Lock
@@ -92,6 +93,7 @@ import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SmartDisplay
@@ -103,7 +105,6 @@ import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -153,6 +154,7 @@ import com.vayro.app.data.ApiKeyVault
 import com.vayro.app.voice.ReadAloudPlayer
 import com.vayro.app.model.AgentKind
 import com.vayro.app.model.Project
+import com.vayro.app.model.ProviderKind
 import com.vayro.app.model.agentsForPicker
 import com.vayro.app.ui.components.TikTokLinkDialog
 import com.vayro.app.ui.components.WebLinkDialog
@@ -161,7 +163,6 @@ import com.vayro.app.ui.components.fetchTikTokInfo
 import com.vayro.app.ui.components.fetchWebPageText
 import com.vayro.app.ui.theme.AppFontStyle
 import com.vayro.app.ui.theme.AppThemeMode
-import com.vayro.app.ui.theme.KodexBlue
 import com.vayro.app.ui.theme.KodexClay
 import com.vayro.app.ui.theme.SourceSerifFontFamily
 import com.vayro.app.ui.voice.VoiceInputBar
@@ -216,7 +217,7 @@ internal fun ShellSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
         onCheckedChange = onCheckedChange,
         colors = SwitchDefaults.colors(
             checkedThumbColor = Color.White,
-            checkedTrackColor = KodexBlue,
+            checkedTrackColor = KodexClay,
             checkedBorderColor = Color.Transparent,
             uncheckedThumbColor = Color.White,
             uncheckedTrackColor = MaterialTheme.colorScheme.outlineVariant,
@@ -352,7 +353,7 @@ internal fun ShellRadioPopup(
                                 icon,
                                 contentDescription = null,
                                 modifier = Modifier.size(20.dp),
-                                tint = if (selected) KodexBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (selected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(Modifier.width(12.dp))
                         }
@@ -360,7 +361,7 @@ internal fun ShellRadioPopup(
                             label,
                             fontSize = 15.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected) KodexBlue else MaterialTheme.colorScheme.onSurface,
+                            color = if (selected) KodexClay else MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f),
                         )
                         if (selected) {
@@ -368,7 +369,7 @@ internal fun ShellRadioPopup(
                                 Icons.Outlined.Check,
                                 contentDescription = "Selected",
                                 modifier = Modifier.size(19.dp),
-                                tint = KodexBlue,
+                                tint = KodexClay,
                             )
                         }
                     }
@@ -495,7 +496,6 @@ private fun AttachRow(icon: ImageVector, label: String, value: String? = null, o
 @Composable
 internal fun AddToChatSheet(
     onDismiss: () -> Unit,
-    currentProjectName: String?,
     showWorkActions: Boolean,
     workActionsEnabled: Boolean,
     showConnectors: Boolean,
@@ -561,12 +561,9 @@ internal fun AddToChatSheet(
                 thickness = 0.7.dp,
                 color = MaterialTheme.colorScheme.outlineVariant,
             )
-            AttachRow(
-                Icons.Outlined.Folder,
-                "Add to project",
-                value = currentProjectName?.takeIf { it.isNotBlank() } ?: "None",
-                onClick = onDismiss,
-            )
+            // v3.2.38 (J): the "Add to project" row was removed — it was a
+            // dead tap (dismiss-only; the app has no chat-to-project
+            // assignment store). It returns only when that feature exists.
             if (showConnectors) {
                 AttachRow(Icons.Outlined.Hub, "Connectors", onClick = onOpenConnectors)
             }
@@ -594,6 +591,14 @@ internal fun SelectAgentSheet(
     onSelect: (AgentKind) -> Unit,
     onMoreAgents: (() -> Unit)?,
     onDismiss: () -> Unit,
+    // v3.2.38 (Part P): the workspace sheet also carries the session's
+    // provider + model choice in place (empty/null = section hidden, as
+    // on the home agent sheet).
+    providerChoices: List<MainViewModel.ProviderChoice> = emptyList(),
+    onPickProvider: ((ProviderKind) -> Unit)? = null,
+    fetchProviderModels: (suspend (ProviderKind) -> List<String>)? = null,
+    onPickProviderModel: ((ProviderKind, String) -> Unit)? = null,
+    onManageProviders: (() -> Unit)? = null,
 ) {
     val agents = remember(freeModeEnabled) { agentsForPicker(freeModeEnabled) }
     ModalBottomSheet(
@@ -633,7 +638,7 @@ internal fun SelectAgentSheet(
                         )
                     }
                     if (agent == selected) {
-                        Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = KodexBlue, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = KodexClay, modifier = Modifier.size(20.dp))
                     }
                 }
             }
@@ -645,6 +650,206 @@ internal fun SelectAgentSheet(
                 )
                 AttachRow(Icons.Outlined.SmartToy, "More agents", onClick = onMoreAgents)
             }
+            if (providerChoices.isNotEmpty() && onPickProvider != null && onPickProviderModel != null) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                    thickness = 0.7.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                Text(
+                    "Provider & model",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                )
+                ProviderPickerRows(
+                    choices = providerChoices,
+                    fetchModels = fetchProviderModels,
+                    onPickProvider = onPickProvider,
+                    onPickModel = onPickProviderModel,
+                )
+                if (onManageProviders != null) {
+                    AttachRow(Icons.Outlined.Hub, "Add or manage providers", onClick = onManageProviders)
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// v3.2.38 (Part P): composer provider/model picker — the pill opens this
+// sheet IN PLACE (never a page jump). Rows are the user's CONNECTED
+// providers only; picking one switches the answering provider at once
+// (home: the F2 "Chat replies use" state; workspace: the session's
+// provider), expanding a row fetches its live model list (Part L path),
+// and "Add or manage providers" is the only door to the Providers page.
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun ProviderPickerRows(
+    choices: List<MainViewModel.ProviderChoice>,
+    fetchModels: (suspend (ProviderKind) -> List<String>)?,
+    onPickProvider: (ProviderKind) -> Unit,
+    onPickModel: (ProviderKind, String) -> Unit,
+) {
+    var expandedKind by remember { mutableStateOf<ProviderKind?>(null) }
+    var modelsByKind by remember { mutableStateOf<Map<ProviderKind, List<String>>>(emptyMap()) }
+    var failedKinds by remember { mutableStateOf<Set<ProviderKind>>(emptySet()) }
+    var loadingKind by remember { mutableStateOf<ProviderKind?>(null) }
+    val scope = rememberCoroutineScope()
+    choices.forEach { choice ->
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onPickProvider(choice.kind) }
+                    .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(choice.kind.title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        "${choice.model} · Connected",
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (choice.active) {
+                    Icon(Icons.Outlined.Check, contentDescription = "Active", tint = KodexClay, modifier = Modifier.size(20.dp))
+                }
+                if (fetchModels != null) {
+                    IconButton(onClick = {
+                        if (expandedKind == choice.kind) {
+                            expandedKind = null
+                        } else {
+                            expandedKind = choice.kind
+                            if (choice.kind !in modelsByKind && choice.kind !in failedKinds && loadingKind != choice.kind) {
+                                loadingKind = choice.kind
+                                scope.launch {
+                                    val models = runCatching { fetchModels(choice.kind) }.getOrDefault(emptyList())
+                                    loadingKind = null
+                                    if (models.isEmpty()) {
+                                        failedKinds = failedKinds + choice.kind
+                                    } else {
+                                        modelsByKind = modelsByKind + (choice.kind to models)
+                                    }
+                                }
+                            }
+                        }
+                    }) {
+                        Icon(
+                            if (expandedKind == choice.kind) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = "Models",
+                            modifier = Modifier.size(19.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (expandedKind == choice.kind) {
+                if (loadingKind == choice.kind) {
+                    Row(
+                        Modifier.padding(start = 20.dp, top = 2.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ThinkingOrb(Modifier.size(14.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Loading models…", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    if (choice.kind in failedKinds) {
+                        Text(
+                            "Could not load the model list — showing the current model.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 20.dp, top = 2.dp, bottom = 4.dp, end = 20.dp),
+                        )
+                    }
+                    val shown = (modelsByKind[choice.kind] ?: listOf(choice.model)).distinct()
+                    shown.forEach { model ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPickModel(choice.kind, model) }
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                model,
+                                fontSize = 13.5.sp,
+                                color = if (model == choice.model) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (model == choice.model) FontWeight.Medium else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (model == choice.model) {
+                                Icon(Icons.Outlined.Check, contentDescription = "Current model", tint = KodexClay, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ChatModelPickerSheet(
+    choices: List<MainViewModel.ProviderChoice>,
+    fetchModels: suspend (ProviderKind) -> List<String>,
+    onPickProvider: (ProviderKind) -> Unit,
+    onPickModel: (ProviderKind, String) -> Unit,
+    onManageProviders: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = null,
+    ) {
+        Column(Modifier.padding(bottom = 26.dp)) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close", modifier = Modifier.size(21.dp))
+                }
+                Text(
+                    "Choose model",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            if (choices.isEmpty()) {
+                Text(
+                    "No providers connected yet. Add a key and your providers will appear here.",
+                    fontSize = 13.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                )
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 440.dp)) {
+                    item {
+                        ProviderPickerRows(
+                            choices = choices,
+                            fetchModels = fetchModels,
+                            onPickProvider = onPickProvider,
+                            onPickModel = onPickModel,
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                thickness = 0.7.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            AttachRow(Icons.Outlined.Hub, "Add or manage providers", onClick = onManageProviders)
         }
     }
 }
@@ -656,28 +861,72 @@ internal fun SelectAgentSheet(
 // takes over.
 // ---------------------------------------------------------------------------
 
-// v3.2.37 (Part F): the visible door into the workspace world from home.
+// v3.2.38 (Part I): the Chat | Work mode switcher — one shared control for
+// the home top bar and the Work (Projects) landing. The active segment is a
+// raised surface thumb on a recessed track, shell tokens only. Both segments
+// drive the host's single navigation state, so this control, the drawer
+// "Work" row and the home handoff card can never disagree about the mode.
 @Composable
-private fun WorkPill(onClick: () -> Unit) {
+internal fun ModeSwitcher(
+    workSelected: Boolean,
+    onSelectChat: () -> Unit,
+    onSelectWork: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         shape = RoundedCornerShape(999.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        shadowElevation = 1.dp,
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = modifier,
     ) {
-        Row(
-            Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.padding(3.dp), verticalAlignment = Alignment.CenterVertically) {
+            ModeSegment(
+                label = "Chat",
+                selected = !workSelected,
+                onClick = onSelectChat,
+            )
+            ModeSegment(
+                label = "Work",
+                selected = workSelected,
+                onClick = onSelectWork,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModeSegment(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    if (selected) {
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 2.dp,
+            modifier = Modifier.clickable(onClick = onClick),
         ) {
-            Icon(Icons.Outlined.Code, contentDescription = null, modifier = Modifier.size(16.dp), tint = KodexClay)
-            Spacer(Modifier.width(7.dp))
-            Text("Work", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(3.dp))
             Text(
-                "projects · terminal · builds",
-                fontSize = 12.sp,
+                label,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 17.dp, vertical = 6.dp),
+            )
+        }
+    } else {
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .clickable(onClick = onClick),
+        ) {
+            Text(
+                label,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 17.dp, vertical = 6.dp),
             )
         }
     }
@@ -816,6 +1065,9 @@ private fun WorkActionsSheet(
     onGitHubBuild: () -> Unit,
     onOpenTerminal: () -> Unit,
     onOpenFactory: () -> Unit,
+    // v3.2.38 (Part N3): the user's own door to Work — present only when
+    // the home thread has messages to carry over.
+    onOpenChatInWork: (() -> Unit)? = null,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -833,6 +1085,14 @@ private fun WorkActionsSheet(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            if (onOpenChatInWork != null) {
+                AttachRow(Icons.Outlined.Folder, "Open this chat in Work", onClick = onOpenChatInWork)
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                    thickness = 0.7.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant,
                 )
             }
             AttachRow(Icons.Outlined.CloudUpload, "Push to GitHub", onClick = onPushToGitHub)
@@ -864,6 +1124,14 @@ internal fun ChatHomeScreen(
     onNewChat: () -> Unit = {},
     onOpenWork: () -> Unit = {},
     onOpenInWork: (String) -> Unit = {},
+    // v3.2.38 (Part N3): manual "Open this chat in Work" from the ⋮ sheet.
+    onOpenChatInWork: () -> Unit = {},
+    // v3.2.38 (Part P): the composer pill's in-place provider/model picker.
+    chatChoices: List<MainViewModel.ProviderChoice> = emptyList(),
+    onPickChatProvider: (ProviderKind) -> Unit = {},
+    onPickChatModel: (ProviderKind, String) -> Unit = { _, _ -> },
+    fetchChatModels: suspend (ProviderKind) -> List<String> = { emptyList() },
+    onManageProviders: () -> Unit = {},
     onGitHubBuild: () -> Unit = {},
     onOpenTerminal: () -> Unit = {},
     onOpenAppFactory: () -> Unit = {},
@@ -874,6 +1142,7 @@ internal fun ChatHomeScreen(
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
     var workSheetOpen by rememberSaveable { mutableStateOf(false) }
     var agentSheetOpen by rememberSaveable { mutableStateOf(false) }
+    var modelPickerOpen by rememberSaveable { mutableStateOf(false) }
     var showYouTubeDialog by rememberSaveable { mutableStateOf(false) }
     var showTikTokDialog by rememberSaveable { mutableStateOf(false) }
     var showWebLinkDialog by rememberSaveable { mutableStateOf(false) }
@@ -1005,6 +1274,11 @@ internal fun ChatHomeScreen(
             onGitHubBuild = { workSheetOpen = false; onGitHubBuild() },
             onOpenTerminal = { workSheetOpen = false; onOpenTerminal() },
             onOpenFactory = { workSheetOpen = false; onOpenAppFactory() },
+            onOpenChatInWork = if (homeMessages.isNotEmpty()) {
+                { workSheetOpen = false; onOpenChatInWork() }
+            } else {
+                null
+            },
         )
     }
     if (agentSheetOpen) {
@@ -1022,10 +1296,28 @@ internal fun ChatHomeScreen(
             onDismiss = { agentSheetOpen = false },
         )
     }
+    if (modelPickerOpen) {
+        ChatModelPickerSheet(
+            choices = chatChoices,
+            fetchModels = fetchChatModels,
+            onPickProvider = { kind ->
+                modelPickerOpen = false
+                onPickChatProvider(kind)
+            },
+            onPickModel = { kind, model ->
+                modelPickerOpen = false
+                onPickChatModel(kind, model)
+            },
+            onManageProviders = {
+                modelPickerOpen = false
+                onManageProviders()
+            },
+            onDismiss = { modelPickerOpen = false },
+        )
+    }
     if (sheetOpen) {
         AddToChatSheet(
             onDismiss = { sheetOpen = false },
-            currentProjectName = null,
             showWorkActions = false,
             workActionsEnabled = false,
             showConnectors = true,
@@ -1076,6 +1368,26 @@ internal fun ChatHomeScreen(
         )
     }
 
+    // v3.2.38 (Part I): a committed leftward swipe on the chat surface
+    // switches to Work — the same destination as the top switcher. The
+    // detector only claims horizontal-dominant drags once they pass touch
+    // slop (so vertical list scrolling is never stolen) and fires once, on
+    // release, past a high threshold — casual scrolls cannot trigger it. It
+    // is attached to the hero and the thread list only, never over the
+    // composer, whose own drag handling stays private.
+    val modeSwipeThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 72.dp.toPx() }
+    val swipeToWorkModifier = Modifier.pointerInput(modeSwipeThresholdPx) {
+        var totalDrag = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { totalDrag = 0f },
+            onDragEnd = {
+                if (totalDrag < -modeSwipeThresholdPx) onOpenWork()
+                totalDrag = 0f
+            },
+            onDragCancel = { totalDrag = 0f },
+            onHorizontalDrag = { _, dragAmount -> totalDrag += dragAmount },
+        )
+    }
     val greeting = remember {
         when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
             in 5..11 -> "Good morning"
@@ -1086,7 +1398,11 @@ internal fun ChatHomeScreen(
     }
     val canSend = prompt.isNotBlank()
     val hasThread = homeMessages.isNotEmpty()
-    val threadListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    // v3.2.38 (Part I): thread scroll survives leaving to Work and back,
+    // like every other list in the shell (U8b pattern).
+    val threadListState = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
+        androidx.compose.foundation.lazy.LazyListState()
+    }
     LaunchedEffect(homeMessages.size, homeSending) {
         if (hasThread) {
             val last = (homeMessages.size - 1 + if (homeSending) 1 else 0).coerceAtLeast(0)
@@ -1095,9 +1411,12 @@ internal fun ChatHomeScreen(
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        // v3.2.37 (Part D): polished top bar — custom menu chip on the left;
-        // New Chat + work menu (custom sheet, never the system popup) and
-        // the update bell on the right. Status-bar inset preserved.
+        // v3.2.37 (Part D) + v3.2.38 (Part I): polished top bar — custom menu
+        // chip on the left; the Chat | Work mode switcher centered; New Chat
+        // + work menu (custom sheet, never the system popup) and the update
+        // bell on the right. Status-bar inset preserved. The centered box is
+        // weight-based, so the switcher (~140dp) keeps clear of both clusters
+        // even on a 360dp screen with the bell visible.
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1122,7 +1441,13 @@ internal fun ChatHomeScreen(
                     }
                 }
             }
-            Spacer(Modifier.weight(1f))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                ModeSwitcher(
+                    workSelected = false,
+                    onSelectChat = {},
+                    onSelectWork = onOpenWork,
+                )
+            }
             if (appUpdateAvailable) {
                 IconButton(onClick = onOpenUpdate) {
                     Box {
@@ -1144,31 +1469,26 @@ internal fun ChatHomeScreen(
             }
         }
         if (!hasThread) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.weight(1f).fillMaxWidth().then(swipeToWorkModifier),
+                contentAlignment = Alignment.Center,
+            ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     ShellLogo(size = 60)
                     Spacer(Modifier.height(18.dp))
                     SerifText(greeting, fontSize = 28)
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Ask me anything — or open Work for projects and builds.",
+                        "Ask me anything — projects and builds live in Work.",
                         fontSize = 14.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.height(18.dp))
-                    WorkPill(onClick = onOpenWork)
                 }
             }
         } else {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                WorkPill(onClick = onOpenWork)
-            }
             androidx.compose.foundation.lazy.LazyColumn(
                 state = threadListState,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth().then(swipeToWorkModifier).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp),
             ) {
@@ -1185,12 +1505,10 @@ internal fun ChatHomeScreen(
                 }
                 if (homeSending) {
                     item {
+                        // v3.2.38 (Part O): chat waits use the SAME Canvas
+                        // ThinkingOrb as Work mode — no plain spinner here.
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = KodexClay,
-                            )
+                            ThinkingOrb(Modifier.size(17.dp))
                             Spacer(Modifier.width(9.dp))
                             Text(
                                 "Thinking…",
@@ -1271,14 +1589,16 @@ internal fun ChatHomeScreen(
                             IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
                                 Icon(Icons.Outlined.Add, contentDescription = "Add to chat", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            // v3.2.37 (F2): the pill names the provider that
-                            // answers HOME chat (not the workspace agent);
-                            // tapping it opens Providers & Agents, where
-                            // "Chat replies use" is chosen.
+                            // v3.2.37 (F2) + v3.2.38 (Part P): the pill
+                            // names the provider + model that answer HOME
+                            // chat; tapping opens the in-place picker sheet
+                            // (same F2 state — no page jump). The label is
+                            // width-capped and ellipsized so it can never
+                            // push the mic/send buttons off a narrow screen.
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier.clickable { onMoreAgents() },
+                                modifier = Modifier.clickable { modelPickerOpen = true },
                             ) {
                                 Row(
                                     Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -1289,6 +1609,8 @@ internal fun ChatHomeScreen(
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 150.dp),
                                     )
                                     Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
@@ -1793,6 +2115,8 @@ internal fun ChatsScreen(
     var filterMenuOpen by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf<Set<String>>(emptySet()) }
     var confirmDelete by remember { mutableStateOf(false) }
+    // v3.2.38 (J): home-thread delete asks first, like project delete does.
+    var threadToDelete by remember { mutableStateOf<com.vayro.app.data.HomeThread?>(null) }
     val inSelection = selection.isNotEmpty()
 
     val visible = remember(projects, query, filterPinned, pinnedIds) {
@@ -1802,6 +2126,33 @@ internal fun ChatsScreen(
             .sortedByDescending { it.updatedAtMillis }
     }
 
+    if (threadToDelete != null) {
+        val target = threadToDelete!!
+        Dialog(onDismissRequest = { threadToDelete = null }) {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 6.dp) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Delete this chat?", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "\"${target.title}\" and its messages will be permanently deleted.",
+                        fontSize = 13.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { threadToDelete = null }) { Text("Cancel") }
+                        Button(
+                            onClick = {
+                                threadToDelete = null
+                                onDeleteHomeThread(target)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) { Text("Delete", color = Color.White) }
+                    }
+                }
+            }
+        }
+    }
     if (confirmDelete) {
         Dialog(onDismissRequest = { confirmDelete = false }) {
             Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 6.dp) {
@@ -1954,7 +2305,7 @@ internal fun ChatsScreen(
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                 }
-                                IconButton(onClick = { onDeleteHomeThread(thread) }) {
+                                IconButton(onClick = { threadToDelete = thread }) {
                                     Icon(
                                         Icons.Outlined.Delete,
                                         contentDescription = "Delete chat",
@@ -2000,8 +2351,8 @@ internal fun ChatsScreen(
                                 Box(
                                     modifier = Modifier
                                         .size(22.dp)
-                                        .background(if (selected) KodexBlue else Color.Transparent, CircleShape)
-                                        .border(1.5.dp, if (selected) KodexBlue else MaterialTheme.colorScheme.outline, CircleShape),
+                                        .background(if (selected) KodexClay else Color.Transparent, CircleShape)
+                                        .border(1.5.dp, if (selected) KodexClay else MaterialTheme.colorScheme.outline, CircleShape),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     if (selected) {
@@ -2147,9 +2498,11 @@ internal fun ClaudeSettingsHome(
     onToggleHaptics: (Boolean) -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenDeveloperTools: () -> Unit,
+    onOpenRuntime: () -> Unit = {},
+    onOpenEnvironment: () -> Unit = {},
+    onOpenDeveloper: () -> Unit = {},
     onOpenPrivacy: () -> Unit,
     onOpenAbout: () -> Unit,
-    onOpenAllSettings: () -> Unit,
     onLogout: () -> Unit,
     appUpdateAvailable: Boolean = false,
     currentVersion: String = "",
@@ -2333,21 +2686,32 @@ internal fun ClaudeSettingsHome(
                 ShellCard {
                     ShellRow(Icons.Outlined.Notifications, "Notifications", onClick = onOpenNotifications)
                     ShellCardDivider()
-                    ShellRow(Icons.Outlined.Code, "Developer tools", onClick = onOpenDeveloperTools)
-                    ShellCardDivider()
-                    ShellRow(Icons.Outlined.Lock, "Privacy", onClick = onOpenPrivacy)
-                    ShellCardDivider()
                     ShellRow(
                         Icons.Outlined.SystemUpdate,
                         "App updates",
                         value = if (appUpdateAvailable) "Update available" else "v$currentVersion",
                         onClick = onOpenAppUpdates,
                     )
+                }
+            }
+            // v3.2.38 (Part K): every function group that used to hide in
+            // the classic monolith has its own row and its own page now —
+            // there is no "All settings" escape hatch anymore.
+            item {
+                ShellCard {
+                    ShellRow(Icons.Outlined.Code, "Developer tools", onClick = onOpenDeveloperTools)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Terminal, "Linux runtime", onClick = onOpenRuntime)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Refresh, "Environment updates", onClick = onOpenEnvironment)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Person, "Developer", value = "The person behind Kodex", onClick = onOpenDeveloper)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Lock, "Privacy", onClick = onOpenPrivacy)
                     ShellCardDivider()
                     ShellRow(Icons.Outlined.Info, "About", value = "v${BuildConfig.VERSION_NAME}", onClick = onOpenAbout)
                 }
             }
-            item { ShellCard { ShellRow(Icons.Outlined.Settings, "All settings", value = "Classic view", onClick = onOpenAllSettings) } }
             item {
                 ShellCard {
                     ShellRow(
@@ -2548,7 +2912,18 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
         if (preview) previewVoice(voice)
     }
 
-    if (showLanguagePopup) {
+    if (showLanguagePopup && allVoices.isEmpty()) {
+        // v3.2.38 (J): the Language row used to swallow the tap when the
+        // device reports no TTS voices — say so instead of silence.
+        ShellRadioPopup(
+            title = "Language",
+            options = listOf(Triple(null, "No voices available on this device", "none")),
+            selectedKey = "",
+            onSelect = { showLanguagePopup = false },
+            onDismiss = { showLanguagePopup = false },
+        )
+    }
+    if (showLanguagePopup && allVoices.isNotEmpty()) {
         val languages = remember(allVoices) {
             allVoices.mapNotNull { it.locale }.distinctBy { it.language + it.country }
         }
@@ -2688,6 +3063,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
             }
             item {
                 val testPlaying = ReadAloudPlayer.playingMessageId == "kodex-voice-test"
+                Column {
                 OutlinedButton(
                     onClick = {
                         // The EXACT player path Listen uses, so the test
@@ -2706,6 +3082,17 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                     Spacer(Modifier.width(8.dp))
                     Text(if (testPlaying) "Stop test" else "Test voice")
                 }
+                // v3.2.38 (M1): if the selected voice could not be used,
+                // the reason shows here too (and as a toast at Listen).
+                ReadAloudPlayer.lastNotice?.let { notice ->
+                    Text(
+                        notice,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                }
             }
             item {
                 ShellCard {
@@ -2713,7 +3100,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                         Icons.Outlined.RecordVoiceOver,
                         "Language",
                         value = selectedVoice?.locale?.getDisplayName(java.util.Locale.ENGLISH) ?: "—",
-                        onClick = { if (allVoices.isNotEmpty()) showLanguagePopup = true },
+                        onClick = { showLanguagePopup = true },
                     )
                     ShellCardDivider()
                     ShellRow(
@@ -2940,7 +3327,9 @@ internal fun GitPushUi(
                         Modifier.padding(22.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        CircularProgressIndicator(color = KodexClay)
+                        // v3.2.38 (Part O): the orb, not a plain spinner,
+                        // on this home-reachable wait too.
+                        ThinkingOrb(Modifier.size(28.dp))
                         Spacer(Modifier.height(14.dp))
                         Text(
                             "Pushing ${state.targetName} to GitHub…",
@@ -3022,6 +3411,12 @@ internal fun ProfilePage(
     onNavigateToAuth: () -> Unit,
 ) {
     val initial = (accountName.firstOrNull()?.uppercaseChar() ?: 'K').toString()
+    // v3.2.38 (Part K): Profile's Edit Display Name / Change Password /
+    // Delete Account buttons flip AuthViewModel dialog flags — the dialogs
+    // themselves must be composed here, on the page the user is looking at.
+    if (authViewModel != null) {
+        AuthAccountDialogs(authViewModel = authViewModel)
+    }
     Column(Modifier.fillMaxSize()) {
         Box(
             Modifier

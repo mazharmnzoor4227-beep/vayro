@@ -22,6 +22,10 @@ sealed interface ConnectionValidation {
         val message: String,
         val providerMessage: String? = null,
         val label: String = "Failed",
+        /** v3.2.38 (L2): the real HTTP status (0 = no response) so the UI can show it in the small technical line. */
+        val httpCode: Int = 0,
+        /** v3.2.38 (L): true when the provider rejected the MODEL (dead/unknown model) — the catalog self-corrects on this. */
+        val modelError: Boolean = false,
     ) : ConnectionValidation
 }
 
@@ -86,7 +90,28 @@ class ProviderApiClient {
         // A ten-second validation timeout produced false "network" failures even
         // though discovery and the endpoint itself were healthy.
         val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 12_000, readTimeoutMs = 45_000)
+        val providerMessage = providerErrorMessage(response.body)
+        // v3.2.38 (L2): the old classifier blamed "the Base URL and selected
+        // gateway protocol" for EVERY 404 — but Groq, Cerebras, xAI, Google
+        // and OpenAI all report a dead or unknown MODEL as HTTP 404 too, so
+        // one stale default made every provider look like the same URL
+        // problem. Model errors are detected from the provider's own body
+        // first and classified as what they are; every failure now carries
+        // the real HTTP status for the technical line.
+        val modelError = isModelError(response.code, response.body)
         when {
+            // v3.2.38 (J): some gateways answer HTTP 200 with an error body.
+            // A "success" whose body carries an error and no reply content
+            // is not a success — classify it by the provider's own words.
+            response.code in 200..299 && providerMessage != null &&
+                !response.body.contains("\"choices\"") &&
+                !response.body.contains("\"content\"") &&
+                !response.body.contains("\"output\"") -> ConnectionValidation.Failure(
+                "The provider replied with an error instead of a test answer.",
+                providerMessage,
+                "Provider error",
+                response.code,
+            )
             response.code in 200..299 -> ConnectionValidation.Success(
                 if (protocol == ProviderProtocol.ANTHROPIC || protocol == ProviderProtocol.ANTHROPIC_GATEWAY || protocol == ProviderProtocol.OPENROUTER) {
                     "Anthropic Messages endpoint verified. Claude Code settings are ready."
@@ -95,45 +120,67 @@ class ProviderApiClient {
                 },
             )
             response.code == 401 || response.code == 403 -> ConnectionValidation.Failure(
-                "Check this API key or select another saved key.",
-                providerErrorMessage(response.body),
+                "This key was rejected. Check the key and try again.",
+                providerMessage,
                 "Rejected",
+                response.code,
+            )
+            modelError -> ConnectionValidation.Failure(
+                "That model is not available on this provider.",
+                providerMessage,
+                "Model error",
+                response.code,
+                modelError = true,
             )
             response.code == 404 -> ConnectionValidation.Failure(
-                "Check the Base URL and selected gateway protocol.",
-                providerErrorMessage(response.body),
+                "The provider could not find that endpoint. If you changed the Base URL in Advanced, check it there.",
+                providerMessage,
                 "Endpoint error",
+                response.code,
             )
-            response.code == 400 && response.body.contains("model", ignoreCase = true) ->
-                ConnectionValidation.Failure(
-                    "Refresh the model list or select a different model.",
-                    providerErrorMessage(response.body),
-                    "Model error",
-                )
             response.code == 429 -> ConnectionValidation.Failure(
-                "Wait a moment, then retry or use another API key.",
-                providerErrorMessage(response.body),
+                "Rate limited — wait a moment, then try again.",
+                providerMessage,
                 "Rate limited",
+                response.code,
             )
             response.code in 500..599 -> ConnectionValidation.Failure(
-                "The provider is temporarily unavailable. Try again shortly.",
-                providerErrorMessage(response.body),
+                "The provider is having a problem right now. Try again shortly.",
+                providerMessage,
                 "Provider error",
+                response.code,
             )
             response.code > 0 -> ConnectionValidation.Failure(
-                "Review the model, protocol, and endpoint settings.",
-                providerErrorMessage(response.body),
+                "The provider could not complete that request.",
+                providerMessage,
                 "Request failed",
+                response.code,
             )
             response.error?.contains("timeout", ignoreCase = true) == true ||
                 response.error?.contains("timed out", ignoreCase = true) == true ->
-                ConnectionValidation.Failure("Check your connection and try again.", response.error, "Timed out")
+                ConnectionValidation.Failure("Network problem — check your connection and try again.", response.error, "Timed out")
             else -> ConnectionValidation.Failure(
-                "Check your internet connection and provider settings.",
+                "Network problem — check your connection and try again.",
                 response.error,
                 "Network error",
             )
         }
+    }
+
+    /**
+     * v3.2.38 (L2): a model-class failure. Providers report a dead/unknown
+     * model as 400 (Anthropic-style) or 404 (OpenAI-compatible style) with
+     * the word "model" plus a not-found / no-access phrase in the body.
+     */
+    private fun isModelError(code: Int, body: String): Boolean {
+        if (code != 400 && code != 404) return false
+        val b = body.lowercase()
+        if (!b.contains("model")) return false
+        if (code == 400) return true
+        return b.contains("not_found") || b.contains("not found") ||
+            b.contains("does not exist") || b.contains("not exist") ||
+            b.contains("no access") || b.contains("not available") ||
+            b.contains("not supported") || b.contains("invalid model")
     }
 
     /** One turn of a plain chat conversation for [chatCompletion]. */

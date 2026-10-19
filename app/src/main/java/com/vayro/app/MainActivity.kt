@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
 
             setContent {
                 val state by vm.state.collectAsStateWithLifecycle()
-                PocketTheme(themeMode = state.themeMode, colorTheme = state.colorTheme, fontStyle = state.fontStyle) {
+                PocketTheme(themeMode = state.themeMode, fontStyle = state.fontStyle) {
                     com.vayro.app.license.LicenseGate {
                         PocketDevApp(vm)
                     }

@@ -82,6 +82,7 @@ fun MultiAgentTeamBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
     ) {
         if (fullStudioMode) {
             com.vayro.app.agent.team.ui.TeamStudioScreen(

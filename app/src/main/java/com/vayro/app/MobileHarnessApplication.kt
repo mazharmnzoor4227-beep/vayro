@@ -54,7 +54,13 @@ class MobileHarnessApplication : Application() {
                 object : DefaultLifecycleObserver {
                     override fun onStop(owner: LifecycleOwner) {
                         markBackgrounded(true)
-                        runCatching { KeepAliveService.start(this@MobileHarnessApplication) }
+                        // v3.2.38 (J): "Keep working in background" OFF must
+                        // also stop the keep-alive foreground service —
+                        // previously it started unconditionally, so OFF
+                        // still promoted the app to a foreground service.
+                        if (com.vayro.app.data.AppPreferences(this@MobileHarnessApplication).keepWorkingInBackground) {
+                            runCatching { KeepAliveService.start(this@MobileHarnessApplication) }
+                        }
                     }
 
                     override fun onStart(owner: LifecycleOwner) {

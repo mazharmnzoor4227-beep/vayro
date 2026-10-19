@@ -264,7 +264,6 @@ data class AppUiState(
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
     val activeApiKeyName: String? = null,
     val themeMode: com.vayro.app.ui.theme.AppThemeMode = com.vayro.app.ui.theme.AppThemeMode.DARK,
-    val colorTheme: com.vayro.app.ui.theme.AppColorTheme = com.vayro.app.ui.theme.AppColorTheme.NONE,
     val fontStyle: com.vayro.app.ui.theme.AppFontStyle = com.vayro.app.ui.theme.AppFontStyle.DEFAULT,
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val apiPingMessage: String? = null,
@@ -429,6 +428,11 @@ data class AppUiState(
     val mcpServers: List<com.vayro.app.mcp.McpServerInfo> = emptyList(),
     val mcpCatalog: List<com.vayro.app.mcp.McpCatalogTemplate> = emptyList(),
     val mcpTools: List<com.vayro.app.runtime.McpToolDefinition> = emptyList(),
+    // v3.2.38 (Part Q): per-server discovered tool counts (the header total
+    // is their sum — the real discovered total, not the last server's list)
+    // and per-server last discovery error, shown on the server's own card.
+    val mcpToolCounts: Map<String, Int> = emptyMap(),
+    val mcpServerErrors: Map<String, String> = emptyMap(),
     val mcpAuditLogs: List<com.vayro.app.mcp.McpAuditEntry> = emptyList(),
     val mcpSelectedServerId: String? = null,
     val mcpBusy: Boolean = false,
@@ -807,8 +811,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             geminiApiModel = geminiApiStore.apiModel,
             themeMode = runCatching { com.vayro.app.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.vayro.app.ui.theme.AppThemeMode.DARK),
-            colorTheme = runCatching { com.vayro.app.ui.theme.AppColorTheme.valueOf(preferences.colorTheme.uppercase()) }
-                .getOrDefault(com.vayro.app.ui.theme.AppColorTheme.NONE),
             fontStyle = runCatching { com.vayro.app.ui.theme.AppFontStyle.valueOf(preferences.fontStyle.uppercase()) }
                 .getOrDefault(com.vayro.app.ui.theme.AppFontStyle.DEFAULT),
             projects = initialProjects,
@@ -1350,17 +1352,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setThemeMode(mode: com.vayro.app.ui.theme.AppThemeMode) {
-        // Picking a mode hands palette control back to the base Kodex
-        // schemes, so any selected color theme is cleared.
         preferences.themeMode = mode.name.lowercase()
-        preferences.colorTheme = com.vayro.app.ui.theme.AppColorTheme.NONE.name.lowercase()
-        _state.update { it.copy(themeMode = mode, colorTheme = com.vayro.app.ui.theme.AppColorTheme.NONE) }
-    }
-
-    /** Color theme: persists the choice; the palette applies immediately via the theme root. */
-    fun setColorTheme(theme: com.vayro.app.ui.theme.AppColorTheme) {
-        preferences.colorTheme = theme.name.lowercase()
-        _state.update { it.copy(colorTheme = theme) }
+        _state.update { it.copy(themeMode = mode) }
     }
 
     /** Font style (Settings): Default = bundled Claude pairing, System = device font. */
@@ -3780,31 +3773,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * file/project/code references. Anything ambiguous stays on the full
      * task pipeline (plan + permissions stay available for real work).
      */
+    /**
+     * v3.2.38 (Part N): delegates to [HomeTurnClassifier] — conversation is
+     * the default, questions always win, and the handoff card is reserved
+     * for unmistakable creation commands. (The old inline classifier is
+     * gone; its English-only allowlist misfired on Hindi/Urdu questions.)
+     */
     private fun isConversationalTurn(
         text: String,
         hasAttachments: Boolean,
         mentionedPaths: List<String>,
-    ): Boolean {
-        if (hasAttachments || mentionedPaths.isNotEmpty()) return false
-        val t = text.trim()
-        if (t.isEmpty() || t.length > 240) return false
-        val lower = t.lowercase()
-        val taskWords = listOf(
-            "build", "create", "make", "fix", "add", "change", "update", "delete",
-            "remove", "write", "edit", "install", "run", "push", "deploy",
-            "generate", "design", "implement", "refactor", "convert", "download",
-            "upload", "set up", "setup", "configure", "debug", "open", "code",
-            "file", "project", "website", "screen", "feature",
-            ".kt", ".apk", ".html", ".json", "/",
-        )
-        if (taskWords.any { lower.contains(it) }) return false
-        val greetingStart = Regex(
-            "^(hi|hii+|hello|hey|aoa|assalam|salam|thanks|thank you|shukria|ok|okay|great|nice|good|bye|who are you|what can you do|tum kon|aap kon)"
-        ).containsMatchIn(lower)
-        if (greetingStart) return true
-        if (lower.endsWith("?")) return true
-        return t.split(Regex("\\s+")).size <= 5
-    }
+    ): Boolean = HomeTurnClassifier.isConversational(text, hasAttachments, mentionedPaths)
 
     // ------------------------------------------------------------------
     // v3.2.37 (Parts F + F2 + C): home chat — normal conversation only.
@@ -3908,7 +3887,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun refreshHomeChatProviderLabel() {
-        _state.update { it.copy(homeChatProviderName = resolvedChatProvider()?.title ?: "") }
+        // v3.2.38 (Part P): the composer pill names provider + model.
+        val resolved = resolvedChatProvider()
+        _state.update {
+            it.copy(
+                homeChatProviderName = resolved?.let { kind ->
+                    "${kind.title} · ${catalogChatModel(kind)}"
+                } ?: "",
+            )
+        }
+    }
+
+    /** v3.2.38 (Part P): one row of the composer provider/model picker sheet. */
+    data class ProviderChoice(val kind: ProviderKind, val model: String, val active: Boolean)
+
+    /** Home chat choices: connected catalog providers; active = the F2 "Chat replies use" pick (same state, two doors). */
+    fun chatProviderChoices(): List<ProviderChoice> {
+        val active = resolvedChatProvider()
+        return connectedChatProviders().map { kind ->
+            ProviderChoice(kind, catalogChatModel(kind), active = kind == active)
+        }
+    }
+
+    /** Workspace choices for [agent]: the providers it can use that have a saved key (plus the current one). */
+    fun workspaceProviderChoices(agent: AgentKind): List<ProviderChoice> {
+        val current = _state.value.provider
+        return providersForAgent(agent)
+            .filter { kind -> kind == current.kind || vault.list(kind.name).isNotEmpty() }
+            .map { kind ->
+                ProviderChoice(
+                    kind = kind,
+                    model = if (kind == current.kind) current.model else catalogChatModel(kind),
+                    active = kind == current.kind,
+                )
+            }
+    }
+
+    private val pickerModelCache = mutableMapOf<String, List<String>>()
+
+    /** Live model list for the picker (the Part L discovery path), cached per provider; empty = fetch failed. */
+    private suspend fun pickerModelsFor(profile: ProviderProfile): List<String> {
+        pickerModelCache[profile.kind.name]?.let { return it }
+        val secret = vault.credentials(profile.kind.name).firstOrNull { it.isActive }?.secret
+            ?: vault.credentials(profile.kind.name).firstOrNull()?.secret
+            ?: return emptyList()
+        val result = discoverModels(profile, secret)
+        val models = (result as? ModelDiscoveryResult.Success)?.models?.map { it.id }.orEmpty()
+        if (models.isNotEmpty()) pickerModelCache[profile.kind.name] = models
+        return models
+    }
+
+    suspend fun chatPickerModels(kind: ProviderKind): List<String> = pickerModelsFor(catalogChatDefaults(kind))
+
+    suspend fun workspacePickerModels(kind: ProviderKind): List<String> {
+        val current = _state.value.provider
+        val profile = if (kind == current.kind) current else catalogChatDefaults(kind)
+        return pickerModelsFor(profile)
+    }
+
+    /** Persists the picker sheet's model choice for home chat. */
+    fun setChatModel(kind: ProviderKind, model: String) {
+        if (model.isBlank()) return
+        preferences.setChatModelOverride(kind.name, model)
+        refreshHomeChatProviderLabel()
+    }
+
+    /** Workspace provider switch from the composer sheet (Part P). */
+    fun pickWorkspaceProvider(kind: ProviderKind) {
+        if (kind == _state.value.provider.kind) return
+        updateProvider(
+            ProviderProfile(kind, baseUrl = catalogChatBaseUrl(kind), model = catalogChatModel(kind)),
+            "",
+        )
+    }
+
+    /** Workspace provider + model switch from the composer sheet (Part P). */
+    fun pickWorkspaceProviderModel(kind: ProviderKind, model: String) {
+        if (model.isBlank()) return
+        val current = _state.value.provider
+        if (kind == current.kind && model == current.model) return
+        updateProvider(
+            ProviderProfile(kind, baseUrl = catalogChatBaseUrl(kind), model = model),
+            "",
+        )
     }
 
     fun autoSwitchKeys(kind: ProviderKind): Boolean = preferences.autoSwitchKeys(kind.name)
@@ -3934,8 +3995,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         appendHomeMessage(thread.id, com.vayro.app.data.HomeChatMessage(fromUser = true, text = trimmed))
         if (!isConversationalTurn(trimmed, hasAttachments = false, mentionedPaths = emptyList())) {
-            // A job, not a chat: show the handoff card. Nothing is created
-            // or sent anywhere until the user taps "Open in Work".
+            // A job, not a chat (Part N: only an unmistakable creation
+            // command lands here). Acknowledge in words first; the card
+            // below is the action. Nothing is created or sent anywhere
+            // until the user taps "Open in Work".
+            appendHomeMessage(
+                thread.id,
+                com.vayro.app.data.HomeChatMessage(
+                    fromUser = false,
+                    text = "Got it — that is a build job, so I have put it on a card below. " +
+                        "Tap Open in Work and I will build it there with our full chat as context.",
+                ),
+            )
             appendHomeMessage(
                 thread.id,
                 com.vayro.app.data.HomeChatMessage(
@@ -3956,6 +4027,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(homeSending = false) }
     }
 
+    /**
+     * v3.2.38 (Part N4): the handoff prompt WITH the conversation as
+     * context — the workspace agent receives the recent home-thread turns,
+     * not just the bare task line.
+     */
+    fun homeThreadWorkPrompt(taskText: String): String {
+        val thread = activeHomeThread() ?: return taskText
+        val turns = thread.messages.filter { it.kind == "text" }.takeLast(10)
+        if (turns.size <= 1) return taskText
+        val digest = turns.joinToString("\n") { message ->
+            (if (message.fromUser) "Me: " else "Kodex: ") + message.text
+        }
+        return "Context from my chat with you:\n$digest\n\nMy task: $taskText"
+    }
+
+    /** v3.2.38 (Part N3): the task text for a manual "Open this chat in Work". */
+    fun activeHomeTaskText(): String =
+        activeHomeThread()?.messages?.lastOrNull { it.fromUser && it.kind == "text" }?.text.orEmpty()
+
     /** Leaves the "Moved to Work" receipt in the home thread after a handoff tap. */
     fun noteHomeTaskMoved(taskText: String, projectName: String) {
         val thread = activeHomeThread() ?: return
@@ -3973,7 +4063,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun homeProfileFor(kind: ProviderKind): ProviderProfile {
         val current = _state.value.provider
-        return if (current.kind == kind) current else ProviderProfile(kind)
+        // v3.2.38 (L/J): home chat uses the endpoint Test & Connect actually
+        // validated for this kind (saved below), not bare enum defaults —
+        // a tested custom Base URL/model must be what chat runs with.
+        return if (current.kind == kind) current else catalogChatDefaults(kind)
+    }
+
+    /** v3.2.38 (L): the model home chat / the catalog card should use for [kind]. */
+    fun catalogChatModel(kind: ProviderKind): String =
+        preferences.chatModelOverride(kind.name)
+            ?: com.vayro.app.data.ProviderCatalog.entry(kind)?.chatModel
+            ?: kind.defaultModel
+
+    /** v3.2.38 (J): the Base URL home chat / the catalog card should use for [kind]. */
+    fun catalogChatBaseUrl(kind: ProviderKind): String =
+        preferences.chatBaseUrlOverride(kind.name) ?: kind.defaultBaseUrl
+
+    /** v3.2.38 (L/J): the effective catalog profile for [kind] — validated-endpoint overrides first. */
+    fun catalogChatDefaults(kind: ProviderKind): ProviderProfile =
+        ProviderProfile(kind, baseUrl = catalogChatBaseUrl(kind), model = catalogChatModel(kind))
+
+    /** v3.2.38 (L/J): persists the endpoint Test & Connect validated, so chat actually uses it. */
+    fun saveChatEndpointOverride(kind: ProviderKind, baseUrl: String, model: String) {
+        if (baseUrl.isNotBlank()) {
+            preferences.setChatBaseUrlOverride(kind.name, baseUrl)
+        }
+        if (model.isNotBlank()) {
+            preferences.setChatModelOverride(kind.name, model)
+        }
     }
 
     private suspend fun runHomeChat(threadId: String) {
@@ -3986,6 +4103,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var reply: String? = null
             var lastError: String? = null
             var anyConnected = false
+            // v3.2.38 (J): remember who ACTUALLY answered so the thread can
+            // say so when it was not the selected chat provider.
+            var answeredBy: ProviderKind? = null
+            var answeredByFallback = false
+            var fallbackTriedKey = false
+            var fallbackError: String? = null
             val chain = buildList {
                 resolvedChatProvider()?.let { add(it) }
                 addAll(connectedChatProviders())
@@ -4017,12 +4140,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         if (!credential.isActive) vault.activate(kind.name, credential.id)
                         keyHealthStore.clear(kind.name, credential.id)
                         reply = text
+                        answeredBy = kind
                         break
                     } catch (e: ChatApiException) {
                         val reason = "HTTP ${e.httpCode} " + (e.providerMessage ?: e.message ?: "")
                         lastError = e.providerMessage ?: e.message
                         if (autoSwitch && homeFailover.recordFailure(credential.id, reason)) {
-                            keyHealthStore.markExhausted(kind.name, credential.id)
+                            // v3.2.38 (J): only quota-class failures mark the
+                            // key "resting" — a rejected (401/403) key is not
+                            // "limit reached" and must not be labelled so.
+                            if (ApiKeyFailoverCoordinator.isQuotaFailure(reason)) {
+                                keyHealthStore.markExhausted(kind.name, credential.id)
+                            }
                             val next = ordered.getOrNull(index + 1)
                             if (next != null) {
                                 vault.activate(kind.name, next.id)
@@ -4047,7 +4176,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             if (reply == null) {
-                reply = tryWorkspaceProviderFallback(turns, chain.toSet())
+                val outcome = tryWorkspaceProviderFallback(turns, chain.toSet())
+                fallbackTriedKey = outcome.triedKey
+                fallbackError = outcome.error
+                if (outcome.text != null) {
+                    reply = outcome.text
+                    answeredBy = outcome.kind
+                    answeredByFallback = true
+                }
+            }
+            // v3.2.38 (J): the composer pill names the SELECTED provider;
+            // when a different one actually answered, the thread says so —
+            // the substitution is never silent.
+            val selectedKind = chain.firstOrNull()
+            if (reply != null && answeredBy != null && answeredBy != selectedKind) {
+                switches += if (answeredByFallback) {
+                    "Answered by ${answeredBy.title} (your workspace provider)"
+                } else {
+                    "Answered by ${answeredBy.title}"
+                }
             }
             switches.forEach { line ->
                 appendHomeMessage(
@@ -4055,7 +4202,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     com.vayro.app.data.HomeChatMessage(fromUser = false, text = line, kind = "system"),
                 )
             }
-            val finalText = reply ?: if (!anyConnected) {
+            val finalText = reply ?: if (!anyConnected && fallbackTriedKey) {
+                // v3.2.38 (J): a workspace key exists and was tried \u2014 do not
+                // claim no key is connected; report that attempt's failure.
+                "I could not get a reply from your workspace provider" +
+                    (fallbackError?.let { " ($it)" } ?: "") +
+                    ". Check its key in Providers & Agents, or try again in a moment. " +
+                    "For coding work, tap Work and the agent will handle it there."
+            } else if (!anyConnected) {
                 "I can chat here as soon as an API key is connected. Open Providers & Agents and " +
                     "connect a free key (OpenRouter or Groq, for example) \u2014 then ask me again. " +
                     "For coding work, tap Work and the agent will handle it there."
@@ -4078,15 +4232,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * current provider still answers home chat if it is key-backed (the
      * pre-v3.2.37 default path). One attempt, active key only.
      */
+    /** v3.2.38 (J): the workspace fallback now reports whether a key was actually tried and why it failed. */
+    private data class WorkspaceFallbackOutcome(
+        val text: String?,
+        val kind: ProviderKind?,
+        val triedKey: Boolean,
+        val error: String?,
+    )
+
     private suspend fun tryWorkspaceProviderFallback(
         turns: List<ProviderApiClient.ChatTurn>,
         alreadyTried: Set<ProviderKind>,
-    ): String? {
+    ): WorkspaceFallbackOutcome {
         val profile = _state.value.provider
-        if (profile.kind == ProviderKind.CLAUDE || profile.kind in alreadyTried) return null
-        val secret = vault.get(profile.kind.name) ?: return null
-        return runCatching {
-            providerApi.chatCompletion(
+        if (profile.kind == ProviderKind.CLAUDE || profile.kind in alreadyTried) {
+            return WorkspaceFallbackOutcome(null, null, triedKey = false, error = null)
+        }
+        val secret = vault.get(profile.kind.name)
+            ?: return WorkspaceFallbackOutcome(null, null, triedKey = false, error = null)
+        return try {
+            val text = providerApi.chatCompletion(
                 baseUrl = profile.resolvedBaseUrl,
                 model = profile.model,
                 apiKey = secret,
@@ -4094,7 +4259,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 turns = turns,
                 systemPrompt = HOME_CHAT_SYSTEM_PROMPT,
             )
-        }.getOrNull()
+            WorkspaceFallbackOutcome(text, profile.kind, triedKey = true, error = null)
+        } catch (e: ChatApiException) {
+            WorkspaceFallbackOutcome(null, profile.kind, triedKey = true, error = e.providerMessage ?: e.message)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            WorkspaceFallbackOutcome(null, profile.kind, triedKey = true, error = e.message)
+        }
     }
 
     fun sendPrompt(prompt: String) {
@@ -5343,9 +5514,17 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
         if (!scoped.isRunning || scoped.activeSessionId != event.sessionId) return false
         if (!isApiKeyFailure(event.reason)) return false
         val request = sessionRuntimeRequests[event.sessionId] ?: return false
+        // v3.2.38 (J): one failover system — workspace rotation honors the
+        // same per-provider Auto-switch toggle as home chat.
+        if (!preferences.autoSwitchKeys(request.provider.kind.name)) return false
         val credentials = vault.credentials(request.provider.kind.name)
         val active = credentials.firstOrNull { it.isActive } ?: return false
         failedApiKeyIds += active.id
+        // v3.2.38 (J): quota failures also mark the key resting in the
+        // shared health store, so the catalog shows the truth.
+        if (ApiKeyFailoverCoordinator.isQuotaFailure(event.reason)) {
+            keyHealthStore.markExhausted(request.provider.kind.name, active.id)
+        }
         val next = credentials.firstOrNull { it.id !in failedApiKeyIds } ?: return false
         if (!vault.activate(request.provider.kind.name, next.id)) return false
         updateSessionScoped(projectId) {

@@ -25,7 +25,35 @@ class McpRegistry(
 
     init {
         loadPersisted()
+        refreshBuiltInCommandsFromTemplates()
         loadSpawnMarkers()
+    }
+
+    /**
+     * v3.2.38 (Part Q): installed built-in servers keep the command they
+     * were installed with, so catalog preset corrections never reached
+     * existing installs (the broken `npx -y @modelcontextprotocol/
+     * server-fetch` line persisted). On load, a built-in entry whose
+     * base id matches a catalog template adopts the template's current
+     * command/args; enabled state, env and credentials are untouched.
+     */
+    private fun refreshBuiltInCommandsFromTemplates() {
+        synchronized(lock) {
+            var changed = false
+            for ((key, server) in servers) {
+                if (!server.isBuiltIn) continue
+                val template = catalogTemplates.find { it.id == server.id.substringBefore("::") } ?: continue
+                if (server.command != template.defaultCommand || server.args != template.defaultArgs) {
+                    servers[key] = server.copy(
+                        command = template.defaultCommand,
+                        args = template.defaultArgs,
+                        secretEnvNames = template.requiredEnv
+                    )
+                    changed = true
+                }
+            }
+            if (changed) persist()
+        }
     }
 
     fun hasSpawnedBefore(serverId: String): Boolean = synchronized(lock) {

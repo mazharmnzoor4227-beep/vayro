@@ -49,6 +49,24 @@ object ReadAloudPlayer {
     var playingMessageId by mutableStateOf<String?>(null)
         private set
 
+    /**
+     * v3.2.38 (M1): the last voice notice — set when the SELECTED voice
+     * could not be used (ElevenLabs request failed, or its key / Voice ID
+     * is missing), so surfaces can SAY so instead of the old behavior:
+     * a silent, permanent-feeling fallback to the device voice.
+     * [noticeSeq] increments per notice so observers can react per event.
+     * A notice never rewrites the saved selection.
+     */
+    var lastNotice by mutableStateOf<String?>(null)
+        private set
+    var noticeSeq by mutableStateOf(0)
+        private set
+
+    private fun postNotice(text: String) {
+        lastNotice = text
+        noticeSeq++
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var session = 0
     private var playJob: Job? = null
@@ -97,19 +115,35 @@ object ReadAloudPlayer {
         // key + Voice ID implied ElevenLabs before the choice existed).
         val voicePrefs = appContext.getSharedPreferences("kodex_voice_settings", Context.MODE_PRIVATE)
         val savedSource = voicePrefs.getString("active_voice_source", null)
+        lastNotice = null
         val useElevenLabs = when (savedSource) {
             "device" -> false
             "elevenlabs" -> apiKey != null && voiceId != null
             else -> apiKey != null && voiceId != null
         }
+        if (savedSource == "elevenlabs" && !useElevenLabs) {
+            // v3.2.38 (M1): ElevenLabs is selected but unusable — say so
+            // instead of silently speaking with the device voice.
+            val notice = "ElevenLabs is your selected voice, but its key or Voice ID is missing — using the device voice."
+            postNotice(notice)
+            android.widget.Toast.makeText(appContext, notice, android.widget.Toast.LENGTH_LONG).show()
+        }
         if (useElevenLabs) {
             val key = apiKey!!
             val id = voiceId!!
             playJob = scope.launch {
+                val failure = arrayOfNulls<String>(1)
                 val handled = runCatching {
-                    speakElevenLabs(appContext, key, id, plain, my)
+                    speakElevenLabs(appContext, key, id, plain, my) { reason -> failure[0] = reason }
                 }.getOrDefault(false)
-                if (!handled && session == my) speakOnDevice(appContext, plain, my)
+                if (!handled && session == my) {
+                    // v3.2.38 (M1): a failed ElevenLabs attempt is VISIBLE —
+                    // the fallback speaks, and the user is told why.
+                    val notice = "ElevenLabs voice failed (${failure[0] ?: "request failed"}) — using the device voice this time."
+                    postNotice(notice)
+                    android.widget.Toast.makeText(appContext, notice, android.widget.Toast.LENGTH_LONG).show()
+                    speakOnDevice(appContext, plain, my)
+                }
             }
         } else {
             speakOnDevice(appContext, plain, my)
@@ -207,11 +241,17 @@ object ReadAloudPlayer {
         voiceId: String,
         text: String,
         my: Int,
+        onFailure: (String) -> Unit,
     ): Boolean {
         val chunks = chunkText(text, 800)
         for (chunk in chunks) {
             if (session != my) return true // stopped on purpose — handled
-            val file = fetchElevenLabsChunk(context, apiKey, voiceId, chunk) ?: return false
+            val fetched = fetchElevenLabsChunk(context, apiKey, voiceId, chunk)
+            val file = fetched.file
+            if (file == null) {
+                onFailure(fetched.error ?: "request failed")
+                return false
+            }
             if (session != my) {
                 file.delete()
                 return true
@@ -219,19 +259,24 @@ object ReadAloudPlayer {
             val completed = playFile(file)
             file.delete()
             if (session != my) return true
-            if (!completed) return false
+            if (!completed) {
+                onFailure("audio playback failed")
+                return false
+            }
         }
         if (session == my) playingMessageId = null
         return true
     }
+
+    private class ElevenLabsFetch(val file: File?, val error: String?)
 
     private suspend fun fetchElevenLabsChunk(
         context: Context,
         apiKey: String,
         voiceId: String,
         text: String,
-    ): File? = withContext(Dispatchers.IO) {
-        runCatching {
+    ): ElevenLabsFetch = withContext(Dispatchers.IO) {
+        try {
             val connection = URL("https://api.elevenlabs.io/v1/text-to-speech/$voiceId")
                 .openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
@@ -253,18 +298,44 @@ object ReadAloudPlayer {
                 )
             }.toString()
             connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            if (connection.responseCode !in 200..299) {
+            val code = connection.responseCode
+            if (code !in 200..299) {
+                // v3.2.38 (M1): surface ElevenLabs' OWN reason (their JSON
+                // detail) — a rejected key/voice must be diagnosable.
+                val errorBody = runCatching {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }
+                }.getOrNull().orEmpty()
                 connection.disconnect()
-                return@runCatching null
+                val detail = elevenLabsErrorDetail(errorBody)
+                return@withContext ElevenLabsFetch(
+                    null,
+                    "HTTP $code" + (detail?.let { " — $it" } ?: ""),
+                )
             }
             val file = File(context.cacheDir, "kodex-readaloud-${System.nanoTime()}.mp3")
             connection.inputStream.use { input ->
                 file.outputStream().use { output -> input.copyTo(output) }
             }
             connection.disconnect()
-            if (file.length() > 0L) file else null
-        }.getOrNull()
+            if (file.length() > 0L) ElevenLabsFetch(file, null)
+            else ElevenLabsFetch(null, "empty audio reply")
+        } catch (e: Exception) {
+            ElevenLabsFetch(null, "network problem (${e.message ?: "no connection"})")
+        }
     }
+
+    /** Extracts ElevenLabs' human error detail ({"detail":{"message":…}} or {"detail":"…"}). */
+    private fun elevenLabsErrorDetail(body: String): String? = runCatching {
+        if (body.isBlank()) return null
+        val root = JSONObject(body)
+        val detail = root.opt("detail")
+        val message = when (detail) {
+            is JSONObject -> detail.optString("message").ifBlank { detail.optString("status") }
+            is String -> detail
+            else -> root.optString("message")
+        }
+        message.ifBlank { null }?.take(140)
+    }.getOrNull()
 
     private suspend fun playFile(file: File): Boolean = suspendCancellableCoroutine { cont ->
         val player = MediaPlayer()

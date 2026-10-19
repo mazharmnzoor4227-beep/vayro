@@ -133,11 +133,6 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("theme_mode", "dark") ?: "dark"
         set(value) { preferences.edit().putString("theme_mode", value).commit() }
 
-    /** Selected color theme (AppColorTheme name); "none" = mode row drives the palette. */
-    var colorTheme: String
-        get() = preferences.getString("color_theme", "none") ?: "none"
-        set(value) { preferences.edit().putString("color_theme", value).commit() }
-
     /** Font style (AppFontStyle name); "default" = bundled Claude pairing, "system" = device font. */
     var fontStyle: String
         get() = preferences.getString("font_style", "default") ?: "default"
@@ -152,6 +147,22 @@ class AppPreferences(private val context: Context) {
     var chatProviderKind: String
         get() = preferences.getString("chat_provider_kind", "") ?: ""
         set(value) { preferences.edit().putString("chat_provider_kind", value).commit() }
+
+    /** v3.2.38 (L): the model Test & Connect self-corrected to for a provider kind; wins over catalog defaults for home chat. */
+    fun chatModelOverride(kindName: String): String? =
+        preferences.getString("chat_model_$kindName", null)?.ifBlank { null }
+
+    fun setChatModelOverride(kindName: String, model: String) {
+        preferences.edit().putString("chat_model_$kindName", model).commit()
+    }
+
+    /** v3.2.38 (J): the Base URL Test & Connect actually validated for a provider kind; wins over catalog defaults for home chat. */
+    fun chatBaseUrlOverride(kindName: String): String? =
+        preferences.getString("chat_base_url_$kindName", null)?.ifBlank { null }
+
+    fun setChatBaseUrlOverride(kindName: String, baseUrl: String) {
+        preferences.edit().putString("chat_base_url_$kindName", baseUrl).commit()
+    }
 
     /** v3.2.37 (F): the home thread currently open on the chat home. */
     var activeHomeThreadId: String

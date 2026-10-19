@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -254,12 +255,14 @@ private fun BlueprintTab(
     onGenerate: (prompt: String, framework: AppFramework, mode: BuildMode, archetype: AppFactoryBlueprintEngine.Archetype?) -> Unit
 ) {
     var promptText by rememberSaveable { mutableStateOf("") }
-    var selectedFramework by remember { mutableStateOf(AppFramework.ANDROID_COMPOSE) }
-    var selectedBuildMode by remember { mutableStateOf(if (githubConnected) BuildMode.GITHUB_ACTIONS else BuildMode.ON_DEVICE) }
-    var selectedArchetype by remember { mutableStateOf<AppFactoryBlueprintEngine.Archetype?>(null) }
+    // v3.2.38 (J): blueprint choices survive tab switches (they used to reset).
+    var selectedFramework by rememberSaveable { mutableStateOf(AppFramework.ANDROID_COMPOSE) }
+    var selectedBuildMode by rememberSaveable { mutableStateOf(if (githubConnected) BuildMode.GITHUB_ACTIONS else BuildMode.ON_DEVICE) }
+    var selectedArchetype by rememberSaveable { mutableStateOf<AppFactoryBlueprintEngine.Archetype?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -459,6 +462,7 @@ private fun ScaffoldTab(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -555,6 +559,7 @@ private fun BuildAutomationTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -722,6 +727,7 @@ private fun SigningTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
@@ -821,6 +827,7 @@ private fun PlayStoreTab(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = rememberSaveable(saver = LazyListState.Saver, key = "factory-tab-list-$i") { LazyListState() },
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {

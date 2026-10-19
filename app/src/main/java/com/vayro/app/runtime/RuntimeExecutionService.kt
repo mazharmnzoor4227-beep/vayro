@@ -93,13 +93,39 @@ class RuntimeExecutionService : Service() {
         // foreground service: runs continue in-process while the app lives,
         // but Android may pause them once the user leaves. The Settings copy
         // says exactly that; nothing stronger is promised.
-        if (!com.vayro.app.data.AppPreferences(this).keepWorkingInBackground) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        // v3.2.38 (J): the OFF gate used to swallow ACTION_COMPLETE /
+        // ACTION_FAILED too, so the completion notification never posted.
+        // The gate now blocks only foreground promotion (start/progress);
+        // completion/failure/cancel still post their result notification.
         val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)?.takeIf { it.isNotBlank() } ?: "legacy"
         val projectName = intent?.getStringExtra(EXTRA_PROJECT_NAME)?.takeIf { it.isNotBlank() }
         val agentName = intent?.getStringExtra(EXTRA_AGENT_NAME)?.takeIf { it.isNotBlank() }
+        if (!com.vayro.app.data.AppPreferences(this).keepWorkingInBackground) {
+            when (intent?.action) {
+                ACTION_COMPLETE -> finishTask(
+                    sessionId = sessionId,
+                    title = "Task completed",
+                    detail = intent?.getStringExtra(EXTRA_DETAIL)
+                        ?: "${agentName ?: "Agent"} finished working in ${projectName ?: "your project"}.",
+                    failed = false,
+                    route = intent?.getStringExtra(EXTRA_ROUTE) ?: sessions[sessionId]?.route,
+                )
+                ACTION_FAILED -> finishTask(
+                    sessionId = sessionId,
+                    title = "Task needs attention",
+                    detail = intent?.getStringExtra(EXTRA_DETAIL)
+                        ?: "${agentName ?: "Agent"} could not finish the task.",
+                    failed = true,
+                    route = intent?.getStringExtra(EXTRA_ROUTE) ?: sessions[sessionId]?.route,
+                )
+                ACTION_CANCELLED -> {
+                    sessions.remove(sessionId)
+                    notificationManager().cancel(sessionNotificationId(sessionId))
+                }
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (intent?.hasExtra(EXTRA_CAN_STOP) == true) canStop = intent.getBooleanExtra(EXTRA_CAN_STOP, true)
         when (intent?.action ?: ACTION_START) {
             ACTION_STOP -> {

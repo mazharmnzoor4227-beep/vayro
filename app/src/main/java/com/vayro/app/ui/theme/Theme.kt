@@ -27,23 +27,36 @@ import androidx.core.view.WindowCompat
 // 8-theme system is retired: PocketTheme always uses these two schemes.
 // ---------------------------------------------------------------------------
 
+/**
+ * The three accent colors the legacy `Pocket*` tokens resolve to. The theme
+ * root provides the active palette; outside a themed composition the local
+ * falls back to the live Claude tokens. (Moved here in v3.2.38 when the
+ * retired AppColorTheme palettes were removed.)
+ */
+data class PocketAccentPalette(
+    val accent: Color,
+    val success: Color,
+    val info: Color,
+)
+
+val LocalPocketAccents = androidx.compose.runtime.compositionLocalOf {
+    PocketAccentPalette(accent = KodexClay, success = Color(0xFF5DB872), info = Color(0xFF0A84FF))
+}
+
 /** Product accent: send button, avatar, highlights. */
 val KodexClay = Color(0xFFD97757)
 
 /** Accent pressed/hover state. */
 val KodexClayPressed = Color(0xFFC9674A)
 
-/** Switch-ON + selected-row blue (Claude Android estimate, ~iOS system blue). */
+/** Scheme secondary for legacy Material surfaces (shell selection states use KodexClay). */
 val KodexBlue = Color(0xFF0A84FF)
 
 private val ClaudeSuccess = Color(0xFF5DB872)
 private val ClaudeInfo = Color(0xFF0A84FF)
 
-// Legacy brand constants kept for AppColorTheme.kt (now inert) and any
-// remaining references; the live palette comes from the schemes below.
-internal val BrandLime = Color(0xFFA7FE28)
-internal val BrandBlue = Color(0xFF8EA8FF)
-internal val BrandGreen = Color(0xFF69D69E)
+// Live accent accessors (theme-provided); the palette comes from the
+// schemes below.
 
 val PocketOrange: Color
     @Composable get() = LocalPocketAccents.current.accent
@@ -53,13 +66,6 @@ val PocketBlue: Color
 
 val PocketGreen: Color
     @Composable get() = LocalPocketAccents.current.success
-
-// Kept at their original values: only the retired AppColorTheme palettes
-// reference them now, and AppColorThemeTest pins those exact hex values.
-val PocketBackground = Color(0xFF0B0E14)
-val PocketSurface = Color(0xFF131821)
-val PocketSurfaceVariant = Color(0xFF1B222D)
-val PocketOutline = Color(0xFF2A3240)
 
 private val DarkColors = darkColorScheme(
     primary = KodexClay,
@@ -175,15 +181,12 @@ enum class AppFontStyle { DEFAULT, SYSTEM }
 @Composable
 fun PocketTheme(
     themeMode: AppThemeMode = AppThemeMode.SYSTEM,
-    colorTheme: AppColorTheme = AppColorTheme.NONE,
     fontStyle: AppFontStyle = AppFontStyle.DEFAULT,
     content: @Composable () -> Unit,
 ) {
-    // The 8 custom color themes are retired (v3.2.32): [colorTheme] is still
-    // accepted so existing call sites compile, but the palette always comes
-    // from the Color mode (System / Light / Dark) over the Claude schemes.
-    @Suppress("UNUSED_VARIABLE")
-    val retiredColorTheme = colorTheme
+    // v3.2.38 (J): the retired color-theme plumbing is gone entirely — the
+    // palette always comes from the Color mode (System / Light / Dark)
+    // over the Claude schemes.
     val systemDark = isSystemInDarkTheme()
     val isDark = when (themeMode) {
         AppThemeMode.DARK -> true

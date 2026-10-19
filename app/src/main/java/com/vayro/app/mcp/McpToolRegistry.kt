@@ -66,6 +66,27 @@ class McpToolRegistry(
         registry.getServer(serverId)
             ?: throw IllegalArgumentException("MCP server '$serverId' is not installed")
 
+    /**
+     * v3.2.38 (Part Q): a start failure ALWAYS carries its reason — the
+     * session's preserved failure reason plus the last stderr lines.
+     * The fallback text exists so no path can render an empty reason.
+     */
+    private fun startFailureMessage(session: McpServerSession): String {
+        val reason = session.lastFailureReason?.takeIf { it.isNotBlank() }
+            ?: "the process did not start and gave no error output"
+        val detail = session.diagnostics().takeLast(3).joinToString("; ").trim()
+        return buildString {
+            append("MCP server '")
+            append(session.server.id)
+            append("' could not be started: ")
+            append(reason)
+            if (detail.isNotBlank() && !reason.contains(detail)) {
+                append(" — ")
+                append(detail.take(300))
+            }
+        }
+    }
+
     private fun sessionFor(server: McpServerInfo): McpServerSession {
         synchronized(lock) {
             return sessions.getOrPut(server.id) { sessionFactory(server) }
@@ -113,9 +134,7 @@ class McpToolRegistry(
             val session = sessionFor(server)
             val wasRunning = session.state == McpSessionState.RUNNING
             if (!session.ensureRunning(resolveEnv(server))) {
-                throw McpTransportException(
-                    "MCP server '${server.id}' could not be started: ${session.diagnostics().takeLast(3).joinToString("; ")}"
-                )
+                throw McpTransportException(startFailureMessage(session))
             }
             if (!wasRunning) auditServerSpawn(server, projectId)
             session.listTools()
@@ -179,7 +198,7 @@ class McpToolRegistry(
                 val session = sessionFor(server)
                 val wasRunning = session.state == McpSessionState.RUNNING
                 if (!session.ensureRunning(resolveEnv(server))) {
-                    throw McpTransportException("MCP server '${server.id}' could not be started")
+                    throw McpTransportException(startFailureMessage(session))
                 }
                 if (!wasRunning) auditServerSpawn(server, projectId)
                 session.callTool(toolName, arguments)

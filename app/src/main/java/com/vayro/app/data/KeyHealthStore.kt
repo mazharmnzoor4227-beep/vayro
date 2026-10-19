@@ -9,8 +9,10 @@ import org.json.JSONObject
  * The session-scoped [ApiKeyFailoverCoordinator] decides rotation while a
  * task runs; this store remembers WHICH key was exhausted and WHEN across
  * restarts, so the Providers screen can show "Key 2 · limit reached 14:02,
- * resting" and the home-chat engine can skip a key that is still inside
- * its cooldown ([ApiKeyFailoverCoordinator.QUOTA_COOLDOWN_MS]).
+ * resting" and the home-chat engine can deprioritise a key that is still
+ * inside its cooldown ([ApiKeyFailoverCoordinator.QUOTA_COOLDOWN_MS]) —
+ * resting keys are tried last, never hard-skipped, so chat still answers
+ * when every key is resting.
  *
  * Only timestamps are stored — never key material (that stays in the
  * encrypted [ApiKeyVault]).
@@ -21,7 +23,7 @@ class KeyHealthStore(context: Context) {
     private fun read(providerId: String): JSONObject =
         runCatching { JSONObject(preferences.getString(providerId, null) ?: "{}") }.getOrDefault(JSONObject())
 
-    /** Records that [keyId] hit a quota/rate/auth limit just now. */
+    /** Records that [keyId] hit a quota/rate limit just now. (Auth-rejected keys are not marked — v3.2.38.) */
     fun markExhausted(providerId: String, keyId: String) {
         val map = read(providerId)
         map.put(keyId, System.currentTimeMillis())

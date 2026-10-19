@@ -555,7 +555,8 @@ private fun TeamRosterTab(orchestrator: AgentTeamOrchestrator) {
             .maxByOrNull { it.startedAtMs }
         ModalBottomSheet(
             onDismissRequest = { selectedRole = null },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
             AgentDetailSheet(
                 role = role,

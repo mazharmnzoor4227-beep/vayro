@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -105,12 +106,14 @@ fun MarketplaceScreen(
     onUpdateItem: (MarketplaceItem) -> Unit = {},
     onScreenOpened: () -> Unit = {},
 ) {
-    var searchQuery by remember { mutableStateOf("") }
+    // v3.2.38 (J): search / filter / sort / scroll survive leaving and
+    // returning (U8b pattern), like every other list in the shell.
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     var searchOpen by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
-    var selectedCategory by remember { mutableStateOf<MarketplaceCategory?>(null) }
+    var selectedCategory by rememberSaveable { mutableStateOf<MarketplaceCategory?>(null) }
     var showOnlyInstalled by rememberSaveable { mutableStateOf(false) }
-    var sortBy by remember { mutableStateOf(SearchSort.RELEVANCE) }
+    var sortBy by rememberSaveable { mutableStateOf(SearchSort.RELEVANCE) }
     // Install state is owned by MarketplaceInstallManager (durable). The screen never
     // mutates install state locally: it renders the manager's set and delegates
     // install/uninstall to the callbacks, which report real results.
@@ -177,6 +180,19 @@ fun MarketplaceScreen(
                                 fontSize = 11.sp,
                                 lineHeight = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
+                navigationIcon = {
+                    // v3.2.38 (J): the declared onBack was never rendered —
+                    // the header now carries a real back arrow.
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = MaterialTheme.colorScheme.primary,
                             )
                         }
                     }
@@ -329,6 +345,9 @@ fun MarketplaceScreen(
             // Items List
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
+                state = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
+                    androidx.compose.foundation.lazy.LazyListState()
+                },
                 contentPadding = PaddingValues(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {

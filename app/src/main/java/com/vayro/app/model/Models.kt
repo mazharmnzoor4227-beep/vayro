@@ -48,12 +48,20 @@ enum class ProviderKind(
     // one wire protocol covers them; Pakistan availability was verified at
     // build time for every entry here. NVIDIA NIM is deliberately absent
     // from the catalog (Pakistani phone verification fails there).
-    GROQ("Groq", "Very fast replies · free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+    GROQ("Groq", "Very fast replies · free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.groq.com/openai/v1", "openai/gpt-oss-120b"),
     GOOGLE_AI_STUDIO("Google AI Studio", "Gemini models · free tier available", ProviderProtocol.OPENAI_CHAT, "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash"),
-    MISTRAL("Mistral AI", "Free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.mistral.ai/v1", "mistral-small-latest"),
-    CEREBRAS("Cerebras", "Very fast replies · free tier available", ProviderProtocol.OPENAI_CHAT, "https://api.cerebras.ai/v1", "llama-3.3-70b"),
-    COHERE("Cohere", "Free trial tier available", ProviderProtocol.OPENAI_CHAT, "https://api.cohere.ai/compatibility/v1", "command-a-03-2025"),
-    XAI("xAI Grok", "Paid · Grok models", ProviderProtocol.OPENAI_CHAT, "https://api.x.ai/v1", "grok-3-mini"),
+    MISTRAL("Mistral AI", "Free Experiment plan · phone verification", ProviderProtocol.OPENAI_CHAT, "https://api.mistral.ai/v1", "mistral-small-latest"),
+    CEREBRAS("Cerebras", "Very fast replies · trial credit", ProviderProtocol.OPENAI_CHAT, "https://api.cerebras.ai/v1", "gpt-oss-120b"),
+    COHERE("Cohere", "Trial key available", ProviderProtocol.OPENAI_CHAT, "https://api.cohere.ai/compatibility/v1", "command-a-03-2025"),
+    XAI("xAI Grok", "Paid · Grok models", ProviderProtocol.OPENAI_CHAT, "https://api.x.ai/v1", "grok-4.3"),
+    // v3.2.38 (Part L3): catalog expansion — every entry re-verified at
+    // build time for a real free tier, Pakistan signup, and an
+    // OpenAI-compatible endpoint (see ProviderCatalog notes).
+    Z_AI("Z.AI (GLM)", "GLM models · free Flash models", ProviderProtocol.OPENAI_CHAT, "https://api.z.ai/api/paas/v4", "glm-4.7-flash"),
+    REQUESTY("Requesty", "Gateway with free models", ProviderProtocol.OPENAI_CHAT, "https://router.requesty.ai/v1", "nvidia/nemotron-3-super-120b-a12b"),
+    OLLAMA_CLOUD("Ollama Cloud", "Hosted open models by Ollama", ProviderProtocol.OPENAI_CHAT, "https://ollama.com/v1", "gpt-oss:120b"),
+    HUGGING_FACE("Hugging Face", "Open models via HF Inference Providers", ProviderProtocol.OPENAI_CHAT, "https://router.huggingface.co/v1", "openai/gpt-oss-120b"),
+    LLM7("LLM7", "Free-token model gateway", ProviderProtocol.OPENAI_CHAT, "https://api.llm7.io/v1", "codestral-latest"),
 }
 
 /**
@@ -120,6 +128,11 @@ val DEEPSEEK_HARNESS_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.CEREBRAS,
     ProviderKind.COHERE,
     ProviderKind.XAI,
+    ProviderKind.Z_AI,
+    ProviderKind.REQUESTY,
+    ProviderKind.OLLAMA_CLOUD,
+    ProviderKind.HUGGING_FACE,
+    ProviderKind.LLM7,
     // OPENAI stays out: DshRouteMapper rejects it (Codex owns that slot).
 )
 
@@ -134,6 +147,11 @@ val DSH_PROTOCOL_PROVIDERS: Set<ProviderKind> = setOf(
     ProviderKind.CEREBRAS,
     ProviderKind.COHERE,
     ProviderKind.XAI,
+    ProviderKind.Z_AI,
+    ProviderKind.REQUESTY,
+    ProviderKind.OLLAMA_CLOUD,
+    ProviderKind.HUGGING_FACE,
+    ProviderKind.LLM7,
 )
 
 fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
@@ -145,6 +163,11 @@ fun defaultDshApiForProvider(kind: ProviderKind): String = when (kind) {
     ProviderKind.CEREBRAS,
     ProviderKind.COHERE,
     ProviderKind.XAI,
+    ProviderKind.Z_AI,
+    ProviderKind.REQUESTY,
+    ProviderKind.OLLAMA_CLOUD,
+    ProviderKind.HUGGING_FACE,
+    ProviderKind.LLM7,
     ProviderKind.OPENAI -> "openai-completions"
     else -> "anthropic-messages"
 }
@@ -207,7 +230,10 @@ fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
         it == ProviderKind.OPENCODE_ZEN || it == ProviderKind.OPENAI ||
             it == ProviderKind.GROQ || it == ProviderKind.GOOGLE_AI_STUDIO ||
             it == ProviderKind.MISTRAL || it == ProviderKind.CEREBRAS ||
-            it == ProviderKind.COHERE || it == ProviderKind.XAI
+            it == ProviderKind.COHERE || it == ProviderKind.XAI ||
+            it == ProviderKind.Z_AI || it == ProviderKind.REQUESTY ||
+            it == ProviderKind.OLLAMA_CLOUD || it == ProviderKind.HUGGING_FACE ||
+            it == ProviderKind.LLM7
     }
     AgentKind.ANTIGRAVITY -> emptyList()
     // Codex authenticates with an OpenAI API key, stored under its own vault
@@ -218,6 +244,8 @@ fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
         ProviderKind.CUSTOM, ProviderKind.ANTHROPIC, ProviderKind.LLM_ROUTER,
         ProviderKind.GROQ, ProviderKind.GOOGLE_AI_STUDIO, ProviderKind.MISTRAL,
         ProviderKind.CEREBRAS, ProviderKind.COHERE, ProviderKind.XAI,
+        ProviderKind.Z_AI, ProviderKind.REQUESTY, ProviderKind.OLLAMA_CLOUD,
+        ProviderKind.HUGGING_FACE, ProviderKind.LLM7,
         ProviderKind.DEEPSEEK,
         // OPENAI deliberately absent: that vault slot belongs to Codex.
     )

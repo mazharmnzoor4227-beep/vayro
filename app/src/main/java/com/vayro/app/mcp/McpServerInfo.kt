@@ -152,64 +152,76 @@ data class McpCatalogTemplate(
  * install commands cannot drift between the two surfaces.
  */
 val McpBuiltInCatalogTemplates: List<McpCatalogTemplate> = listOf(
+    // v3.2.38 (Part Q): every preset re-verified against the real MCP
+    // ecosystem. Two were simply wrong: the official SQLite and Fetch
+    // servers are PYTHON (PyPI mcp-server-sqlite / mcp-server-fetch, run
+    // via uvx) — the @modelcontextprotocol/server-sqlite and
+    // server-fetch npm names are not the official servers. Commands are
+    // now program-only with flags in defaultArgs, so the spawn argv is
+    // correct by construction.
     McpCatalogTemplate(
         id = "sqlite",
         name = "SQLite Server",
         description = "Interact with and query SQLite databases directly via MCP tools.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-sqlite",
-        defaultArgs = listOf("--db", "workspace.db"),
+        defaultCommand = "uvx",
+        defaultArgs = listOf("mcp-server-sqlite", "--db-path", "workspace.db"),
         category = "Database"
     ),
     McpCatalogTemplate(
         id = "filesystem",
         name = "Filesystem Explorer",
         description = "Read, write, and inspect local project directories with secure boundaries.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-filesystem",
-        defaultArgs = listOf("/workspace"),
+        defaultCommand = "npx",
+        defaultArgs = listOf("-y", "@modelcontextprotocol/server-filesystem", "/workspace"),
         category = "Storage"
     ),
     McpCatalogTemplate(
         id = "github",
         name = "GitHub Platform",
         description = "Search repos, create issues, view pull requests, and commit files via GitHub API.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-github",
+        defaultCommand = "npx",
+        defaultArgs = listOf("-y", "@modelcontextprotocol/server-github"),
         requiredEnv = listOf("GITHUB_PERSONAL_ACCESS_TOKEN"),
         category = "Development"
     ),
     McpCatalogTemplate(
         id = "postgres",
         name = "PostgreSQL Server",
-        description = "Inspect database schemas, query tables, and execute SQL statements.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-postgres",
-        requiredEnv = listOf("POSTGRES_CONNECTION_STRING"),
+        description = "Inspect database schemas and query tables. Edit the server's connection URL argument to point at your database before first use.",
+        defaultCommand = "npx",
+        defaultArgs = listOf("-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost:5432/postgres"),
         category = "Database"
     ),
     McpCatalogTemplate(
         id = "fetch",
         name = "Fetch & Markdown",
         description = "Fetch web pages, extract content, and convert HTML to readable Markdown for agents.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-fetch",
+        defaultCommand = "uvx",
+        defaultArgs = listOf("mcp-server-fetch"),
         category = "Web"
     ),
     McpCatalogTemplate(
         id = "puppeteer",
         name = "Puppeteer Automation",
-        description = "Automate browser interactions, capture screenshots, and scrape dynamic pages.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-puppeteer",
+        description = "Automate browser interactions and capture screenshots. First start downloads Chromium (large) and can take several minutes.",
+        defaultCommand = "npx",
+        defaultArgs = listOf("-y", "@modelcontextprotocol/server-puppeteer"),
         category = "Web Automation"
     ),
     McpCatalogTemplate(
         id = "memory",
         name = "Knowledge Graph Memory",
         description = "Persistent graph-based memory for entities, relationships, and context recall.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-memory",
+        defaultCommand = "npx",
+        defaultArgs = listOf("-y", "@modelcontextprotocol/server-memory"),
         category = "Agent Memory"
     ),
     McpCatalogTemplate(
         id = "brave-search",
         name = "Brave Search",
-        description = "Perform private web searches and retrieve up-to-date web answers.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-brave-search",
+        description = "Perform private web searches and retrieve up-to-date web answers. Requires a Brave API key (set it when adding the server).",
+        defaultCommand = "npx",
+        defaultArgs = listOf("-y", "@modelcontextprotocol/server-brave-search"),
         requiredEnv = listOf("BRAVE_API_KEY"),
         category = "Search"
     ),
@@ -217,7 +229,8 @@ val McpBuiltInCatalogTemplates: List<McpCatalogTemplate> = listOf(
         id = "sequential-thinking",
         name = "Sequential Thinking",
         description = "Structured step-by-step reasoning and hypothesis refinement server.",
-        defaultCommand = "npx -y @modelcontextprotocol/server-sequential-thinking",
+        defaultCommand = "npx",
+        defaultArgs = listOf("-y", "@modelcontextprotocol/server-sequential-thinking"),
         category = "Reasoning"
     )
 )

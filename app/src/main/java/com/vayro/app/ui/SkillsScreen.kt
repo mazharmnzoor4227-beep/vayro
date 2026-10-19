@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
@@ -125,6 +126,7 @@ fun SkillsScreen(
     mcpServers: List<McpServerInfo> = emptyList(),
     mcpCatalog: List<McpCatalogTemplate> = emptyList(),
     mcpTools: List<McpToolDefinition> = emptyList(),
+    mcpServerErrors: Map<String, String> = emptyMap(),
     mcpAuditLogs: List<McpAuditEntry> = emptyList(),
     mcpBusy: Boolean = false,
     mcpMessage: String? = null,
@@ -141,6 +143,9 @@ fun SkillsScreen(
     mcpRunTarget: String? = null,
     mcpRunRunning: Boolean = false,
     onClearMcpRunResult: () -> Unit = {},
+    // v3.2.38 (J): optional back arrow — set by the root Skills screen;
+    // the Connectors-embedded instance leaves it null (its header has one).
+    onBack: (() -> Unit)? = null,
 ) {
     var selectedTab by rememberSaveable(initialTab) { mutableIntStateOf(initialTab) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -171,6 +176,13 @@ fun SkillsScreen(
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    },
+                    navigationIcon = {
+                        if (onBack != null) {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
                         }
                     },
                     actions = {
@@ -506,6 +518,7 @@ fun SkillsScreen(
                         McpServerCard(
                             server = server,
                             tools = mcpTools.filter { it.serverId == server.id },
+                            lastError = mcpServerErrors[server.id],
                             busy = mcpBusy,
                             onToggle = { onToggleMcpServer(server.id, it) },
                             onDiscoverTools = { onDiscoverMcpTools(server) },
@@ -674,6 +687,7 @@ fun SkillsScreen(
 private fun McpServerCard(
     server: McpServerInfo,
     tools: List<McpToolDefinition>,
+    lastError: String? = null,
     busy: Boolean,
     onToggle: (Boolean) -> Unit,
     onDiscoverTools: () -> Unit,
@@ -699,7 +713,10 @@ private fun McpServerCard(
                             color = if (server.enabled) successGreen().copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
                         ) {
                             Text(
-                                if (server.enabled) "ACTIVE" else "DISABLED",
+                                // v3.2.38 (Part Q): enabled stdio servers are
+                                // lazy-started on first use — never label one
+                                // ACTIVE as if a process were running.
+                                if (server.enabled) "ENABLED" else "DISABLED",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (server.enabled) successGreen() else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -719,6 +736,33 @@ private fun McpServerCard(
             }
 
             Text("Command: ${server.command} ${server.args.joinToString(" ")}", fontSize = 10.5.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            // v3.2.38 (Part Q): honest state lines — lazy start, key
+            // requirements, and the last discovery error WITH its reason.
+            if (server.enabled) {
+                Text(
+                    if (server.isRemote) "Remote server — Kodex connects when a tool runs."
+                    else "Starts on first use — not running now.",
+                    fontSize = 10.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (server.secretEnvNames.isNotEmpty()) {
+                Text(
+                    "Needs: ${server.secretEnvNames.joinToString(", ")} — set when the server was added; discovery reports it plainly if missing.",
+                    fontSize = 10.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (!lastError.isNullOrBlank()) {
+                Text(
+                    "Last error: $lastError",
+                    fontSize = 10.5.sp,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(

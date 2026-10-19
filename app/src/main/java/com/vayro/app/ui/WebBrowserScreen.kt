@@ -1581,6 +1581,7 @@ fun PreviewTab(
         ModalBottomSheet(
             onDismissRequest = { showHistorySheet = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
             Column(
                 modifier = Modifier

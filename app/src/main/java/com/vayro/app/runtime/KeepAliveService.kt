@@ -41,6 +41,12 @@ class KeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // v3.2.38 (J): self-gate — never promote to foreground while the
+        // user has "Keep working in background" OFF.
+        if (!com.vayro.app.data.AppPreferences(this).keepWorkingInBackground) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startForeground(NOTIFICATION_ID, buildNotification())
         // QA H30: NOT_STICKY — a system kill or a user swipe-away does
         // not resurrect this service. It restarts only when the app

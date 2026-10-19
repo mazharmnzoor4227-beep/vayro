@@ -179,6 +179,10 @@ fun AgentScreen(
     onSaveProvider: (ProviderProfile, String) -> Unit,
     onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
     onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
+    // v3.2.38 (L/J): effective catalog profile per kind + persistence for
+    // the endpoint Test & Connect validated.
+    catalogChatDefaults: (ProviderKind) -> ProviderProfile = { ProviderProfile(it) },
+    onChatEndpointCorrected: (ProviderKind, String, String) -> Unit = { _, _, _ -> },
     onPing: () -> Unit,
     getSavedApiKey: (ProviderKind) -> String,
     getSavedApiKeys: (ProviderKind) -> List<ApiKeyInfo>,
@@ -1301,6 +1305,9 @@ fun AgentScreen(
                     onRemoveApiKey = onRemoveApiKey,
                     onSaveProvider = onSaveProvider,
                     onValidateProvider = onValidateProvider,
+                    onDiscoverModels = onDiscoverModels,
+                    catalogChatDefaults = catalogChatDefaults,
+                    onChatEndpointCorrected = onChatEndpointCorrected,
                     autoSwitchFor = autoSwitchFor,
                     onToggleAutoSwitch = onToggleAutoSwitch,
                     keyExhaustedAt = keyExhaustedAt,
@@ -2943,6 +2950,9 @@ private fun ApiKeyCatalogSection(
     onRemoveApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
     onSaveProvider: (ProviderProfile, String) -> Unit,
     onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
+    onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
+    catalogChatDefaults: (ProviderKind) -> ProviderProfile,
+    onChatEndpointCorrected: (ProviderKind, String, String) -> Unit,
     autoSwitchFor: (ProviderKind) -> Boolean,
     onToggleAutoSwitch: (ProviderKind, Boolean) -> Unit,
     keyExhaustedAt: (ProviderKind, String) -> Long?,
@@ -2956,7 +2966,7 @@ private fun ApiKeyCatalogSection(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                "Add a key once — the provider works for chat and for your agents. Keys are encrypted on this phone.",
+                "Add a key once — it works for home chat and for the DeepSeek Harness and Custom agents. Keys are encrypted on this phone.",
                 fontSize = 12.sp,
                 lineHeight = 17.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3026,12 +3036,56 @@ private fun ApiKeyCatalogSection(
                 onRemoveApiKey = onRemoveApiKey,
                 onSaveProvider = onSaveProvider,
                 onValidateProvider = onValidateProvider,
+                onDiscoverModels = onDiscoverModels,
+                catalogChatDefaults = catalogChatDefaults,
+                onChatEndpointCorrected = onChatEndpointCorrected,
                 autoSwitchFor = autoSwitchFor,
                 onToggleAutoSwitch = onToggleAutoSwitch,
                 keyExhaustedAt = keyExhaustedAt,
             )
         }
     }
+}
+
+/**
+ * v3.2.38 (L/L2): plain-English headline for a catalog test failure. The
+ * provider's real answer (HTTP status + its own error text) goes in the
+ * small technical line — never settings jargon as the headline.
+ */
+private fun catalogFailureHeadline(result: ConnectionValidation.Failure, kind: ProviderKind): String = when {
+    result.label == "Rejected" -> "This key was rejected by ${kind.title}. Check the key and try again."
+    result.modelError -> "The model Kodex picked is not available on ${kind.title}."
+    result.label == "Rate limited" -> "${kind.title} is rate-limiting right now — wait a moment and try again."
+    result.label == "Provider error" -> "${kind.title} is having a problem right now — try again later."
+    result.label == "Timed out" || result.label == "Network error" -> "Network problem — check your connection and try again."
+    result.label == "Endpoint error" -> "Kodex could not reach ${kind.title} at that address."
+    else -> result.message
+}
+
+/** v3.2.38 (L2): the diagnosability line — real HTTP status + the provider's own words. */
+private fun catalogTechnicalLine(result: ConnectionValidation.Failure): String? {
+    val parts = listOfNotNull(
+        if (result.httpCode > 0) "HTTP ${result.httpCode}" else null,
+        result.providerMessage,
+    )
+    return parts.joinToString(" · ").ifBlank { null }
+}
+
+/**
+ * v3.2.38 (L): picks a working chat model from the provider's own list —
+ * the verified default first, then a same-family chat model, skipping
+ * embedding / speech / moderation / codex-only ids that cannot answer chat.
+ */
+private fun pickCatalogChatModel(models: List<DiscoveredModel>, kind: ProviderKind): String? {
+    if (models.isEmpty()) return null
+    val ids = models.map { it.id }
+    if (kind.defaultModel in ids) return kind.defaultModel
+    val notChat = listOf("embed", "whisper", "tts", "transcri", "moderation", "rerank", "image", "audio", "codex", "safeguard", "guard")
+    val chat = ids.filter { id -> notChat.none { id.contains(it, ignoreCase = true) } }
+    val family = kind.defaultModel.substringAfterLast('/').split('-').take(2).joinToString("-")
+    return chat.firstOrNull { it.contains(family, ignoreCase = true) }
+        ?: chat.firstOrNull()
+        ?: ids.firstOrNull()
 }
 
 @Composable
@@ -3043,6 +3097,9 @@ private fun CatalogProviderCard(
     onRemoveApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
     onSaveProvider: (ProviderProfile, String) -> Unit,
     onValidateProvider: suspend (ProviderProfile, String, List<DiscoveredModel>) -> ConnectionValidation,
+    onDiscoverModels: suspend (ProviderProfile, String) -> ModelDiscoveryResult,
+    catalogChatDefaults: (ProviderKind) -> ProviderProfile,
+    onChatEndpointCorrected: (ProviderKind, String, String) -> Unit,
     autoSwitchFor: (ProviderKind) -> Boolean,
     onToggleAutoSwitch: (ProviderKind, Boolean) -> Unit,
     keyExhaustedAt: (ProviderKind, String) -> Long?,
@@ -3056,10 +3113,11 @@ private fun CatalogProviderCard(
     var newKeyName by remember(kind) { mutableStateOf("") }
     var testing by remember(kind) { mutableStateOf(false) }
     var status by remember(kind) { mutableStateOf<String?>(null) }
+    var statusDetail by remember(kind) { mutableStateOf<String?>(null) }
     var statusOk by remember(kind) { mutableStateOf(false) }
     var showAdvanced by remember(kind) { mutableStateOf(false) }
-    var baseUrl by remember(kind) { mutableStateOf(kind.defaultBaseUrl) }
-    var model by remember(kind) { mutableStateOf(kind.defaultModel) }
+    var baseUrl by remember(kind) { mutableStateOf(catalogChatDefaults(kind).baseUrl) }
+    var model by remember(kind) { mutableStateOf(catalogChatDefaults(kind).model) }
     var autoSwitch by remember(kind) { mutableStateOf(autoSwitchFor(kind)) }
 
     Surface(
@@ -3209,32 +3267,80 @@ private fun CatalogProviderCard(
                     color = if (statusOk) Color(0xFF58C9A3) else MaterialTheme.colorScheme.error,
                 )
             }
+            statusDetail?.let { detail ->
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    detail,
+                    fontSize = 10.5.sp,
+                    lineHeight = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(10.dp))
             Button(
                 enabled = newKey.isNotBlank() && !testing,
                 onClick = {
                     val keyValue = newKey.trim()
+                    fun finishConnect(usedModel: String, corrected: Boolean, testedBaseUrl: String) {
+                        keys = onAddApiKey(
+                            kind,
+                            newKeyName.trim().ifBlank { "${kind.title} Key" },
+                            keyValue,
+                        )
+                        // v3.2.38 (J): what was tested is what gets used —
+                        // persist the validated endpoint so home chat runs
+                        // with this exact Base URL + model, not defaults.
+                        onChatEndpointCorrected(kind, testedBaseUrl, usedModel)
+                        newKey = ""
+                        newKeyName = ""
+                        status = if (corrected) {
+                            "Connected — using $usedModel. ${kind.title} is ready to use."
+                        } else {
+                            "Connected. ${kind.title} is ready to use."
+                        }
+                        statusDetail = null
+                        statusOk = true
+                    }
                     scope.launch {
                         testing = true
                         status = "Testing the key with ${kind.title}…"
+                        statusDetail = null
                         statusOk = true
                         val profile = ProviderProfile(kind, baseUrl.trim(), model.trim())
-                        when (val result = onValidateProvider(profile, keyValue, emptyList())) {
-                            is ConnectionValidation.Success -> {
-                                keys = onAddApiKey(
-                                    kind,
-                                    newKeyName.trim().ifBlank { "${kind.title} Key" },
-                                    keyValue,
-                                )
-                                newKey = ""
-                                newKeyName = ""
-                                status = "Connected. ${kind.title} is ready to use."
-                                statusOk = true
-                            }
+                        // v3.2.38 (L): if the provider says the model is gone,
+                        // do not fail at the user — fetch the provider's own
+                        // model list with the pasted key, pick a working
+                        // chat model, and retry once with it.
+                        when (val first = onValidateProvider(profile, keyValue, emptyList())) {
+                            is ConnectionValidation.Success -> finishConnect(profile.model, corrected = false, testedBaseUrl = profile.baseUrl)
                             is ConnectionValidation.Failure -> {
-                                status = listOf(result.message, result.providerMessage)
-                                    .filterNotNull().joinToString(" ")
-                                statusOk = false
+                                if (first.modelError) {
+                                    status = "That model is gone — finding one that works…"
+                                    val discovery = onDiscoverModels(profile, keyValue)
+                                    val found = (discovery as? ModelDiscoveryResult.Success)?.models.orEmpty()
+                                    val pick = pickCatalogChatModel(found, kind)
+                                    if (pick == null) {
+                                        status = "The model Kodex picked is not available on ${kind.title}, and no other model could be found."
+                                        statusDetail = catalogTechnicalLine(first)
+                                        statusOk = false
+                                    } else {
+                                        when (val second = onValidateProvider(profile.copy(model = pick), keyValue, emptyList())) {
+                                            is ConnectionValidation.Success -> {
+                                                model = pick
+                                                finishConnect(pick, corrected = true, testedBaseUrl = profile.baseUrl)
+                                            }
+                                            is ConnectionValidation.Failure -> {
+                                                status = catalogFailureHeadline(second, kind)
+                                                statusDetail = catalogTechnicalLine(second)
+                                                statusOk = false
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    status = catalogFailureHeadline(first, kind)
+                                    statusDetail = catalogTechnicalLine(first)
+                                    statusOk = false
+                                }
                             }
                         }
                         testing = false
@@ -3275,7 +3381,10 @@ private fun CatalogProviderCard(
                 OutlinedButton(
                     onClick = {
                         onSaveProvider(ProviderProfile(kind, baseUrl.trim(), model.trim()), "")
+                        // v3.2.38 (L/J): an endpoint saved here is also the endpoint home chat uses for this provider.
+                        onChatEndpointCorrected(kind, baseUrl.trim(), model.trim())
                         status = "Endpoint and model saved."
+                        statusDetail = null
                         statusOk = true
                     },
                     modifier = Modifier.fillMaxWidth(),

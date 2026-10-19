@@ -759,7 +759,9 @@ internal object DshRouteMapper {
             // v3.2.37 (Part C): the API catalog kinds are OpenAI-shaped —
             // they run on dsh through an openai-completions custom route.
             ProviderKind.GROQ, ProviderKind.GOOGLE_AI_STUDIO, ProviderKind.MISTRAL,
-            ProviderKind.CEREBRAS, ProviderKind.COHERE, ProviderKind.XAI -> DshRoute(
+            ProviderKind.CEREBRAS, ProviderKind.COHERE, ProviderKind.XAI,
+            ProviderKind.Z_AI, ProviderKind.REQUESTY, ProviderKind.OLLAMA_CLOUD,
+            ProviderKind.HUGGING_FACE, ProviderKind.LLM7 -> DshRoute(
                 name = "mh-" + profile.kind.name.lowercase(),
                 keyEnv = DshRuntimeBridge.FALLBACK_KEY_ENV,
                 defaultModel = model,

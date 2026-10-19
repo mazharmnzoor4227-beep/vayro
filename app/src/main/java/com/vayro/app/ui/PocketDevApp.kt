@@ -982,6 +982,10 @@ private fun BackgroundTaskSetupScreen(
     var notificationDenied by rememberSaveable { mutableStateOf(false) }
     var taskProtectionConfirmed by rememberSaveable { mutableStateOf(false) }
 
+    // v3.2.38 (J): system Back steps the wizard back instead of exiting
+    // the app mid-setup (mirrors RuntimeSetupPromptScreen).
+    BackHandler(enabled = currentStep > 0) { currentStep-- }
+
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         notificationGranted = notificationsAllowed()
         notificationDenied = !granted
@@ -2229,145 +2233,6 @@ private fun StartupLoadingScreen(
 }
 
 @Composable
-private fun WorkspaceLaunchExperience(state: AppUiState) {
-    val pulseTransition = rememberInfiniteTransition(label = "workspace launch")
-    val glow by pulseTransition.animateFloat(
-        initialValue = 0.18f,
-        targetValue = 0.48f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes { durationMillis = 1_400 },
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "workspace glow",
-    )
-    val agentVersion = state.installedAgentVersions[state.agentKind]
-    val agentReady = state.startupMessage.contains("ready", ignoreCase = true) || state.startupProgress >= 0.75f
-
-    Text(
-        "PRIVATE MOBILE WORKSPACE",
-        color = MaterialTheme.colorScheme.primary,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.35.sp,
-    )
-    Spacer(Modifier.height(10.dp))
-    Text(
-        "Getting everything ready",
-        style = MaterialTheme.typography.headlineMedium,
-        fontWeight = FontWeight.Bold,
-    )
-    Spacer(Modifier.height(7.dp))
-    Text(
-        "Restoring your projects and reconnecting your local coding agent.",
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontSize = 13.sp,
-        lineHeight = 19.sp,
-    )
-    Spacer(Modifier.height(22.dp))
-
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
-        tonalElevation = 3.dp,
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(58.dp)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = glow), RoundedCornerShape(18.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f), RoundedCornerShape(18.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(27.dp),
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        state.agentKind.title,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        agentVersion?.let { "Verified CLI · v$it" } ?: "Connecting local agent",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.5.sp,
-                    )
-                }
-                Surface(
-                    color = PocketGreen.copy(alpha = 0.12f),
-                    shape = RoundedCornerShape(50),
-                    border = BorderStroke(1.dp, PocketGreen.copy(alpha = 0.3f)),
-                ) {
-                    Text(
-                        if (agentReady) "READY" else "STARTING",
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                        color = PocketGreen,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.7.sp,
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(20.dp))
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth().height(4.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            )
-            Spacer(Modifier.height(18.dp))
-            LaunchStatusRow(Icons.Default.Shield, "Private Linux environment", "Verified", complete = true)
-            Spacer(Modifier.height(13.dp))
-            LaunchStatusRow(Icons.Default.Terminal, state.agentKind.title, if (agentReady) "Ready" else "Connecting", complete = agentReady)
-            Spacer(Modifier.height(13.dp))
-            LaunchStatusRow(Icons.Default.Folder, "Project workspace", "Restoring", complete = false)
-        }
-    }
-
-    Spacer(Modifier.height(16.dp))
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(17.dp),
-            strokeWidth = 2.dp,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(Modifier.width(11.dp))
-        Text(
-            state.startupMessage,
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-    Spacer(Modifier.height(12.dp))
-    Text(
-        "Runs locally on this device · Your project files stay private",
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-        fontSize = 10.5.sp,
-        textAlign = TextAlign.Center,
-    )
-}
-
-@Composable
 private fun LaunchStatusRow(icon: ImageVector, label: String, status: String, complete: Boolean) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(
@@ -2641,18 +2506,28 @@ private fun RootScreenHost(
     }
     var skillsInitialTab by rememberSaveable { mutableIntStateOf(0) }
     var skillsTabEpoch by rememberSaveable { mutableIntStateOf(0) }
-    BackHandler(enabled = drawerOpen) { drawerOpen = false }
-    BackHandler(enabled = !drawerOpen && screen != RootScreen.CHAT_HOME) {
-        when (screen) {
-            RootScreen.CAPABILITIES, RootScreen.VOICE_SETTINGS, RootScreen.LEGACY_SETTINGS,
-            RootScreen.PROFILE, RootScreen.LICENSE_PAGE, RootScreen.NOTIFICATIONS_PAGE, RootScreen.SECTION_PAGE ->
-                screen = RootScreen.SETTINGS
-            else -> {
+    // v3.2.38 (J): origin-aware Back for cross-section flows. Primary
+    // entries (drawer, home switcher, handoff) clear the origin;
+    // cross-section openers (Settings -> Connectors, Connectors ->
+    // Marketplace / Skills, Code hub -> Projects) record it, and Back
+    // returns to the recorded origin before the default rule applies.
+    val screenOrigins = remember { mutableMapOf<RootScreen, RootScreen>() }
+    val navigateBack: () -> Unit = {
+        val origin = screenOrigins.remove(screen)
+        when {
+            origin != null -> screen = origin
+            screen == RootScreen.CAPABILITIES || screen == RootScreen.VOICE_SETTINGS ||
+                screen == RootScreen.LEGACY_SETTINGS || screen == RootScreen.PROFILE ||
+                screen == RootScreen.LICENSE_PAGE || screen == RootScreen.NOTIFICATIONS_PAGE ||
+                screen == RootScreen.SECTION_PAGE -> screen = RootScreen.SETTINGS
+            screen != RootScreen.CHAT_HOME -> {
                 screen = RootScreen.CHAT_HOME
                 drawerOpen = true
             }
         }
     }
+    BackHandler(enabled = drawerOpen) { drawerOpen = false }
+    BackHandler(enabled = !drawerOpen && screen != RootScreen.CHAT_HOME) { navigateBack() }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
     var showPrivacyPolicy by rememberSaveable { mutableStateOf(false) }
     val shellContext = LocalContext.current
@@ -2771,7 +2646,10 @@ private fun RootScreenHost(
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .clickable { screen = RootScreen.SETTINGS },
+                        // v3.2.38 (Part K): land directly on the
+                        // Environment updates page, where the installs
+                        // actually happen (was: the Settings home).
+                        .clickable { settingsFocus = "environment"; screen = RootScreen.SECTION_PAGE },
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
                     shape = RoundedCornerShape(14.dp),
                 ) {
@@ -2822,17 +2700,43 @@ private fun RootScreenHost(
                     homeSending = state.homeSending,
                     homeProviderName = state.homeChatProviderName,
                     onNewChat = { viewModel.newHomeThread() },
-                    onOpenWork = { screen = RootScreen.PROJECTS },
+                    onOpenWork = {
+                        screenOrigins.remove(RootScreen.PROJECTS)
+                        screen = RootScreen.PROJECTS
+                    },
                     onOpenInWork = { task ->
                         // The one deliberate bridge home -> Work: reuse the
                         // quick-project + pending-prompt delivery, then
                         // leave the receipt in the home thread.
-                        onHomeSend(task)
+                        // v3.2.38 (N4): the prompt carries the conversation.
+                        onHomeSend(viewModel.homeThreadWorkPrompt(task))
                         val projectName = viewModel.state.value.activeProject?.name
                             ?: viewModel.state.value.projects.firstOrNull()?.name
                             ?: "Work"
                         viewModel.noteHomeTaskMoved(task, projectName)
                     },
+                    onOpenChatInWork = {
+                        // v3.2.38 (N3): the user's manual door — same
+                        // bridge as the card, task = his latest message.
+                        val task = viewModel.activeHomeTaskText()
+                        if (task.isNotBlank()) {
+                            onHomeSend(viewModel.homeThreadWorkPrompt(task))
+                            val projectName = viewModel.state.value.activeProject?.name
+                                ?: viewModel.state.value.projects.firstOrNull()?.name
+                                ?: "Work"
+                            viewModel.noteHomeTaskMoved(task, projectName)
+                        }
+                    },
+                    // v3.2.38 (Part P): the pill's in-place picker — one
+                    // shared state with "Chat replies use" (setChatProvider).
+                    chatChoices = viewModel.chatProviderChoices(),
+                    onPickChatProvider = viewModel::setChatProvider,
+                    onPickChatModel = { kind, model ->
+                        viewModel.setChatProvider(kind)
+                        viewModel.setChatModel(kind, model)
+                    },
+                    fetchChatModels = viewModel::chatPickerModels,
+                    onManageProviders = { screen = RootScreen.AGENT },
                     onGitHubBuild = onOpenCloudHybrid,
                     onOpenTerminal = { showQuickTerminal = true },
                     onOpenAppFactory = onOpenAppFactory,
@@ -2852,14 +2756,14 @@ private fun RootScreenHost(
                     onDeleteHomeThread = { thread -> viewModel.deleteHomeThread(thread.id) },
                 )
                 RootScreen.CODE -> CodeHubScreen(
-                    onBack = {
-                        screen = RootScreen.CHAT_HOME
-                        drawerOpen = true
-                    },
+                    onBack = navigateBack,
                     onOpenTerminal = { showQuickTerminal = true },
                     onOpenGitHubBuild = onOpenCloudHybrid,
                     onOpenGitHubStudio = onOpenGitHubStudio,
-                    onOpenProjects = { screen = RootScreen.PROJECTS },
+                    onOpenProjects = {
+                        screenOrigins[RootScreen.PROJECTS] = RootScreen.CODE
+                        screen = RootScreen.PROJECTS
+                    },
                     onOpenTeamStudio = onOpenTeamStudio,
                 )
                 RootScreen.PROJECTS -> ProjectsScreen(
@@ -2887,6 +2791,7 @@ private fun RootScreenHost(
                     onOpenAppFactory = onOpenAppFactory,
                     onOpenTeamStudio = onOpenTeamStudio,
                     onOpenCloudHybrid = onOpenCloudHybrid,
+                    onOpenChatHome = { screen = RootScreen.CHAT_HOME },
                 )
                 RootScreen.AGENT -> AgentScreen(
                     state = state,
@@ -2895,6 +2800,8 @@ private fun RootScreenHost(
                     },
                     onDiscoverModels = viewModel::discoverModels,
                     onValidateProvider = viewModel::validateProvider,
+                    catalogChatDefaults = viewModel::catalogChatDefaults,
+                    onChatEndpointCorrected = viewModel::saveChatEndpointOverride,
                     onPing = viewModel::pingApi,
                     getSavedApiKey = viewModel::getSavedApiKey,
                     getSavedApiKeys = viewModel::getSavedApiKeys,
@@ -2930,6 +2837,7 @@ private fun RootScreenHost(
                     teamOrchestrator = viewModel.teamOrchestrator,
                 )
                 RootScreen.SKILLS -> key(skillsTabEpoch) { SkillsScreen(
+                    onBack = navigateBack,
                     installed = state.skills,
                     results = state.skillSearchResults,
                     busy = state.skillsBusy,
@@ -2954,6 +2862,7 @@ private fun RootScreenHost(
                     mcpServers = state.mcpServers,
                     mcpCatalog = state.mcpCatalog,
                     mcpTools = state.mcpTools,
+                    mcpServerErrors = state.mcpServerErrors,
                     mcpAuditLogs = state.mcpAuditLogs,
                     mcpBusy = state.mcpBusy,
                     mcpMessage = state.mcpMessage,
@@ -2974,15 +2883,16 @@ private fun RootScreenHost(
                 RootScreen.CONNECTORS -> Column(Modifier.fillMaxSize()) {
                     ConnectorsHeader(
                         serverCount = state.mcpServers.size,
-                        toolCount = state.mcpTools.size,
-                        onBack = {
-                            screen = RootScreen.CHAT_HOME
-                            drawerOpen = true
+                        toolCount = state.mcpToolCounts.values.sum(),
+                        onBack = navigateBack,
+                        onBrowse = {
+                            screenOrigins[RootScreen.MARKETPLACE] = RootScreen.CONNECTORS
+                            screen = RootScreen.MARKETPLACE
                         },
-                        onBrowse = { screen = RootScreen.MARKETPLACE },
                         onAddCustom = {
                             skillsInitialTab = 1
                             skillsTabEpoch++
+                            screenOrigins[RootScreen.SKILLS] = RootScreen.CONNECTORS
                             screen = RootScreen.SKILLS
                         },
                     )
@@ -3011,6 +2921,7 @@ private fun RootScreenHost(
                     mcpServers = state.mcpServers,
                     mcpCatalog = state.mcpCatalog,
                     mcpTools = state.mcpTools,
+                    mcpServerErrors = state.mcpServerErrors,
                     mcpAuditLogs = state.mcpAuditLogs,
                     mcpBusy = state.mcpBusy,
                     mcpMessage = state.mcpMessage,
@@ -3047,7 +2958,10 @@ private fun RootScreenHost(
                     onOpenProfile = { screen = RootScreen.PROFILE },
                     onOpenLicense = { screen = RootScreen.LICENSE_PAGE },
                     onOpenCapabilities = { screen = RootScreen.CAPABILITIES },
-                    onOpenConnectors = { screen = RootScreen.CONNECTORS },
+                    onOpenConnectors = {
+                        screenOrigins[RootScreen.CONNECTORS] = RootScreen.SETTINGS
+                        screen = RootScreen.CONNECTORS
+                    },
                     onOpenPermissions = { settingsFocus = "permissions"; screen = RootScreen.SECTION_PAGE },
                     onColorMode = viewModel::setThemeMode,
                     onFontStyle = viewModel::setFontStyle,
@@ -3058,13 +2972,18 @@ private fun RootScreenHost(
                     },
                     onOpenNotifications = { screen = RootScreen.NOTIFICATIONS_PAGE },
                     onOpenDeveloperTools = { settingsFocus = "tools"; screen = RootScreen.SECTION_PAGE },
+                    onOpenRuntime = { settingsFocus = "runtime"; screen = RootScreen.SECTION_PAGE },
+                    onOpenEnvironment = { settingsFocus = "environment"; screen = RootScreen.SECTION_PAGE },
+                    onOpenDeveloper = { settingsFocus = "developer"; screen = RootScreen.SECTION_PAGE },
                     onOpenPrivacy = { showPrivacyPolicy = true },
                     onOpenAbout = { settingsFocus = "about"; screen = RootScreen.SECTION_PAGE },
-                    onOpenAllSettings = { screen = RootScreen.LEGACY_SETTINGS },
                     onLogout = { authViewModel?.signOut() },
                     appUpdateAvailable = state.appUpdate != null,
                     currentVersion = BuildConfig.VERSION_NAME,
-                    onOpenAppUpdates = onShowAppUpdate,
+                    // v3.2.38 (Part K): App updates is a real page now —
+                    // the full update system (check + install) in place,
+                    // not just the root dialog.
+                    onOpenAppUpdates = { settingsFocus = "updates"; screen = RootScreen.SECTION_PAGE },
                 )
                 RootScreen.CAPABILITIES -> CapabilitiesScreen(
                     onBack = { screen = RootScreen.SETTINGS },
@@ -3077,10 +2996,7 @@ private fun RootScreenHost(
                     onBack = { screen = RootScreen.SETTINGS },
                 )
                 RootScreen.MARKETPLACE -> MarketplaceScreen(
-                    onBack = {
-                        screen = RootScreen.CHAT_HOME
-                        drawerOpen = true
-                    },
+                    onBack = navigateBack,
                     onInstallItem = { item -> viewModel.installMarketplaceItem(item) },
                     onUninstallItem = { item -> viewModel.uninstallMarketplaceItem(item) },
                     onPublishItem = { item -> viewModel.publishMarketplaceItem(item) },
@@ -3100,7 +3016,16 @@ private fun RootScreenHost(
                 )
                 RootScreen.LICENSE_PAGE -> LicensePage(onBack = { screen = RootScreen.SETTINGS })
                 RootScreen.NOTIFICATIONS_PAGE -> NotificationsPage(onBack = { screen = RootScreen.SETTINGS })
-                RootScreen.LEGACY_SETTINGS, RootScreen.SECTION_PAGE -> SettingsScreen(
+                // v3.2.38 (Part K): the classic Settings monolith no
+                // longer exists as a destination — every legacy function
+                // group has its own page in the new Settings. This branch
+                // only catches a navigation state saved by an older
+                // version and lands it safely on the new Settings home.
+                RootScreen.LEGACY_SETTINGS -> {
+                    LaunchedEffect(Unit) { screen = RootScreen.SETTINGS }
+                    Box(Modifier.fillMaxSize())
+                }
+                RootScreen.SECTION_PAGE -> SettingsScreen(
                     state = state,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
@@ -3108,7 +3033,6 @@ private fun RootScreenHost(
                     onDiscoverModels = viewModel::discoverModels,
                     onValidateProvider = viewModel::validateProvider,
                     onSetThemeMode = viewModel::setThemeMode,
-                    onSetColorTheme = viewModel::setColorTheme,
                     onPing = viewModel::pingApi,
                     onClearTerminal = viewModel::clearTerminal,
                     getSavedApiKey = viewModel::getSavedApiKey,
@@ -3152,17 +3076,27 @@ private fun RootScreenHost(
                     onTogglePermissionPolicy = viewModel::updatePermissionPolicy,
                     onClearSecurityAuditLogs = viewModel::clearSecurityAuditLogs,
                     onReplayAppTour = viewModel::replayAppTour,
-                    focusSections = if (screen == RootScreen.SECTION_PAGE) {
-                        when (settingsFocus) {
-                            "tools" -> setOf(SettingsSection.TOOLS, SettingsSection.RUNTIME, SettingsSection.ENVIRONMENT)
-                            "permissions" -> setOf(SettingsSection.PERMISSIONS)
-                            else -> setOf(SettingsSection.CONTRIBUTORS)
-                        }
-                    } else emptySet(),
-                    focusTitle = if (screen == RootScreen.SECTION_PAGE) {
-                        when (settingsFocus) { "tools" -> "Developer tools"; "permissions" -> "Permissions"; else -> "About" }
-                    } else null,
-                    onFocusBack = if (screen == RootScreen.SECTION_PAGE) ({ screen = RootScreen.SETTINGS }) else null,
+                    // v3.2.38 (Part K): one focus page per legacy function
+                    // group — the only way SettingsScreen is ever composed.
+                    focusSections = when (settingsFocus) {
+                        "tools" -> setOf(SettingsSection.TOOLS)
+                        "runtime" -> setOf(SettingsSection.RUNTIME)
+                        "environment" -> setOf(SettingsSection.ENVIRONMENT)
+                        "permissions" -> setOf(SettingsSection.PERMISSIONS)
+                        "updates" -> setOf(SettingsSection.UPDATE_CHANNEL)
+                        "developer" -> setOf(SettingsSection.CONTRIBUTORS)
+                        else -> setOf(SettingsSection.ABOUT)
+                    },
+                    focusTitle = when (settingsFocus) {
+                        "tools" -> "Developer tools"
+                        "runtime" -> "Linux runtime"
+                        "environment" -> "Environment updates"
+                        "permissions" -> "Permissions"
+                        "updates" -> "App updates"
+                        "developer" -> "Developer"
+                        else -> "About"
+                    },
+                    onFocusBack = { screen = RootScreen.SETTINGS },
                 )
             }
         }
@@ -3179,6 +3113,7 @@ private fun RootScreenHost(
             onApprovalWithLevel = { _, _ -> },
             onClose = { homeCallActive = false },
             onRequestMicPermission = { homeCallPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+            fastReply = true,
         )
     }
     if (drawerMounted) {
@@ -3187,6 +3122,7 @@ private fun RootScreenHost(
             progressAnim = drawerProgressAnim,
             onOpenWork = {
                 drawerOpen = false
+                screenOrigins.remove(RootScreen.PROJECTS)
                 screen = RootScreen.PROJECTS
             },
             userInitial = (hostUser?.displayName?.firstOrNull() ?: hostUser?.email?.firstOrNull() ?: 'K')
@@ -3202,16 +3138,26 @@ private fun RootScreenHost(
                 viewModel.createQuickProject()
             },
             onOpenChats = { screen = RootScreen.CHATS },
-            onOpenProjects = { screen = RootScreen.PROJECTS },
+            onOpenProjects = {
+                screenOrigins.remove(RootScreen.PROJECTS)
+                screen = RootScreen.PROJECTS
+            },
             onOpenCode = { screen = RootScreen.CODE },
             onOpenProviders = { screen = RootScreen.AGENT },
             onOpenSkills = {
                 skillsInitialTab = 0
                 skillsTabEpoch++
+                screenOrigins.remove(RootScreen.SKILLS)
                 screen = RootScreen.SKILLS
             },
-            onOpenMarketplace = { screen = RootScreen.MARKETPLACE },
-            onOpenConnectors = { screen = RootScreen.CONNECTORS },
+            onOpenMarketplace = {
+                screenOrigins.remove(RootScreen.MARKETPLACE)
+                screen = RootScreen.MARKETPLACE
+            },
+            onOpenConnectors = {
+                screenOrigins.remove(RootScreen.CONNECTORS)
+                screen = RootScreen.CONNECTORS
+            },
             onOpenAppFactory = onOpenAppFactory,
             onOpenProject = { project -> viewModel.openProject(project) },
             onTogglePin = togglePin,
@@ -3671,6 +3617,11 @@ private fun ProviderChoiceRow(
         ProviderKind.CEREBRAS -> Color(0xFF6290C8)
         ProviderKind.COHERE -> Color(0xFF39594D)
         ProviderKind.XAI -> Color(0xFFB8B8B8)
+        ProviderKind.Z_AI -> Color(0xFF3E7CB1)
+        ProviderKind.REQUESTY -> Color(0xFF7A6FF0)
+        ProviderKind.OLLAMA_CLOUD -> Color(0xFF9A9A92)
+        ProviderKind.HUGGING_FACE -> Color(0xFFD9A404)
+        ProviderKind.LLM7 -> Color(0xFF4C9F70)
         ProviderKind.CUSTOM -> PocketOrange
     }
     val mark = when (provider) {
@@ -3688,6 +3639,11 @@ private fun ProviderChoiceRow(
         ProviderKind.CEREBRAS -> "CB"
         ProviderKind.COHERE -> "CO"
         ProviderKind.XAI -> "X"
+        ProviderKind.Z_AI -> "ZA"
+        ProviderKind.REQUESTY -> "RQ"
+        ProviderKind.OLLAMA_CLOUD -> "OL"
+        ProviderKind.HUGGING_FACE -> "HF"
+        ProviderKind.LLM7 -> "L7"
         ProviderKind.CUSTOM -> "<>"
     }
 
@@ -4420,6 +4376,8 @@ private fun ProjectsScreen(
     onOpenAppFactory: () -> Unit = {},
     onOpenTeamStudio: () -> Unit = {},
     onOpenCloudHybrid: () -> Unit = {},
+    // v3.2.38 (Part I): the shared Chat | Work switcher's Chat side.
+    onOpenChatHome: () -> Unit = {},
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var showGitDialog by rememberSaveable { mutableStateOf(false) }
@@ -4468,6 +4426,14 @@ private fun ProjectsScreen(
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    // v3.2.38 (Part I): the same mode switcher as home,
+                    // reflecting Work while in the workspace world.
+                    ModeSwitcher(
+                        workSelected = true,
+                        onSelectChat = onOpenChatHome,
+                        onSelectWork = {},
                     )
                 }
             }
@@ -5970,6 +5936,12 @@ private fun WorkspaceScreen(
                     onApprovalWithLevel = onApprovalWithLevel,
                     onAttachUris = onAddAttachments,
                     onSelectAgent = { kind -> viewModel?.selectAgent(kind) },
+                    // v3.2.38 (Part P): the workspace pill's sheet also
+                    // switches provider + model in place.
+                    providerChoices = viewModel?.workspaceProviderChoices(state.agentKind) ?: emptyList(),
+                    onPickProvider = { kind -> viewModel?.pickWorkspaceProvider(kind) },
+                    fetchProviderModels = { kind -> viewModel?.workspacePickerModels(kind) ?: emptyList() },
+                    onPickProviderModel = { kind, model -> viewModel?.pickWorkspaceProviderModel(kind, model) },
                     freeModeEnabled = state.freeModeEnabled,
                     projectName = state.activeProject?.name.orEmpty(),
                     onPushToGitHub = onPushToGitHubRequest,
@@ -6369,7 +6341,14 @@ private fun FilesTab(
         candidate.path.contains('/')
     }.groupingBy { candidate -> candidate.path.substringBeforeLast('/') }.eachCount()
 
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    // v3.2.38 (J): file-list scroll survives tab round-trips like its filters do.
+    LazyColumn(
+        state = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
+            androidx.compose.foundation.lazy.LazyListState()
+        },
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         item {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
@@ -6753,6 +6732,12 @@ private fun ChatTab(
     onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit = { _, _ -> },
     onAttachUris: (List<Uri>) -> Unit = {},
     onSelectAgent: (AgentKind) -> Unit = {},
+    // v3.2.38 (Part P): composer picker provider section.
+    providerChoices: List<MainViewModel.ProviderChoice> = emptyList(),
+    onPickProvider: (ProviderKind) -> Unit = {},
+    fetchProviderModels: suspend (ProviderKind) -> List<String> = { emptyList() },
+    onPickProviderModel: (ProviderKind, String) -> Unit = { _, _ -> },
+    onManageProviders: (() -> Unit)? = null,
     freeModeEnabled: Boolean = false,
     projectName: String = "",
     onPushToGitHub: () -> Unit = {},
@@ -7323,7 +7308,6 @@ private fun ChatTab(
                 if (toolsOpen) {
                     AddToChatSheet(
                         onDismiss = { toolsOpen = false },
-                        currentProjectName = projectName,
                         showWorkActions = true,
                         workActionsEnabled = true,
                         showConnectors = false,
@@ -7392,6 +7376,19 @@ private fun ChatTab(
                         },
                         onMoreAgents = null,
                         onDismiss = { showAgentSheet = false },
+                        providerChoices = providerChoices,
+                        onPickProvider = { kind ->
+                            showAgentSheet = false
+                            onPickProvider(kind)
+                        },
+                        fetchProviderModels = fetchProviderModels,
+                        onPickProviderModel = { kind, model ->
+                            showAgentSheet = false
+                            onPickProviderModel(kind, model)
+                        },
+                        onManageProviders = onManageProviders?.let { manage ->
+                            { showAgentSheet = false; manage() }
+                        },
                     )
                 }
 
@@ -7636,6 +7633,10 @@ private fun VoiceCallScreen(
     onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit,
     onClose: () -> Unit,
     onRequestMicPermission: () -> Unit = {},
+    // v3.2.38 (M2): the HOME call is relaxed conversation on the direct
+    // API path — it uses tight reply timings. The workspace call keeps
+    // the conservative beats (agent runs land whenever they land).
+    fastReply: Boolean = false,
 ) {
     val context = LocalContext.current
     val voiceState by recognizer.state.collectAsState()
@@ -7651,6 +7652,9 @@ private fun VoiceCallScreen(
     var baselineUserId by remember { mutableStateOf<String?>(null) }
     var lastSpokenId by remember { mutableStateOf<String?>(null) }
     var speakingId by remember { mutableStateOf<String?>(null) }
+    // v3.2.38 (M1): a voice notice (e.g. ElevenLabs failed -> device
+    // fallback) raised during THIS reply stays on the status line.
+    var replyNotice by remember { mutableStateOf(false) }
     val speakingNow = com.vayro.app.voice.ReadAloudPlayer.playingMessageId != null
 
     fun resumeListening(keepStatus: Boolean = false) {
@@ -7708,6 +7712,20 @@ private fun VoiceCallScreen(
         }
     }
 
+    // v3.2.38 (M1): voice failures are visible on the call — when the
+    // player reports the selected voice could not be used, the status
+    // line says so (and stays after the turn ends).
+    LaunchedEffect(com.vayro.app.voice.ReadAloudPlayer.noticeSeq) {
+        if (com.vayro.app.voice.ReadAloudPlayer.noticeSeq == 0) return@LaunchedEffect
+        if (awaitingReply || phase == VoiceCallPhase.SPEAKING) {
+            com.vayro.app.voice.ReadAloudPlayer.lastNotice?.let { notice ->
+                statusLine = notice
+                statusIsError = true
+                replyNotice = true
+            }
+        }
+    }
+
     // A committed segment that stays stable for a short beat = the user
     // finished a turn. Commit on the recognizer's final result as soon as
     // it is stable (700ms, tightened from 1100ms) and show the exact text
@@ -7716,7 +7734,7 @@ private fun VoiceCallScreen(
         if (phase != VoiceCallPhase.LISTENING || muted) return@LaunchedEffect
         val committed = voiceState.committed
         if (committed.isBlank()) return@LaunchedEffect
-        kotlinx.coroutines.delay(700)
+        kotlinx.coroutines.delay(if (fastReply) 250 else 700)
         if (phase == VoiceCallPhase.LISTENING && !muted) {
             recognizer.finish { finalText ->
                 val text = finalText.trim().ifBlank { committed.trim() }
@@ -7729,6 +7747,7 @@ private fun VoiceCallScreen(
                     replyText = ""
                     statusLine = null
                     statusIsError = false
+                    replyNotice = false
                     awaitingReply = true
                     phase = VoiceCallPhase.SENT
                     onSend(text)
@@ -7759,13 +7778,13 @@ private fun VoiceCallScreen(
         // The run is over (or never visibly started). A short grace lets
         // the final message emission land before judging; if nothing new
         // exists at all, one longer beat covers a queued send.
-        kotlinx.coroutines.delay(500)
+        kotlinx.coroutines.delay(if (fastReply) 60 else 500)
         if (!awaitingReply || isRunning || approval != null) return@LaunchedEffect
         var candidate = messages.lastOrNull {
             !it.fromUser && it.id != baselineAssistantId && it.id != lastSpokenId
         }
         if (candidate == null) {
-            kotlinx.coroutines.delay(1200)
+            kotlinx.coroutines.delay(if (fastReply) 600 else 1200)
             if (!awaitingReply || isRunning || approval != null) return@LaunchedEffect
             candidate = messages.lastOrNull {
                 !it.fromUser && it.id != baselineAssistantId && it.id != lastSpokenId
@@ -7843,7 +7862,7 @@ private fun VoiceCallScreen(
             }
             kotlinx.coroutines.delay(250)
             if (phase == VoiceCallPhase.SPEAKING && speakingId == id) {
-                resumeListening(keepStatus = wedged)
+                resumeListening(keepStatus = wedged || replyNotice)
             }
         }
     }
@@ -8165,7 +8184,7 @@ private fun WorkBlockCard(message: ChatMessage, onOpenActivity: () -> Unit = {})
 }
 
 @Composable
-private fun ThinkingOrb(modifier: Modifier = Modifier, color: Color = com.vayro.app.ui.theme.KodexClay) {
+internal fun ThinkingOrb(modifier: Modifier = Modifier, color: Color = com.vayro.app.ui.theme.KodexClay) {
     val transition = rememberInfiniteTransition(label = "thinking_orb")
     val phase by transition.animateFloat(
         initialValue = 0f, targetValue = (2.0 * Math.PI).toFloat(),
