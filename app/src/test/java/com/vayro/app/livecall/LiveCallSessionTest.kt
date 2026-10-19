@@ -25,8 +25,8 @@ class LiveCallSessionTest {
         val sent = CopyOnWriteArrayList<String>()
 
         override fun connect(url: String, listener: LiveTransport.Listener) {
-            this.url = url
             this.listener = listener
+            this.url = url
         }
 
         override fun send(text: String): Boolean {
@@ -105,7 +105,7 @@ class LiveCallSessionTest {
 
         fun startAndReady(): FakeTransport {
             session.start()
-            awaitTrue { transports.size == 1 }
+            awaitTrue { transports.firstOrNull()?.url != null }
             val transport = transports[0]
             transport.serverOpen()
             awaitTrue { transport.sent.size == 1 }
@@ -119,7 +119,7 @@ class LiveCallSessionTest {
     fun `setup goes first and mic audio waits for setupComplete`() {
         val rig = Rig(listOf(cred("k1", "key-one")))
         rig.session.start()
-        awaitTrue { rig.transports.size == 1 }
+        awaitTrue { rig.transports.firstOrNull()?.url != null }
         val transport = rig.transports[0]
         assertTrue(transport.url!!.contains("key=key-one"))
         transport.serverOpen()
@@ -203,7 +203,7 @@ class LiveCallSessionTest {
         val transport = rig.startAndReady()
         transport.serverSend("""{"sessionResumptionUpdate":{"resumable":true,"newHandle":"h-123"}}""")
         transport.serverSend("""{"goAway":{"timeLeft":"5s"}}""")
-        awaitTrue { rig.transports.size == 2 }
+        awaitTrue { rig.transports.getOrNull(1)?.url != null }
         val second = rig.transports[1]
         assertTrue(second.url!!.contains("key=key-one"))
         second.serverOpen()
@@ -226,7 +226,7 @@ class LiveCallSessionTest {
         val rig = Rig(listOf(cred("k1", "key-one"), cred("k2", "key-two")))
         val transport = rig.startAndReady()
         transport.serverClose(1011, "RESOURCE_EXHAUSTED: quota exceeded for this project")
-        awaitTrue { rig.transports.size == 2 }
+        awaitTrue { rig.transports.getOrNull(1)?.url != null }
         awaitTrue { rig.recorder.switchLines.size == 1 }
         assertEquals("Switched to key 2 — key 1 limit reached", rig.recorder.switchLines[0])
         assertEquals(listOf(true), rig.recorder.switchQuota.toList())
@@ -241,9 +241,9 @@ class LiveCallSessionTest {
     fun `a rejected key switches without a quota mark`() {
         val rig = Rig(listOf(cred("k1", "key-one"), cred("k2", "key-two")))
         rig.session.start()
-        awaitTrue { rig.transports.size == 1 }
+        awaitTrue { rig.transports.firstOrNull()?.url != null }
         rig.transports[0].serverFail("HTTP 403 — API key not valid")
-        awaitTrue { rig.transports.size == 2 }
+        awaitTrue { rig.transports.getOrNull(1)?.url != null }
         awaitTrue { rig.recorder.switchLines.size == 1 }
         assertEquals("Switched to key 2 — key 1 was rejected", rig.recorder.switchLines[0])
         assertEquals(listOf(false), rig.recorder.switchQuota.toList())
@@ -254,7 +254,7 @@ class LiveCallSessionTest {
     fun `auto switch off fails honestly with the real reason`() {
         val rig = Rig(listOf(cred("k1", "key-one"), cred("k2", "key-two")), autoSwitch = false)
         rig.session.start()
-        awaitTrue { rig.transports.size == 1 }
+        awaitTrue { rig.transports.firstOrNull()?.url != null }
         rig.transports[0].serverFail("HTTP 429 — RESOURCE_EXHAUSTED")
         assertTrue(rig.recorder.terminalLatch.await(3, TimeUnit.SECONDS))
         assertTrue(rig.recorder.terminalMessage!!.contains("429"))
@@ -268,7 +268,7 @@ class LiveCallSessionTest {
     fun `when every key is spent the call ends with the reason`() {
         val rig = Rig(listOf(cred("k1", "key-one")))
         rig.session.start()
-        awaitTrue { rig.transports.size == 1 }
+        awaitTrue { rig.transports.firstOrNull()?.url != null }
         rig.transports[0].serverFail("HTTP 429 — RESOURCE_EXHAUSTED")
         assertTrue(rig.recorder.terminalLatch.await(3, TimeUnit.SECONDS))
         assertTrue(rig.recorder.switchLines.isEmpty())
@@ -282,7 +282,7 @@ class LiveCallSessionTest {
             resting = setOf("k1"),
         )
         rig.session.start()
-        awaitTrue { rig.transports.size == 1 }
+        awaitTrue { rig.transports.firstOrNull()?.url != null }
         assertTrue(rig.transports[0].url!!.contains("key=key-two"))
         rig.session.stop()
     }
@@ -291,7 +291,7 @@ class LiveCallSessionTest {
     fun `no answer in time ends the call with a plain reason`() {
         val rig = Rig(listOf(cred("k1", "key-one")), setupTimeoutMs = 300L)
         rig.session.start()
-        awaitTrue { rig.transports.size == 1 }
+        awaitTrue { rig.transports.firstOrNull()?.url != null }
         rig.transports[0].serverOpen()
         assertTrue(rig.recorder.terminalLatch.await(4, TimeUnit.SECONDS))
         assertTrue(rig.recorder.terminalMessage!!.contains("did not answer"))
