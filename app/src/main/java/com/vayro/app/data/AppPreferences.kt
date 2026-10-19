@@ -164,6 +164,11 @@ class AppPreferences(private val context: Context) {
         preferences.edit().putString("chat_base_url_$kindName", baseUrl).commit()
     }
 
+    /** v3.2.40: the prebuilt Gemini Live voice the Live call speaks with (a voice NAME from LiveCallProtocol.VOICES). */
+    var liveCallVoice: String
+        get() = preferences.getString("live_call_voice", "")?.ifBlank { null } ?: "Kore"
+        set(value) { preferences.edit().putString("live_call_voice", value).commit() }
+
     /** v3.2.37 (F): the home thread currently open on the chat home. */
     var activeHomeThreadId: String
         get() = preferences.getString("active_home_thread_id", "") ?: ""

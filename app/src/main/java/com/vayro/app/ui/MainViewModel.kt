@@ -15,6 +15,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.vayro.app.files.SharedExport
 import com.vayro.app.BuildConfig
 import com.vayro.app.AppCrashLogger
+import com.vayro.app.data.ApiKeyCredential
 import com.vayro.app.data.ApiKeyVault
 import com.vayro.app.data.ApiKeyFailoverCoordinator
 import com.vayro.app.network.ChatApiException
@@ -4058,6 +4059,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** v3.2.38 (Part N3): the task text for a manual "Open this chat in Work". */
     fun activeHomeTaskText(): String =
         activeHomeThread()?.messages?.lastOrNull { it.fromUser && it.kind == "text" }?.text.orEmpty()
+
+    // ------------------------------------------------------------------
+    // v3.2.40: Live call (Gemini Live, speech-to-speech) — the home
+    // call's second engine, alongside the pipeline Voice Call. The
+    // engine draws keys from the Google AI Studio catalog vault pool
+    // with the SAME failover semantics as home chat: Auto-switch ON +
+    // a quota/auth failure marks the key (quota-class only, through
+    // KeyHealthStore), activates the next key, and the switch is saved
+    // into the thread as a "Switched to key N" system line. Gemini
+    // quota is per Google PROJECT, not per key: rotating keys of one
+    // project adds nothing — the pool only helps across accounts.
+    // ------------------------------------------------------------------
+
+    /** True when at least one Google AI Studio key is saved — the Live engine's availability gate. */
+    fun hasGoogleAiStudioKey(): Boolean =
+        vault.list(ProviderKind.GOOGLE_AI_STUDIO.name).isNotEmpty()
+
+    /** The Live call's key pool, in vault order (active key first). */
+    fun liveCallCredentials(): List<ApiKeyCredential> =
+        vault.credentials(ProviderKind.GOOGLE_AI_STUDIO.name)
+
+    /** Keys of the Live pool currently inside their quota cooldown — tried last, never hard-skipped. */
+    fun liveCallRestingKeyIds(): Set<String> {
+        val providerId = ProviderKind.GOOGLE_AI_STUDIO.name
+        return keyHealthStore.snapshot(providerId).keys
+            .filter { keyHealthStore.inCooldown(providerId, it) }
+            .toSet()
+    }
+
+    fun liveCallAutoSwitch(): Boolean =
+        preferences.autoSwitchKeys(ProviderKind.GOOGLE_AI_STUDIO.name)
+
+    /** The prebuilt Live voice chosen in Voice settings. */
+    fun liveCallVoiceName(): String = preferences.liveCallVoice
+
+    /** Persists a Live key switch: quota-class failures mark the key "resting" (a rejected key is not labelled so). */
+    fun markLiveKeyExhausted(keyId: String, quota: Boolean) {
+        if (quota) keyHealthStore.markExhausted(ProviderKind.GOOGLE_AI_STUDIO.name, keyId)
+    }
+
+    fun activateLiveKey(keyId: String) {
+        vault.activate(ProviderKind.GOOGLE_AI_STUDIO.name, keyId)
+    }
+
+    /** Saves one spoken Live-call turn into the active home thread, like any typed exchange. */
+    fun appendLiveCallTurn(userText: String?, assistantText: String?) {
+        val user = userText?.trim().orEmpty()
+        val assistant = assistantText?.trim().orEmpty()
+        if (user.isEmpty() && assistant.isEmpty()) return
+        val thread = activeHomeThread() ?: run {
+            newHomeThread()
+            activeHomeThread() ?: return
+        }
+        if (user.isNotEmpty()) {
+            appendHomeMessage(thread.id, com.vayro.app.data.HomeChatMessage(fromUser = true, text = user))
+        }
+        if (assistant.isNotEmpty()) {
+            appendHomeMessage(thread.id, com.vayro.app.data.HomeChatMessage(fromUser = false, text = assistant))
+        }
+    }
+
+    /** Saves a small centered line (e.g. a key switch) into the active home thread. */
+    fun appendLiveCallSystemLine(text: String) {
+        if (text.isBlank()) return
+        val thread = activeHomeThread() ?: run {
+            newHomeThread()
+            activeHomeThread() ?: return
+        }
+        appendHomeMessage(
+            thread.id,
+            com.vayro.app.data.HomeChatMessage(fromUser = false, text = text, kind = "system"),
+        )
+    }
 
     /** Leaves the "Moved to Work" receipt in the home thread after a handoff tap. */
     fun noteHomeTaskMoved(taskText: String, projectName: String) {

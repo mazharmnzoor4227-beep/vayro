@@ -27,7 +27,7 @@ val hasUploadSigning = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { !it.isNullOrBlank() }
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.39"
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.40"
 val runtimeReleaseBaseUrl =
     "https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v$appVersionName"
 val appUpdateManifestUrl =
@@ -86,7 +86,7 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 77
+        versionCode = 78
         versionName = appVersionName
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
 
@@ -222,6 +222,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("com.github.luben:zstd-jni:1.5.6-9@aar")
+    // v3.2.40: the Gemini Live call runs over a raw OkHttp WebSocket
+    // with the user's own AI Studio key (BYOK — no Firebase project).
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Firebase Auth and Identity libraries are shared across both online and offline builds
     // so account management and Google sign-in work seamlessly with project credentials.

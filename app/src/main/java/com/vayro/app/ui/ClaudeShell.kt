@@ -3287,7 +3287,119 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
             item {
                 ElevenLabsVoiceCard(onConnectionChanged = { refreshElevenLabs() })
             }
+            item {
+                LiveCallVoiceSection()
+            }
             item { Spacer(Modifier.height(10.dp)) }
+        }
+    }
+}
+
+/**
+ * v3.2.40: the Live call's voice — one of Gemini Live's prebuilt voices
+ * (the Live engine speaks with Gemini's own voices, not the Listen
+ * voices above). No preview is offered: a Live voice can only be heard
+ * inside a call, and faking one would be a demo, not a setting.
+ * Selecting simply saves the name the next Live call's setup will use.
+ */
+@Composable
+private fun LiveCallVoiceSection() {
+    val context = LocalContext.current
+    val appPrefs = remember { com.vayro.app.data.AppPreferences(context) }
+    var liveVoice by remember { mutableStateOf(appPrefs.liveCallVoice) }
+    var showPicker by remember { mutableStateOf(false) }
+    if (showPicker) {
+        LiveVoicePickerDialog(
+            selected = liveVoice,
+            onSelect = { name ->
+                liveVoice = name
+                appPrefs.liveCallVoice = name
+                showPicker = false
+            },
+            onDismiss = { showPicker = false },
+        )
+    }
+    Column {
+        Text(
+            "Live call",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        ShellCard {
+            ShellRow(
+                Icons.Filled.GraphicEq,
+                "Live call voice",
+                value = liveVoice,
+                onClick = { showPicker = true },
+            )
+        }
+        Text(
+            "Live calls use your Google AI Studio key and speak with Gemini's own voices. On the free plan, Google may use conversations to improve its products.",
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun LiveVoicePickerDialog(
+    selected: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 6.dp,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(vertical = 10.dp)) {
+                Text(
+                    "Live call voice",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(com.vayro.app.livecall.LiveCallProtocol.VOICES, key = { it.first }) { (name, style) ->
+                        val isSelected = name == selected
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(name) }
+                                .padding(horizontal = 20.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    name,
+                                    fontSize = 15.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (isSelected) KodexClay else MaterialTheme.colorScheme.onSurface,
+                                )
+                                Text(
+                                    style,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "Selected",
+                                    tint = KodexClay,
+                                    modifier = Modifier.size(19.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

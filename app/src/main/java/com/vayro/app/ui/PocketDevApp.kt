@@ -20,6 +20,8 @@ import android.widget.Toast
 import com.vayro.app.BuildConfig
 import com.vayro.app.R
 import com.vayro.app.data.AppPreferences
+import com.vayro.app.livecall.LiveCallController
+import com.vayro.app.livecall.LiveCallUiState
 import com.vayro.app.ui.navigation.OverlayScreen
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -2625,17 +2627,28 @@ private fun RootScreenHost(
     val homeCallRecognizer = remember { VoiceRecognizer(shellContext) }
     DisposableEffect(homeCallRecognizer) { onDispose { homeCallRecognizer.release() } }
     var homeCallActive by remember { mutableStateOf(false) }
+    // v3.2.40: the home call has two engines — Live (Gemini Live,
+    // speech-to-speech, needs a Google AI Studio key) and Standard
+    // (the pipeline call below). Live is the default when a key is
+    // connected; the switcher in the call header flips between them.
+    var homeCallEngineLive by remember { mutableStateOf(false) }
+    fun openHomeCall() {
+        homeCallEngineLive = viewModel.hasGoogleAiStudioKey()
+        homeCallActive = true
+    }
     val homeCallPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            homeCallActive = true
+            openHomeCall()
         } else {
             Toast.makeText(shellContext, "Microphone permission is required for voice calls", Toast.LENGTH_SHORT).show()
         }
     }
     fun startHomeCall() {
-        if (!homeCallRecognizer.isAvailable()) {
+        // The speech-recognizer gate applies only to the Standard
+        // engine — a Live call never touches the recognizer.
+        if (!viewModel.hasGoogleAiStudioKey() && !homeCallRecognizer.isAvailable()) {
             Toast.makeText(shellContext, "Voice recognition not supported on this device", Toast.LENGTH_SHORT).show()
             return
         }
@@ -2644,7 +2657,7 @@ private fun RootScreenHost(
         ) {
             homeCallPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         } else {
-            homeCallActive = true
+            openHomeCall()
         }
     }
     val homeCallMessages = (activeHomeThread?.messages ?: emptyList()).mapNotNull { message ->
@@ -3180,18 +3193,45 @@ private fun RootScreenHost(
     }
 }
     if (homeCallActive) {
-        VoiceCallScreen(
-            recognizer = homeCallRecognizer,
-            messages = homeCallMessages,
-            isRunning = state.homeSending,
-            approval = null,
-            onSend = { text -> viewModel.sendHomeMessage(text) },
-            onApproval = {},
-            onApprovalWithLevel = { _, _ -> },
-            onClose = { homeCallActive = false },
-            onRequestMicPermission = { homeCallPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
-            fastReply = true,
-        )
+        val liveKeyConnected = viewModel.hasGoogleAiStudioKey()
+        when {
+            homeCallEngineLive && liveKeyConnected -> LiveCallScreen(
+                viewModel = viewModel,
+                engineSwitcher = {
+                    CallEngineSwitcher(
+                        liveSelected = true,
+                        onSelect = { live -> if (!live) homeCallEngineLive = false },
+                    )
+                },
+                onClose = { homeCallActive = false },
+            )
+            homeCallEngineLive -> LiveCallUnavailableScreen(
+                onClose = { homeCallActive = false },
+                onUseStandard = { homeCallEngineLive = false },
+                onOpenProviders = {
+                    homeCallActive = false
+                    screen = RootScreen.AGENT
+                },
+            )
+            else -> VoiceCallScreen(
+                recognizer = homeCallRecognizer,
+                messages = homeCallMessages,
+                isRunning = state.homeSending,
+                approval = null,
+                onSend = { text -> viewModel.sendHomeMessage(text) },
+                onApproval = {},
+                onApprovalWithLevel = { _, _ -> },
+                onClose = { homeCallActive = false },
+                onRequestMicPermission = { homeCallPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                fastReply = true,
+                headerCenter = {
+                    CallEngineSwitcher(
+                        liveSelected = false,
+                        onSelect = { live -> if (live) homeCallEngineLive = true },
+                    )
+                },
+            )
+        }
     }
     if (drawerMounted) {
         KodexSidebar(
@@ -7668,6 +7708,10 @@ private fun VoiceCallScreen(
     // API path — it uses tight reply timings. The workspace call keeps
     // the conservative beats (agent runs land whenever they land).
     fastReply: Boolean = false,
+    // v3.2.40: the HOME host passes the Live | Standard engine switcher
+    // for the header; the workspace call passes nothing and renders
+    // exactly as before.
+    headerCenter: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val voiceState by recognizer.state.collectAsState()
@@ -7920,6 +7964,10 @@ private fun VoiceCallScreen(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.weight(1f))
+                if (headerCenter != null) {
+                    headerCenter()
+                    Spacer(Modifier.width(8.dp))
+                }
                 IconButton(onClick = { endCall() }) {
                     Icon(
                         Icons.Default.Close,
@@ -8090,6 +8138,343 @@ private fun VoiceCallScreen(
                 }
             }
             Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+/**
+ * v3.2.40: the home call's engine choice — Live (Gemini Live,
+ * speech-to-speech) or Standard (the pipeline call). Rendered in the
+ * call header by both engines so the user can flip mid-visit; the
+ * surface behind it is replaced by the host.
+ */
+@Composable
+private fun CallEngineSwitcher(
+    liveSelected: Boolean,
+    onSelect: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf(true to "Live", false to "Standard").forEach { (live, label) ->
+            val selected = liveSelected == live
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                    )
+                    .clickable { onSelect(live) }
+                    .padding(horizontal = 13.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    fontSize = 13.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * v3.2.40: the Live call screen — the pipeline call's visual shell
+ * (orb, states, End Call, mute) over the Gemini Live engine. The
+ * conversation itself never passes through text generation: the model
+ * hears the user and answers in its own voice; what lands in the home
+ * thread afterwards is the call's in-stream transcription, saved by
+ * the controller through the view model.
+ */
+@Composable
+private fun LiveCallScreen(
+    viewModel: MainViewModel,
+    engineSwitcher: @Composable () -> Unit,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    val controller = remember {
+        LiveCallController(
+            context = context.applicationContext,
+            credentials = viewModel.liveCallCredentials(),
+            autoSwitch = viewModel.liveCallAutoSwitch(),
+            restingKeyIds = viewModel.liveCallRestingKeyIds(),
+            voiceName = viewModel.liveCallVoiceName(),
+            onTurn = viewModel::appendLiveCallTurn,
+            onSystemLine = viewModel::appendLiveCallSystemLine,
+            onKeyExhausted = viewModel::markLiveKeyExhausted,
+            onKeyActivated = viewModel::activateLiveKey,
+        )
+    }
+    val uiState by controller.uiState.collectAsState()
+
+    fun endCall() {
+        controller.stop()
+        onClose()
+    }
+    BackHandler { endCall() }
+
+    LaunchedEffect(controller) { controller.start() }
+    DisposableEffect(controller) {
+        onDispose { controller.stop() }
+    }
+
+    val level by produceState(0f) {
+        while (true) {
+            value = controller.orbLevel()
+            kotlinx.coroutines.delay(50)
+        }
+    }
+    val orbPhase = when (uiState.phase) {
+        LiveCallUiState.Phase.CONNECTING -> VoiceCallPhase.THINKING
+        LiveCallUiState.Phase.SPEAKING -> VoiceCallPhase.SPEAKING
+        else -> VoiceCallPhase.LISTENING
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Live call",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.weight(1f))
+                engineSwitcher()
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = { endCall() }) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "End call",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Box(contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier
+                        .size(330.dp)
+                        .background(
+                            brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                                colors = listOf(
+                                    com.vayro.app.ui.theme.KodexClay.copy(alpha = 0.13f),
+                                    Color.Transparent,
+                                ),
+                            ),
+                            shape = CircleShape,
+                        ),
+                )
+                VoiceCallOrb(
+                    phase = orbPhase,
+                    level = level,
+                    speaking = uiState.phase == LiveCallUiState.Phase.SPEAKING,
+                )
+            }
+            Spacer(Modifier.height(30.dp))
+            Text(
+                when (uiState.phase) {
+                    LiveCallUiState.Phase.CONNECTING -> "Connecting…"
+                    LiveCallUiState.Phase.LISTENING -> if (uiState.muted) "Muted" else "Listening…"
+                    LiveCallUiState.Phase.SPEAKING -> "Speaking…"
+                    LiveCallUiState.Phase.ERROR -> "Call failed"
+                    LiveCallUiState.Phase.ENDED -> "Call ended"
+                },
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                when (uiState.phase) {
+                    LiveCallUiState.Phase.CONNECTING -> "Setting up the Live call…"
+                    LiveCallUiState.Phase.SPEAKING -> uiState.liveReplyText
+                    LiveCallUiState.Phase.LISTENING ->
+                        uiState.liveUserText.ifBlank { "Say something to Kodex" }
+                    else -> uiState.liveReplyText.ifBlank { uiState.liveUserText }
+                },
+                fontSize = 13.5.sp,
+                lineHeight = 19.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (uiState.statusLine != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    uiState.statusLine!!,
+                    fontSize = 12.5.sp,
+                    lineHeight = 17.sp,
+                    color = if (uiState.statusIsError) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .clickable { controller.setMuted(!uiState.muted) },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (uiState.muted) Icons.Default.MicOff else Icons.Default.Mic,
+                            contentDescription = if (uiState.muted) "Unmute" else "Mute",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(23.dp),
+                        )
+                    }
+                }
+                Surface(
+                    modifier = Modifier
+                        .size(66.dp)
+                        .clip(CircleShape)
+                        .clickable { endCall() },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.error,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.CallEnd,
+                            contentDescription = "End call",
+                            tint = Color.White,
+                            modifier = Modifier.size(27.dp),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+/**
+ * v3.2.40: Live chosen with no AI Studio key connected — an honest
+ * unavailable state with the route to fix it, never a dead call.
+ */
+@Composable
+private fun LiveCallUnavailableScreen(
+    onClose: () -> Unit,
+    onUseStandard: () -> Unit,
+    onOpenProviders: () -> Unit,
+) {
+    BackHandler { onClose() }
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Live call",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onClose) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Box(contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier
+                        .size(330.dp)
+                        .background(
+                            brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                                colors = listOf(
+                                    com.vayro.app.ui.theme.KodexClay.copy(alpha = 0.13f),
+                                    Color.Transparent,
+                                ),
+                            ),
+                            shape = CircleShape,
+                        ),
+                )
+                VoiceCallOrb(phase = VoiceCallPhase.LISTENING, level = 0f, speaking = false)
+            }
+            Spacer(Modifier.height(30.dp))
+            Text(
+                "Live call needs a Google AI Studio key",
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "A Live call talks directly with Gemini Live, voice to voice. " +
+                    "Add a free Google AI Studio key in Providers and this call becomes a real conversation. " +
+                    "Your Standard voice call still works without it.",
+                fontSize = 13.5.sp,
+                lineHeight = 19.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(22.dp))
+            Button(
+                onClick = onOpenProviders,
+                shape = RoundedCornerShape(999.dp),
+            ) {
+                Text("Open Providers")
+            }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = onUseStandard,
+                shape = RoundedCornerShape(999.dp),
+            ) {
+                Text("Use Standard call")
+            }
+            Spacer(Modifier.weight(1f))
         }
     }
 }
