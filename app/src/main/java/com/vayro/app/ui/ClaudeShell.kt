@@ -843,6 +843,7 @@ private fun WorkActionsSheet(
     }
 }
 
+@Composable
 internal fun ChatHomeScreen(
     agentKind: AgentKind,
     freeModeEnabled: Boolean,
