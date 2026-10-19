@@ -290,12 +290,14 @@ class LiveCallSessionTest {
         rig.session.stop()
     }
 
-    private fun awaitTrue(timeoutMs: Long = 3_000L, condition: () -> Boolean) {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            if (condition()) return
-            Thread.sleep(10)
-        }
-        assertTrue("condition not met within ${timeoutMs}ms", condition())
+}
+
+/** Polls [condition] until it holds — shared by the tests and the Rig. */
+private fun awaitTrue(timeoutMs: Long = 3_000L, condition: () -> Boolean) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        if (condition()) return
+        Thread.sleep(10)
     }
+    assertTrue("condition not met within ${timeoutMs}ms", condition())
 }
