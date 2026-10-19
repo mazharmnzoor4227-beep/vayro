@@ -2124,7 +2124,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
         )
     }
     if (showPacePopup) {
-        val paceOptions = listOf(Triple("Slow", 0.85f), Triple("Normal", 1.0f), Triple("Fast", 1.18f))
+        val paceOptions = listOf("Slow" to 0.85f, "Normal" to 1.0f, "Fast" to 1.18f)
         ShellRadioPopup(
             title = "Pace",
             options = paceOptions.map { (label, rate) -> Triple(null, label, rate.toString()) },
