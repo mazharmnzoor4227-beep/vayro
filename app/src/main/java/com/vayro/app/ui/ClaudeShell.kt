@@ -1894,7 +1894,7 @@ internal fun ChatHomeScreen(
                                                     onClick = { onRemoveHomeImage(path) },
                                                     modifier = Modifier.align(Alignment.TopEnd).size(20.dp),
                                                 ) {
-                                                    Icon(Icons.Default.Close, contentDescription = "Remove image", modifier = Modifier.size(14.dp))
+                                                    Icon(Icons.Outlined.Close, contentDescription = "Remove image", modifier = Modifier.size(14.dp))
                                                 }
                                             }
                                         }
