@@ -26,6 +26,11 @@ data class HomeChatMessage(
     // v3.2.40 (Scope F): long pasted content carried as the message's
     // TXT chip — rendered as a card, sent to the model in full.
     val pastedText: String = "",
+    // v3.2.40 (Scope G): images attached to this message — absolute
+    // paths of downscaled JPEG copies under filesDir/home_images.
+    // They are sent to the provider as real vision parts (latest
+    // user turn) and rendered in the bubble.
+    val imagePaths: List<String> = emptyList(),
 ) {
     /** The full text the model receives: typed text + pasted content. */
     fun modelText(): String =
@@ -71,6 +76,14 @@ class HomeChatStore(context: Context) {
                                 taskText = m.optString("taskText"),
                                 projectName = m.optString("projectName"),
                                 pastedText = m.optString("pastedText"),
+                                imagePaths = buildList {
+                                    val arr = m.optJSONArray("imagePaths")
+                                    if (arr != null) {
+                                        for (k in 0 until arr.length()) {
+                                            arr.optString(k).takeIf { it.isNotBlank() }?.let { add(it) }
+                                        }
+                                    }
+                                },
                             ),
                         )
                     }
@@ -102,7 +115,8 @@ class HomeChatStore(context: Context) {
                             .put("kind", m.kind)
                             .put("taskText", m.taskText)
                             .put("projectName", m.projectName)
-                            .put("pastedText", m.pastedText),
+                            .put("pastedText", m.pastedText)
+                            .put("imagePaths", JSONArray(m.imagePaths)),
                     )
                 }
                 array.put(

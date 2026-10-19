@@ -2793,6 +2793,10 @@ private fun RootScreenHost(
                     onPushToGitHub = onPushRequest,
                     homeMessages = activeHomeThread?.messages ?: emptyList(),
                     homeThreadId = activeHomeThread?.id ?: "",
+                    homePendingImages = state.homePendingImages,
+                    homeImageNote = state.homeImageNote,
+                    onAttachImages = viewModel::attachHomeImages,
+                    onRemoveHomeImage = viewModel::removeHomePendingImage,
                     homeSending = state.homeSending,
                     homeProviderName = state.homeChatProviderName,
                     onNewChat = { viewModel.newHomeThread() },
@@ -5412,7 +5416,7 @@ private fun ReadOnlyProjectScreen(
                 liveProcess = emptyList(),
                 isRunning = false,
                 streamingMessageId = null,
-                onSend = {},
+                onSend = { _, _ -> },
                 onStop = {},
                 onApproval = {},
                 listState = listState,
@@ -6117,7 +6121,7 @@ private fun WorkspaceScreen(
                     onGitBranchList = onGitBranchList,
                     onGitPush = onGitPush,
                     onGitPull = onGitPull,
-                    onSendPrompt = onSend,
+                    onSendPrompt = { text -> onSend(text, null) },
                 )
                 WorkspaceTab.TERMINAL -> TerminalScreen(
                     lines = state.projectTerminalLines,
@@ -6943,7 +6947,7 @@ private fun ChatTab(
                     userQuery = userQuery,
                     focusMode = focusMode,
                 )
-                onSend(videoPrompt)
+                onSend(videoPrompt, null)
                 prompt = ""
             },
         )
@@ -6972,7 +6976,7 @@ private fun ChatTab(
                             appendLine("My question: $question")
                         }
                     }
-                    onSend(message.trim())
+                    onSend(message.trim(), null)
                 }
             },
         )
@@ -6999,6 +7003,7 @@ private fun ChatTab(
                                 appendLine()
                                 appendLine("Use this page content as context for my request.")
                             },
+                            null,
                         )
                     }
                 }
@@ -7011,7 +7016,7 @@ private fun ChatTab(
             onDismiss = { showGitHubDialog = false },
             onInspect = { url ->
                 showGitHubDialog = false
-                onSend("Clone this GitHub repository into the workspace, inspect its structure (file tree, README, manifest/build files, entry points), and summarize what it does, its main features, and how it is built: $url")
+                onSend("Clone this GitHub repository into the workspace, inspect its structure (file tree, README, manifest/build files, entry points), and summarize what it does, its main features, and how it is built: $url", null)
             },
         )
     }

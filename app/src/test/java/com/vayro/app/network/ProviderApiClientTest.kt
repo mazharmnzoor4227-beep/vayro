@@ -42,4 +42,83 @@ class ProviderApiClientTest {
         })
         assertFalse(routing.getBoolean("allow_fallbacks"))
     }
+
+    // v3.2.40 (Scope G): a turn with an image must carry the image in
+    // the payload in each wire's own vision shape — never dropped.
+    private fun imageTurn() = ProviderApiClient.ChatTurn(
+        role = "user",
+        content = "What is in this picture?",
+        images = listOf(ProviderApiClient.ChatImage(base64 = "QUJD", mimeType = "image/jpeg")),
+    )
+
+    @Test
+    fun openAiChatTurnWithImageEmitsImageUrlPart() {
+        val body = JSONObject(
+            ProviderApiClient().chatBody(
+                model = "gpt-test",
+                protocol = ProviderProtocol.OPENAI_CHAT,
+                turns = listOf(imageTurn()),
+                systemPrompt = null,
+                maxTokens = 100,
+            ),
+        )
+        val content = body.getJSONArray("messages").getJSONObject(0).getJSONArray("content")
+        assertEquals("text", content.getJSONObject(0).getString("type"))
+        val imagePart = content.getJSONObject(1)
+        assertEquals("image_url", imagePart.getString("type"))
+        assertEquals("data:image/jpeg;base64,QUJD", imagePart.getJSONObject("image_url").getString("url"))
+    }
+
+    @Test
+    fun openAiResponsesTurnWithImageEmitsInputImagePart() {
+        val body = JSONObject(
+            ProviderApiClient().chatBody(
+                model = "gpt-test",
+                protocol = ProviderProtocol.OPENAI_RESPONSES,
+                turns = listOf(imageTurn()),
+                systemPrompt = null,
+                maxTokens = 100,
+            ),
+        )
+        val content = body.getJSONArray("input").getJSONObject(0).getJSONArray("content")
+        assertEquals("input_text", content.getJSONObject(0).getString("type"))
+        val imagePart = content.getJSONObject(1)
+        assertEquals("input_image", imagePart.getString("type"))
+        assertEquals("data:image/jpeg;base64,QUJD", imagePart.getString("image_url"))
+    }
+
+    @Test
+    fun anthropicTurnWithImageEmitsBase64ImageBlock() {
+        val body = JSONObject(
+            ProviderApiClient().chatBody(
+                model = "claude-test",
+                protocol = ProviderProtocol.ANTHROPIC,
+                turns = listOf(imageTurn()),
+                systemPrompt = null,
+                maxTokens = 100,
+            ),
+        )
+        val content = body.getJSONArray("messages").getJSONObject(0).getJSONArray("content")
+        assertEquals("text", content.getJSONObject(0).getString("type"))
+        val imageBlock = content.getJSONObject(1)
+        assertEquals("image", imageBlock.getString("type"))
+        val source = imageBlock.getJSONObject("source")
+        assertEquals("base64", source.getString("type"))
+        assertEquals("image/jpeg", source.getString("media_type"))
+        assertEquals("QUJD", source.getString("data"))
+    }
+
+    @Test
+    fun textOnlyTurnStaysAPlainString() {
+        val body = JSONObject(
+            ProviderApiClient().chatBody(
+                model = "gpt-test",
+                protocol = ProviderProtocol.OPENAI_CHAT,
+                turns = listOf(ProviderApiClient.ChatTurn("user", "hello")),
+                systemPrompt = null,
+                maxTokens = 100,
+            ),
+        )
+        assertEquals("hello", body.getJSONArray("messages").getJSONObject(0).getString("content"))
+    }
 }

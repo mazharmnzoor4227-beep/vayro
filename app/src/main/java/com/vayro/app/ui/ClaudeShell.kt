@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -147,6 +148,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1137,6 +1139,30 @@ private fun HomeMessageRow(
                         // messages through MarkdownText with the copy circle
                         // at the bottom-end — home now does exactly the same.
                         Column {
+                            if (message.imagePaths.isNotEmpty()) {
+                                // Scope G: the sent message shows the
+                                // images that went to the model.
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = if (message.text.isBlank() && message.pastedText.isBlank()) 10.dp else 2.dp),
+                                ) {
+                                    message.imagePaths.forEach { path ->
+                                        val bmp = remember(path) {
+                                            runCatching {
+                                                android.graphics.BitmapFactory.decodeFile(path)?.asImageBitmap()
+                                            }.getOrNull()
+                                        }
+                                        if (bmp != null) {
+                                            androidx.compose.foundation.Image(
+                                                bitmap = bmp,
+                                                contentDescription = "Attached image",
+                                                modifier = Modifier.size(120.dp).clip(RoundedCornerShape(10.dp)),
+                                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                             if (message.text.isNotBlank()) {
                                 Box {
                                     SelectionContainer {
@@ -1289,6 +1315,13 @@ internal fun ChatHomeScreen(
     // v3.2.40 (Scope I/I2): the active thread's id, so its scroll
     // position is saved/restored per thread (ChatScrollStore).
     homeThreadId: String = "",
+    // v3.2.40 (Scope G): images staged in the home composer + the
+    // attach/remove callbacks (Photos/Camera route here; Files keep
+    // the Work route via onAttach).
+    homePendingImages: List<String> = emptyList(),
+    homeImageNote: String? = null,
+    onAttachImages: (List<Uri>) -> Unit = {},
+    onRemoveHomeImage: (String) -> Unit = {},
     homeSending: Boolean = false,
     homeProviderName: String = "",
     onNewChat: () -> Unit = {},
@@ -1322,7 +1355,8 @@ internal fun ChatHomeScreen(
     var showGitHubDialog by rememberSaveable { mutableStateOf(false) }
 
     val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) onAttach(uris)
+        // Scope G: photos stay in the home thread as vision input.
+        if (uris.isNotEmpty()) onAttachImages(uris)
     }
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) onAttach(uris)
@@ -1331,7 +1365,7 @@ internal fun ChatHomeScreen(
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         val uri = cameraUri
         cameraUri = null
-        if (success && uri != null) onAttach(listOf(uri))
+        if (success && uri != null) onAttachImages(listOf(uri))
     }
 
     // Inline voice input (same in-app recognizer as the workspace chat).
@@ -1372,7 +1406,7 @@ internal fun ChatHomeScreen(
                 )
                 showYouTubeDialog = false
                 prompt = ""
-                onSend(videoPrompt)
+                onSend(videoPrompt, null)
             },
         )
     }
@@ -1399,7 +1433,7 @@ internal fun ChatHomeScreen(
                             appendLine("My question: $question")
                         }
                     }
-                    onSend(message.trim())
+                    onSend(message.trim(), null)
                 }
             },
         )
@@ -1425,6 +1459,7 @@ internal fun ChatHomeScreen(
                                 appendLine()
                                 appendLine("Use this page content as context for my request.")
                             },
+                            null,
                         )
                     }
                 }
@@ -1436,7 +1471,7 @@ internal fun ChatHomeScreen(
             onDismiss = { showGitHubDialog = false },
             onInspect = { url ->
                 showGitHubDialog = false
-                onSend("Clone this GitHub repository into the workspace, inspect its structure (file tree, README, manifest/build files, entry points), and summarize what it does, its main features, and how it is built: $url")
+                onSend("Clone this GitHub repository into the workspace, inspect its structure (file tree, README, manifest/build files, entry points), and summarize what it does, its main features, and how it is built: $url", null)
             },
         )
     }
@@ -1572,7 +1607,7 @@ internal fun ChatHomeScreen(
             else -> "Coffee and Kodex time?"
         }
     }
-    val canSend = prompt.isNotBlank() || pastedText != null
+    val canSend = prompt.isNotBlank() || pastedText != null || homePendingImages.isNotEmpty()
     val hasThread = homeMessages.isNotEmpty()
     // v3.2.38 (Part I): thread scroll survives leaving to Work and back,
     // like every other list in the shell (U8b pattern).
@@ -1833,6 +1868,48 @@ internal fun ChatHomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        // v3.2.40 (Scope G): staged images — what you
+                        // see here is exactly what will be sent as
+                        // vision input with the next message.
+                        if (homePendingImages.isNotEmpty() || homeImageNote != null) {
+                            Column(Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
+                                if (homePendingImages.isNotEmpty()) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        homePendingImages.forEach { path ->
+                                            Box {
+                                                val bmp = remember(path) {
+                                                    runCatching {
+                                                        android.graphics.BitmapFactory.decodeFile(path)?.asImageBitmap()
+                                                    }.getOrNull()
+                                                }
+                                                if (bmp != null) {
+                                                    androidx.compose.foundation.Image(
+                                                        bitmap = bmp,
+                                                        contentDescription = "Attached image",
+                                                        modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)),
+                                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { onRemoveHomeImage(path) },
+                                                    modifier = Modifier.align(Alignment.TopEnd).size(20.dp),
+                                                ) {
+                                                    Icon(Icons.Default.Close, contentDescription = "Remove image", modifier = Modifier.size(14.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                homeImageNote?.let { note ->
+                                    Text(
+                                        note,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 2.dp),
+                                    )
+                                }
+                            }
+                        }
                         if (pastedText != null) {
                             PastedContentChip(
                                 onOpen = { viewingPasted = pastedText },

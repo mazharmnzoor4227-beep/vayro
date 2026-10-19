@@ -412,6 +412,10 @@ data class AppUiState(
     val homeSending: Boolean = false,
     /** Title of the provider answering home chat ("" = none connected yet). */
     val homeChatProviderName: String = "",
+    /** v3.2.40 (Scope G): images staged in the home composer — absolute paths of downscaled JPEGs under filesDir/home_images, sent as real vision parts with the next message. */
+    val homePendingImages: List<String> = emptyList(),
+    /** Plain note shown in the home composer (e.g. a video was staged as still frames). */
+    val homeImageNote: String? = null,
     val executionMode: ExecutionMode = ExecutionMode.UNIFIED,
     val activeRoadmap: ActiveRoadmap? = null,
     val scratchpadItems: List<ScratchpadItem> = emptyList(),
@@ -3679,7 +3683,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val errors = mutableListOf<String>()
                 uris.take(remaining).forEach { uri ->
                     runCatching { copyChatAttachment(project, chatId, uri) }
-                        .onSuccess(added::add)
+                        .onSuccess { attachment ->
+                            // Scope G: intake right at copy time (IO):
+                            // PDF text, ZIP extraction, video frames.
+                            prepareAttachmentIntake(project, attachment)
+                            added += attachment
+                        }
                         .onFailure { errors += (it.message ?: "Could not attach file") }
                 }
                 added to errors
@@ -3768,13 +3777,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "gradle", "properties", "toml", "ini", "conf", "sql", "pdf", "out", "err", "env",
         )
         val isPdf = mimeType == "application/pdf" || extension == "pdf"
+        // v3.2.40 (Scope G): ZIP archives and videos are attachable —
+        // intake (extraction / frame grabs) runs right after the copy.
+        val isZip = mimeType == "application/zip" || mimeType == "application/x-zip-compressed" || extension == "zip"
+        val isVideo = mimeType.startsWith("video/")
         val isNoExtension = !displayName.contains('.') || extension.isBlank()
         val isLogOrText = mimeType.startsWith("text/") || extension in supportedTextExtensions ||
             isNoExtension || mimeType == "application/octet-stream" || mimeType.contains("log") || extension.contains("log")
-        val supported = mimeType.startsWith("image/") || isPdf ||
+        val supported = mimeType.startsWith("image/") || isPdf || isZip || isVideo ||
             mimeType.startsWith("text/") || mimeType == "application/json" || mimeType == "application/xml" ||
             mimeType.endsWith("+json") || mimeType.endsWith("+xml") || isLogOrText
-        require(supported) { "Only images, PDF documents, and text or log files are supported" }
+        require(supported) { "Only images, videos, PDF documents, ZIP archives, and text or log files are supported" }
         require(declaredSize <= MAX_ATTACHMENT_BYTES || declaredSize < 0) { "$displayName is larger than 25 MB" }
         val safeName = sanitizeAttachmentName(displayName)
         val root = projectWorkspaceRoot(project).canonicalFile
@@ -3809,6 +3822,128 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mimeType = mimeType,
             sizeBytes = copied,
         )
+    }
+
+    /**
+     * v3.2.40 (Scope G): attachment intake, run on IO right after the
+     * copy into the workspace, so what the agent is pointed at is REAL
+     * by the time a prompt references it:
+     * - PDF: the text layer is extracted to "<file>.extracted.txt"
+     *   next to the PDF (the prompt note points the agent at it; a
+     *   full prompt inside the PDF is the task). A PDF with NO text
+     *   layer (scanned) gets its first pages rendered to
+     *   "<file>.page-N.jpg" images the agent can view.
+     * - ZIP: extracted for real into a "<name>_extracted" folder, and
+     *   "<file>.contents.txt" holds the file tree + bounded key
+     *   contents + every bound that bit (never silent).
+     * - Video: frames are grabbed host-side (MediaMetadataRetriever)
+     *   into "<file>.frames/" — the agent views frames; nothing
+     *   claims native video understanding.
+     * Failures here never block the attachment itself; the original
+     * file is always in the workspace and the prompt says so.
+     */
+    private fun prepareAttachmentIntake(project: Project, attachment: ChatAttachment) {
+        runCatching {
+            val root = projectWorkspaceRoot(project)
+            val file = File(root, attachment.relativePath)
+            if (!file.exists()) return
+            val lower = attachment.displayName.lowercase()
+            when {
+                attachment.mimeType == "application/pdf" || lower.endsWith(".pdf") -> {
+                    val result = com.vayro.app.data.AttachmentIntake.extractPdfText(file.readBytes())
+                    if (result.text.isNotBlank()) {
+                        val sidecar = File(file.path + ".extracted.txt")
+                        val note = if (result.truncated) {
+                            "\n\n[Note: the PDF text was longer than ${com.vayro.app.data.AttachmentIntake.MAX_PDF_TEXT_CHARS} characters and was shortened at that limit.]"
+                        } else {
+                            ""
+                        }
+                        sidecar.writeText(result.text + note)
+                    } else {
+                        renderPdfPagesAsImages(file)
+                    }
+                }
+                attachment.mimeType.startsWith("application/zip") || lower.endsWith(".zip") -> {
+                    val bytes = file.readBytes()
+                    val target = File(file.parentFile, file.nameWithoutExtension + "_extracted")
+                    val result = com.vayro.app.data.AttachmentIntake.extractZip(bytes, target)
+                    val summary = buildString {
+                        appendLine("ZIP: ${attachment.displayName}")
+                        appendLine("Extracted into the folder next to this file. File tree:")
+                        result.entries.take(300).forEach { entry ->
+                            appendLine("- ${entry.path}${if (entry.isDirectory) "/" else " (${entry.sizeBytes} bytes)"}")
+                        }
+                        if (result.entries.size > 300) appendLine("- … and ${result.entries.size - 300} more entries")
+                        result.notes.forEach { appendLine("Note: $it") }
+                        if (result.textContents.isNotEmpty()) {
+                            appendLine()
+                            appendLine("Key file contents:")
+                            result.textContents.forEach { (path, content) ->
+                                appendLine("--- $path ---")
+                                appendLine(content)
+                            }
+                        }
+                    }
+                    File(file.path + ".contents.txt").writeText(summary)
+                }
+                attachment.mimeType.startsWith("video/") -> {
+                    extractVideoFrames(file)
+                }
+            }
+        }
+    }
+
+    /** Scanned/image-only PDFs: render up to 4 pages as JPEGs (Scope G3). */
+    private fun renderPdfPagesAsImages(pdfFile: File) {
+        runCatching {
+            val fd = android.os.ParcelFileDescriptor.open(pdfFile, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = android.graphics.pdf.PdfRenderer(fd)
+            val pages = minOf(renderer.pageCount, 4)
+            for (i in 0 until pages) {
+                val page = renderer.openPage(i)
+                val scale = 1100f / page.width.coerceAtLeast(1)
+                val bitmap = android.graphics.Bitmap.createBitmap(
+                    (page.width * scale).toInt().coerceAtLeast(1),
+                    (page.height * scale).toInt().coerceAtLeast(1),
+                    android.graphics.Bitmap.Config.ARGB_8888,
+                )
+                page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                File(pdfFile.path + ".page-${i + 1}.jpg").outputStream().use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, out)
+                }
+                page.close()
+                bitmap.recycle()
+            }
+            renderer.close()
+            fd.close()
+        }
+    }
+
+    /** Video intake (Scope G2): up to 6 frames, evenly spaced, as JPEGs. */
+    private fun extractVideoFrames(videoFile: File) {
+        runCatching {
+            val retriever = android.media.MediaMetadataRetriever()
+            retriever.setDataSource(videoFile.path)
+            val durationMs = retriever.extractMetadata(
+                android.media.MediaMetadataRetriever.METADATA_KEY_DURATION,
+            )?.toLongOrNull() ?: 0L
+            val framesDir = File(videoFile.path + ".frames").apply { mkdirs() }
+            val frameCount = 6
+            for (i in 0 until frameCount) {
+                val timeUs = if (durationMs > 0) {
+                    (durationMs * 1000L) * (i + 1) / (frameCount + 1)
+                } else {
+                    i * 1_000_000L
+                }
+                val bitmap = retriever.getFrameAtTime(timeUs, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                    ?: continue
+                File(framesDir, "frame-${i + 1}.jpg").outputStream().use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                }
+                bitmap.recycle()
+            }
+            retriever.release()
+        }
     }
 
     private fun sanitizeAttachmentName(name: String): String =
@@ -4042,15 +4177,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val trimmed = text.trim()
         // v3.2.40 (Scope F): a TXT chip alone is a sendable message.
         val pasted = pastedText?.takeIf { it.isNotBlank() }
-        if ((trimmed.isBlank() && pasted == null) || _state.value.homeSending) return
+        // v3.2.40 (Scope G): staged images alone are sendable too.
+        val pendingImages = _state.value.homePendingImages
+        if ((trimmed.isBlank() && pasted == null && pendingImages.isEmpty()) || _state.value.homeSending) return
         val thread = activeHomeThread() ?: run {
             newHomeThread()
             activeHomeThread() ?: return
         }
         appendHomeMessage(
             thread.id,
-            com.vayro.app.data.HomeChatMessage(fromUser = true, text = trimmed, pastedText = pasted ?: ""),
+            com.vayro.app.data.HomeChatMessage(
+                fromUser = true,
+                text = trimmed,
+                pastedText = pasted ?: "",
+                imagePaths = pendingImages,
+            ),
         )
+        if (pendingImages.isNotEmpty()) {
+            _state.update { it.copy(homePendingImages = emptyList(), homeImageNote = null) }
+        }
         // Classification and the Work handoff see the FULL content
         // (typed + pasted) — the model does too (modelText()).
         val fullText = listOf(trimmed, pasted).filterNotNull().filter { it.isNotBlank() }.joinToString("\n\n")
@@ -4085,6 +4230,142 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopHomeChat() {
         homeChatJob?.cancel()
         _state.update { it.copy(homeSending = false) }
+    }
+
+    /**
+     * v3.2.40 (Scope G): stage images (or a video's frames) in the
+     * home composer. Capability gate FIRST (G5): if the model that
+     * would answer cannot see images, the refusal is stated plainly
+     * at attach time and nothing is staged — an image is never
+     * silently dropped at send time.
+     */
+    fun attachHomeImages(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        val kind = resolvedChatProvider() ?: connectedChatProviders().firstOrNull()
+        val model = kind?.let { catalogChatModel(it) }.orEmpty()
+        val vision = com.vayro.app.network.ModelCapabilityDetector.heuristicFor(model)?.supportsVision == true
+        if (!vision) {
+            _state.update {
+                it.copy(
+                    toastMessage = "The current home chat model${if (model.isNotBlank()) " ($model)" else ""} can't see images. " +
+                        "Switch to a vision-capable model in the model picker, then attach again.",
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            val staged = withContext(Dispatchers.IO) { stageHomeImages(uris) }
+            when {
+                staged.paths.isEmpty() -> _state.update {
+                    it.copy(toastMessage = "That file could not be read as an image or video.")
+                }
+                else -> _state.update {
+                    val combined = it.homePendingImages + staged.paths
+                    it.copy(
+                        homePendingImages = combined.take(4),
+                        homeImageNote = staged.note ?: it.homeImageNote,
+                        toastMessage = if (combined.size > 4) "At most 4 images per message" else it.toastMessage,
+                    )
+                }
+            }
+        }
+    }
+
+    fun removeHomePendingImage(path: String) {
+        _state.update { it.copy(homePendingImages = it.homePendingImages.filterNot { p -> p == path }) }
+        viewModelScope.launch(Dispatchers.IO) { runCatching { File(path).delete() } }
+    }
+
+    private data class StagedHomeImages(val paths: List<String>, val note: String?)
+
+    /** IO: copies picked images into filesDir/home_images as downscaled JPEGs; a video becomes up to 6 frame JPEGs. */
+    private fun stageHomeImages(uris: List<Uri>): StagedHomeImages {
+        val app = getApplication<Application>()
+        val resolver = app.contentResolver
+        val dir = File(app.filesDir, "home_images").apply { mkdirs() }
+        val paths = mutableListOf<String>()
+        var note: String? = null
+        fun saveBitmap(bitmap: android.graphics.Bitmap): String? {
+            val out = File(dir, "img-${UUID.randomUUID()}.jpg")
+            val ok = runCatching {
+                out.outputStream().use { stream ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
+                }
+            }.isSuccess
+            return if (ok) out.absolutePath else null
+        }
+        for (uri in uris) {
+            if (paths.size >= 4) break
+            runCatching {
+                val mime = resolver.getType(uri).orEmpty()
+                if (mime.startsWith("video/")) {
+                    val retriever = android.media.MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(app, uri)
+                        val durationMs = retriever.extractMetadata(
+                            android.media.MediaMetadataRetriever.METADATA_KEY_DURATION,
+                        )?.toLongOrNull() ?: 0L
+                        var frames = 0
+                        for (i in 0 until 6) {
+                            if (paths.size >= 4) break
+                            val timeUs = if (durationMs > 0) {
+                                durationMs * 1000L * (i + 1) / 7
+                            } else {
+                                i * 1_000_000L
+                            }
+                            val bitmap = retriever.getFrameAtTime(
+                                timeUs,
+                                android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                            ) ?: continue
+                            val scaled = scaleBitmapDown(bitmap, 1280)
+                            saveBitmap(scaled)?.let { paths += it; frames++ }
+                            if (scaled !== bitmap) scaled.recycle()
+                            bitmap.recycle()
+                        }
+                        if (frames > 0) {
+                            note = "Video staged as $frames still frame${if (frames == 1) "" else "s"} — the model sees frames, not the video itself."
+                        }
+                    } finally {
+                        runCatching { retriever.release() }
+                    }
+                } else {
+                    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return@runCatching
+                    val bitmap = decodeDownscaledJpeg(bytes, 1280) ?: return@runCatching
+                    saveBitmap(bitmap)?.let { paths += it }
+                    bitmap.recycle()
+                }
+            }
+        }
+        return StagedHomeImages(paths, note)
+    }
+
+    private fun decodeDownscaledJpeg(bytes: ByteArray, maxDimension: Int): android.graphics.Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= maxDimension || bounds.outHeight / (sample * 2) >= maxDimension) {
+            sample *= 2
+        }
+        val decoded = android.graphics.BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: return null
+        val scaled = scaleBitmapDown(decoded, maxDimension)
+        if (scaled !== decoded) decoded.recycle()
+        return scaled
+    }
+
+    private fun scaleBitmapDown(bitmap: android.graphics.Bitmap, maxDimension: Int): android.graphics.Bitmap {
+        val largest = maxOf(bitmap.width, bitmap.height)
+        if (largest <= maxDimension) return bitmap
+        val ratio = maxDimension.toFloat() / largest
+        return android.graphics.Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * ratio).toInt().coerceAtLeast(1),
+            (bitmap.height * ratio).toInt().coerceAtLeast(1),
+            true,
+        )
     }
 
     /**
@@ -4229,9 +4510,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun runHomeChat(threadId: String) {
         try {
             val thread = _state.value.homeThreads.firstOrNull { it.id == threadId } ?: return
-            val turns = thread.messages.filter { it.kind == "text" }.takeLast(20).map {
-                // Scope F: pasted content reaches the model in full.
-                ProviderApiClient.ChatTurn(if (it.fromUser) "user" else "assistant", it.modelText())
+            // Scope G: the LATEST user turn carries its images as real
+            // vision parts (older turns stay text-only, to bound the
+            // payload). Scope F: pasted content reaches the model in full.
+            val textMessages = thread.messages.filter { it.kind == "text" }.takeLast(20)
+            val lastUserPos = textMessages.indexOfLast { it.fromUser }
+            val turns = textMessages.mapIndexed { index, msg ->
+                val images = if (index == lastUserPos) {
+                    msg.imagePaths.mapNotNull { path ->
+                        runCatching {
+                            ProviderApiClient.ChatImage(
+                                base64 = android.util.Base64.encodeToString(
+                                    File(path).readBytes(),
+                                    android.util.Base64.NO_WRAP,
+                                ),
+                                mimeType = "image/jpeg",
+                            )
+                        }.getOrNull()
+                    }
+                } else {
+                    emptyList()
+                }
+                ProviderApiClient.ChatTurn(if (msg.fromUser) "user" else "assistant", msg.modelText(), images)
             }
             val switches = mutableListOf<String>()
             var reply: String? = null
@@ -4520,11 +4820,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         touchProject(project.id)
         persistMessages()
         val history = state.value.messages
+        // v3.2.40 (Scope G): point the agent at the intake products
+        // (extracted PDF text, extracted ZIP tree, video frames,
+        // rendered PDF pages) — all produced at attach time.
+        val wsRoot = projectWorkspaceRoot(project)
+        val guestRoot = guestRootFor(project)
+        val attachmentNotes = attachments.mapNotNull { att ->
+            val f = File(wsRoot, att.relativePath)
+            val guestPath = "$guestRoot/${att.relativePath}"
+            when {
+                File(f.path + ".extracted.txt").exists() ->
+                    "The full text of ${att.displayName} was extracted to $guestPath.extracted.txt — read that file; it IS the document's content, and a full prompt written inside it is the task to carry out."
+                File(f.path + ".page-1.jpg").exists() ->
+                    "${att.displayName} has no readable text layer (scanned/image PDF). Its pages were rendered as images next to it ($guestPath.page-1.jpg and following) — view them to read it."
+                File(f.path + ".contents.txt").exists() -> {
+                    val dirName = att.relativePath.substringBeforeLast('.', att.relativePath) + "_extracted"
+                    "The ZIP ${att.displayName} was extracted into $guestRoot/$dirName/ — work on those real files. Its file tree and key contents are summarized in $guestPath.contents.txt."
+                }
+                File(f.path + ".frames").isDirectory ->
+                    "Frames from the video ${att.displayName} were extracted to $guestPath.frames/ (frame-1.jpg and following) — view those frames; they are what the video shows (still frames, not the video itself)."
+                else -> null
+            }
+        }
         val runtimePrompt = agentChatController.buildEnrichedPrompt(
             requestText = requestText,
             modeInstruction = modeInstruction,
             mentionedPaths = mentionedPaths,
             attachments = attachments,
+            attachmentNotes = attachmentNotes,
             guestRoot = guestRootFor(project),
             skillContext = skillManager.buildPromptContext(state.value.agentKind),
             conversational = conversational,

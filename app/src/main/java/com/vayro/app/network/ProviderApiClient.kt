@@ -183,8 +183,16 @@ class ProviderApiClient {
             b.contains("not supported") || b.contains("invalid model")
     }
 
+    /** One image attached to a chat turn (Scope G): base64 payload. */
+    data class ChatImage(val base64: String, val mimeType: String)
+
     /** One turn of a plain chat conversation for [chatCompletion]. */
-    data class ChatTurn(val role: String, val content: String)
+    data class ChatTurn(
+        val role: String,
+        val content: String,
+        /** v3.2.40 (Scope G): real vision input, emitted in each wire's own image-part shape. */
+        val images: List<ChatImage> = emptyList(),
+    )
 
     /**
      * v3.2.37 (Part F2): one real chat completion against any catalog
@@ -223,7 +231,59 @@ class ProviderApiClient {
         }
     }
 
-    private fun chatBody(
+    /**
+     * One turn's content in the wire's own shape: a plain string when
+     * the turn has no images (unchanged behaviour), otherwise the
+     * protocol's content-part array with REAL image parts (Scope G —
+     * the image is in the payload, never described or dropped).
+     */
+    internal fun turnContent(turn: ChatTurn, protocol: ProviderProtocol): Any {
+        if (turn.images.isEmpty()) return turn.content
+        return when (protocol) {
+            ProviderProtocol.OPENAI_CHAT -> JSONArray().apply {
+                if (turn.content.isNotBlank()) {
+                    put(JSONObject().put("type", "text").put("text", turn.content))
+                }
+                turn.images.forEach { image ->
+                    put(
+                        JSONObject().put("type", "image_url").put(
+                            "image_url",
+                            JSONObject().put("url", "data:${image.mimeType};base64,${image.base64}"),
+                        ),
+                    )
+                }
+            }
+            ProviderProtocol.OPENAI_RESPONSES -> JSONArray().apply {
+                if (turn.content.isNotBlank()) {
+                    put(JSONObject().put("type", "input_text").put("text", turn.content))
+                }
+                turn.images.forEach { image ->
+                    put(
+                        JSONObject().put("type", "input_image")
+                            .put("image_url", "data:${image.mimeType};base64,${image.base64}"),
+                    )
+                }
+            }
+            else -> JSONArray().apply {
+                if (turn.content.isNotBlank()) {
+                    put(JSONObject().put("type", "text").put("text", turn.content))
+                }
+                turn.images.forEach { image ->
+                    put(
+                        JSONObject().put("type", "image").put(
+                            "source",
+                            JSONObject()
+                                .put("type", "base64")
+                                .put("media_type", image.mimeType)
+                                .put("data", image.base64),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    internal fun chatBody(
         model: String,
         protocol: ProviderProtocol,
         turns: List<ChatTurn>,
@@ -240,7 +300,7 @@ class ProviderApiClient {
                         put(JSONObject().put("role", "system").put("content", systemPrompt))
                     }
                     turns.forEach { turn ->
-                        put(JSONObject().put("role", turn.role).put("content", turn.content))
+                        put(JSONObject().put("role", turn.role).put("content", turnContent(turn, protocol)))
                     }
                 },
             )
@@ -255,7 +315,7 @@ class ProviderApiClient {
                         put(JSONObject().put("role", "system").put("content", systemPrompt))
                     }
                     turns.forEach { turn ->
-                        put(JSONObject().put("role", turn.role).put("content", turn.content))
+                        put(JSONObject().put("role", turn.role).put("content", turnContent(turn, protocol)))
                     }
                 },
             )
@@ -269,7 +329,7 @@ class ProviderApiClient {
                     "messages",
                     JSONArray().apply {
                         turns.forEach { turn ->
-                            put(JSONObject().put("role", turn.role).put("content", turn.content))
+                            put(JSONObject().put("role", turn.role).put("content", turnContent(turn, protocol)))
                         }
                     },
                 )
