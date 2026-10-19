@@ -3344,7 +3344,6 @@ private fun ElevenLabsSelectionCard(voiceIdMasked: String, selected: Boolean, on
     }
 }
 
-@Composable
 /**
  * v3.2.39 (Scope 3): the human part of an ElevenLabs error body —
  * {"detail":{"message":"…"}} or {"detail":"…"} — mirroring the extraction
@@ -3360,6 +3359,7 @@ private fun elevenLabsErrorDetail(body: String): String =
         }
     }.getOrDefault(body.take(200)).ifBlank { "no details" }
 
+@Composable
 private fun ElevenLabsVoiceCard(onConnectionChanged: () -> Unit = {}) {
     val context = LocalContext.current
     val vault = remember { ApiKeyVault(context) }

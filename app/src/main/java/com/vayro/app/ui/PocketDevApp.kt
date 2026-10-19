@@ -242,6 +242,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
@@ -3273,75 +3274,30 @@ private fun RootScreenHost(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun QuickTerminalSheet(
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    var sheetFraction by rememberSaveable { mutableFloatStateOf(0.45f) }
-    BackHandler(onBack = onDismiss)
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val density = LocalDensity.current
-        val maxHeightPx = with(density) { maxHeight.toPx() }
-        val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
-        LaunchedEffect(keyboardVisible) {
-            if (keyboardVisible) sheetFraction = 0.85f
-        }
-        val dragState = rememberDraggableState { dragAmount ->
-            sheetFraction = (sheetFraction - dragAmount / maxHeightPx)
-                .coerceIn(0.40f, 0.85f)
-        }
-        Box(Modifier.fillMaxSize()) {
-            // Dimmed backdrop — tap to dismiss.
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                        onClick = onDismiss,
-                    ),
-            )
-            // This container consumes the keyboard inset outside the sheet rather
-            // than turning it into empty padding inside the terminal.
-            Box(Modifier.fillMaxSize().imePadding()) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .fillMaxHeight(sheetFraction)
-                        .draggable(
-                            state = dragState,
-                            orientation = Orientation.Vertical,
-                            startDragImmediately = false,
-                        ),
-                    shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp,
-                    shadowElevation = 28.dp,
-                ) {
-                    Column(Modifier.fillMaxSize()) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(24.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                Modifier
-                                    .width(36.dp)
-                                    .height(4.dp)
-                                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f), CircleShape),
-                            )
-                        }
-                        HorizontalDivider(
-                            thickness = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                        )
-                        Box(Modifier.weight(1f).fillMaxWidth()) { content() }
-                    }
-                }
-            }
+    // v3.2.39 (Scope 6): this sheet used to be hand-rolled — it appeared
+    // with NO open animation, its height lived in a plain float the drag
+    // rewrote directly, an imePadding container shrank it from outside,
+    // and a LaunchedEffect SNAPPED it from 45% to 85% the moment the
+    // keyboard appeared. Every keyboard change was a visible jump.
+    // It is a Material ModalBottomSheet now: one remembered sheet state,
+    // a FIXED content height the keyboard cannot change, and M3's own
+    // smooth open / close / drag physics. The terminal keeps both
+    // resting heights (partial + expanded), like the old 45% / 85%.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.88f)) {
+            Box(Modifier.weight(1f).fillMaxWidth()) { content() }
         }
     }
 }
@@ -8332,24 +8288,39 @@ private fun ActivitySheet(
     // v3.2.35 (U6d): this sheet is VIEW-ONLY — thinking, steps and code.
     // Approvals live in the chat flow as cards, never in here.
     var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
-    // v3.2.34 (U6): the sheet is user-expandable — it starts partially
-    // expanded and can be dragged to near-full height (visible handle),
-    // and its list cap rose from 520dp so long runs stay browsable.
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    // v3.2.39 (Scope 6) — why this sheet used to jerk, and the fix. The
+    // old sheet had THREE geometry fights at once: (1) TWO resting
+    // anchors (skipPartiallyExpanded = false), so it could snap between
+    // half and full height; (2) a content height that GREW while it was
+    // open — the live item list streams in and the column was sized by
+    // its content (heightIn max 860dp), and every growth re-anchored
+    // the sheet mid-animation; (3) it opened over the chat keyboard,
+    // whose window kept resizing the sheet's frame — half-height under
+    // the keyboard, then a snap when the frame changed. Net effect on
+    // the user's phone: rises partway, snaps down, reopens half-height,
+    // flickers as the run streams.
+    // The fix: ONE anchor (skipPartiallyExpanded = true), a FIXED sheet
+    // height that content growth can never change (the list scrolls
+    // inside it), and the keyboard is dismissed the moment the sheet
+    // opens so sheet and keyboard never fight. After opening, live
+    // updates change only list rows — the sheet itself never moves.
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) { keyboardController?.hide() }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
-        Column(Modifier.padding(bottom = 26.dp)) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f).padding(bottom = 26.dp)) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
                     Icon(Icons.Outlined.Close, "Close", Modifier.size(21.dp))
                 }
                 Text("Activity", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center))
             }
-            LazyColumn(Modifier.heightIn(max = 860.dp).padding(horizontal = 16.dp)) {
+            LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)) {
                 itemsIndexed(items) { index, item ->
                     val lastRunning = isRunning && !item.isComplete && index == items.indexOfLast { !it.isComplete }
                     Row(
