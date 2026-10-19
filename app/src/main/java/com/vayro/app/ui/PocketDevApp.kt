@@ -39,7 +39,9 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -106,6 +108,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Delete
@@ -126,12 +129,17 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.BatterySaver
@@ -210,6 +218,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -221,6 +230,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.alpha
@@ -303,6 +313,10 @@ import com.vayro.app.ui.theme.PocketOrange
 import com.vayro.app.ui.voice.VoiceInputBar
 import com.vayro.app.ui.voice.VoiceRecognizer
 import java.io.ByteArrayInputStream
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -327,6 +341,10 @@ private enum class RootScreen(val label: String, val icon: ImageVector) {
     LEGACY_SETTINGS("All settings", Icons.Default.Settings),
     CAPABILITIES("Capabilities", Icons.Default.Tune),
     VOICE_SETTINGS("Voice", Icons.Default.Mic),
+    PROFILE("Profile", Icons.Default.Person),
+    LICENSE_PAGE("License", Icons.Default.Lock),
+    NOTIFICATIONS_PAGE("Notifications", Icons.Default.Notifications),
+    SECTION_PAGE("Settings", Icons.Default.Settings),
 }
 private enum class WorkspaceTab(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Default.Home),
@@ -562,6 +580,25 @@ fun PocketDevApp(
         }
     }
 
+    val pushState = remember { GitPushUiState() }
+    var pendingPushProjectId by rememberSaveable { mutableStateOf<String?>(null) }
+    val startGitPush: () -> Unit = {
+        val active = state.activeProject
+        if (active != null) {
+            pushState.beginPush(active.name)
+            viewModel.gitPush { ok, msg -> pushState.finish(ok, msg) }
+        } else {
+            pushState.showPicker()
+        }
+    }
+    LaunchedEffect(state.activeProject?.id) {
+        val pid = pendingPushProjectId
+        if (pid != null && state.activeProject?.id == pid) {
+            pendingPushProjectId = null
+            viewModel.gitPush { ok, msg -> pushState.finish(ok, msg) }
+        }
+    }
+
     when {
         state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(
             state = state,
@@ -723,6 +760,7 @@ fun PocketDevApp(
             onOpenTeamStudio = { openStudio(OverlayScreen.TEAM_STUDIO) },
             onOpenCloudHybrid = { openStudio(OverlayScreen.CLOUD_HYBRID) },
             onOpenMarketplace = { navigator.openMarketplace() },
+            onPushToGitHubRequest = startGitPush,
         )
         else -> RootScreenHost(
             state = state,
@@ -730,6 +768,7 @@ fun PocketDevApp(
             projectsListState = projectsListState,
             authViewModel = authViewModel,
             onNavigateToAuth = { showAuthModal = true },
+            onPushRequest = startGitPush,
             onHomeSend = { homeText ->
                 pendingHomePrompt = homeText
                 viewModel.createQuickProject()
@@ -744,6 +783,15 @@ fun PocketDevApp(
             onOpenGitHubStudio = { navigator.openGitHubStudio() },
         )
     }
+    GitPushUi(
+        state = pushState,
+        projects = state.projects,
+        onPickProject = { project ->
+            pushState.beginPush(project.name)
+            pendingPushProjectId = project.id
+            viewModel.openProject(project)
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1826,7 +1874,7 @@ private fun AgentSwitchSheet(
     freeModeEnabled: Boolean = false,
 ) {
     val pickerAgents = remember(freeModeEnabled) { agentsForPicker(freeModeEnabled) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2507,6 +2555,7 @@ private fun RootScreenHost(
     projectsListState: LazyListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() },
     authViewModel: AuthViewModel? = null,
     onNavigateToAuth: () -> Unit = {},
+    onPushRequest: () -> Unit = {},
     onOpenAppFactory: () -> Unit = {},
     onOpenTeamStudio: () -> Unit = {},
     onOpenCloudHybrid: () -> Unit = {},
@@ -2515,6 +2564,7 @@ private fun RootScreenHost(
     onHomeAttach: (List<Uri>) -> Unit = {},
 ) {
     var screen by rememberSaveable { mutableStateOf(RootScreen.CHAT_HOME) }
+    var settingsFocus by rememberSaveable { mutableStateOf("tools") }
     // Kodex drawer shell: the side drawer is the single home for every
     // section; Back from a section returns here with the drawer re-opened
     // (inventory rule R1), and Back with the drawer open just closes it.
@@ -2524,7 +2574,8 @@ private fun RootScreenHost(
     BackHandler(enabled = drawerOpen) { drawerOpen = false }
     BackHandler(enabled = !drawerOpen && screen != RootScreen.CHAT_HOME) {
         when (screen) {
-            RootScreen.CAPABILITIES, RootScreen.VOICE_SETTINGS, RootScreen.LEGACY_SETTINGS ->
+            RootScreen.CAPABILITIES, RootScreen.VOICE_SETTINGS, RootScreen.LEGACY_SETTINGS,
+            RootScreen.PROFILE, RootScreen.LICENSE_PAGE, RootScreen.NOTIFICATIONS_PAGE, RootScreen.SECTION_PAGE ->
                 screen = RootScreen.SETTINGS
             else -> {
                 screen = RootScreen.CHAT_HOME
@@ -2631,6 +2682,7 @@ private fun RootScreenHost(
                     onSelectAgent = viewModel::selectAgent,
                     onMoreAgents = { screen = RootScreen.AGENT },
                     onOpenConnectors = { screen = RootScreen.CONNECTORS },
+                    onPushToGitHub = onPushRequest,
                 )
                 RootScreen.CHATS -> ChatsScreen(
                     projects = state.projects,
@@ -2829,11 +2881,11 @@ private fun RootScreenHost(
                         drawerOpen = true
                     },
                     onLogin = onNavigateToAuth,
-                    onOpenProfile = { screen = RootScreen.LEGACY_SETTINGS },
-                    onOpenLicense = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenProfile = { screen = RootScreen.PROFILE },
+                    onOpenLicense = { screen = RootScreen.LICENSE_PAGE },
                     onOpenCapabilities = { screen = RootScreen.CAPABILITIES },
                     onOpenConnectors = { screen = RootScreen.CONNECTORS },
-                    onOpenPermissions = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenPermissions = { settingsFocus = "permissions"; screen = RootScreen.SECTION_PAGE },
                     onColorMode = viewModel::setThemeMode,
                     onFontStyle = viewModel::setFontStyle,
                     onOpenVoice = { screen = RootScreen.VOICE_SETTINGS },
@@ -2841,10 +2893,11 @@ private fun RootScreenHost(
                         hapticsEnabled = enabled
                         appPreferences.hapticsEnabled = enabled
                     },
-                    onOpenNotifications = { screen = RootScreen.LEGACY_SETTINGS },
-                    onOpenDeveloperTools = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenNotifications = { screen = RootScreen.NOTIFICATIONS_PAGE },
+                    onOpenDeveloperTools = { settingsFocus = "tools"; screen = RootScreen.SECTION_PAGE },
                     onOpenPrivacy = { showPrivacyPolicy = true },
-                    onOpenAbout = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenAbout = { settingsFocus = "about"; screen = RootScreen.SECTION_PAGE },
+                    onOpenAllSettings = { screen = RootScreen.LEGACY_SETTINGS },
                     onLogout = { authViewModel?.signOut() },
                 )
                 RootScreen.CAPABILITIES -> CapabilitiesScreen(
@@ -2870,7 +2923,18 @@ private fun RootScreenHost(
                     onUpdateItem = { item -> viewModel.updateMarketplaceItem(item) },
                     onScreenOpened = { viewModel.checkMarketplaceUpdates() },
                 )
-                RootScreen.LEGACY_SETTINGS -> SettingsScreen(
+                RootScreen.PROFILE -> ProfilePage(
+                    accountName = hostUser?.displayName?.ifBlank { null } ?: hostUser?.email ?: if (hostUser != null) "Signed in" else "Guest mode",
+                    accountEmail = hostUser?.email,
+                    isGuest = hostUser == null,
+                    authViewModel = authViewModel,
+                    authState = hostAuthState,
+                    onBack = { screen = RootScreen.SETTINGS },
+                    onNavigateToAuth = onNavigateToAuth,
+                )
+                RootScreen.LICENSE_PAGE -> LicensePage(onBack = { screen = RootScreen.SETTINGS })
+                RootScreen.NOTIFICATIONS_PAGE -> NotificationsPage(onBack = { screen = RootScreen.SETTINGS })
+                RootScreen.LEGACY_SETTINGS, RootScreen.SECTION_PAGE -> SettingsScreen(
                     state = state,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
@@ -2920,6 +2984,17 @@ private fun RootScreenHost(
                     onTogglePermissionPolicy = viewModel::updatePermissionPolicy,
                     onClearSecurityAuditLogs = viewModel::clearSecurityAuditLogs,
                     onReplayAppTour = viewModel::replayAppTour,
+                    focusSections = if (screen == RootScreen.SECTION_PAGE) {
+                        when (settingsFocus) {
+                            "tools" -> setOf(SettingsSection.TOOLS, SettingsSection.RUNTIME, SettingsSection.ENVIRONMENT)
+                            "permissions" -> setOf(SettingsSection.PERMISSIONS)
+                            else -> setOf(SettingsSection.CONTRIBUTORS)
+                        }
+                    } else emptySet(),
+                    focusTitle = if (screen == RootScreen.SECTION_PAGE) {
+                        when (settingsFocus) { "tools" -> "Developer tools"; "permissions" -> "Permissions"; else -> "About" }
+                    } else null,
+                    onFocusBack = if (screen == RootScreen.SECTION_PAGE) ({ screen = RootScreen.SETTINGS }) else null,
                 )
             }
         }
@@ -2933,7 +3008,7 @@ private fun RootScreenHost(
             projects = state.projects,
             pinnedIds = pinnedProjectIds,
             activeProjectId = state.activeProject?.id,
-            pushEnabled = state.activeProject != null,
+            pushEnabled = true,
             onClose = { drawerOpen = false },
             onNewChat = {
                 drawerOpen = false
@@ -2955,11 +3030,7 @@ private fun RootScreenHost(
             onTogglePin = togglePin,
             onRenameProject = { project, newName -> viewModel.renameProject(project.id, newName) },
             onDeleteProject = { project -> viewModel.deleteProject(project.id) },
-            onPushToGitHub = {
-                viewModel.gitPush { ok, message ->
-                    Toast.makeText(shellContext, message, Toast.LENGTH_LONG).show()
-                }
-            },
+            onPushToGitHub = onPushRequest,
             onOpenGitHubBuild = onOpenCloudHybrid,
             onOpenTerminal = { showQuickTerminal = true },
             onOpenSettings = {
@@ -3036,8 +3107,8 @@ private fun QuickTerminalSheet(
                             startDragImmediately = false,
                         ),
                     shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    tonalElevation = 8.dp,
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp,
                     shadowElevation = 28.dp,
                 ) {
                     Column(Modifier.fillMaxSize()) {
@@ -5174,6 +5245,7 @@ private fun WorkspaceScreen(
     onOpenTeamStudio: () -> Unit = {},
     onOpenCloudHybrid: () -> Unit = {},
     onOpenMarketplace: () -> Unit = {},
+    onPushToGitHubRequest: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
@@ -5430,28 +5502,18 @@ private fun WorkspaceScreen(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.combinedClickable(
-                                onClick = {
-                                    Toast.makeText(context, state.activeProject?.name.orEmpty(), Toast.LENGTH_LONG).show()
-                                },
-                                onLongClick = {
-                                    Toast.makeText(context, state.activeProject?.name.orEmpty(), Toast.LENGTH_LONG).show()
-                                },
-                            ),
+                            modifier = Modifier.weight(1f),
                         ) {
-                            Icon(
-                                Icons.Default.PhoneAndroid,
-                                contentDescription = "IDE",
-                                modifier = Modifier.size(19.dp),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                            Spacer(Modifier.width(6.dp))
+                            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.size(21.dp))
+                            }
                             Text(
-                                "IDE",
+                                text = state.activeProject?.name?.takeIf { it.isNotBlank() } ?: "IDE",
                                 fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 17.sp,
                                 maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         Row(
@@ -5491,18 +5553,6 @@ private fun WorkspaceScreen(
                                 modifier = Modifier.size(40.dp),
                             ) {
                                 Icon(Icons.Default.MoreVert, "Command palette", modifier = Modifier.size(20.dp))
-                            }
-                            IconButton(
-                                onClick = onBack,
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Projects", modifier = Modifier.size(20.dp))
-                            }
-                            if (state.isRunning) {
-                                CircularProgressIndicator(
-                                    Modifier.padding(start = 2.dp, end = 4.dp).size(18.dp),
-                                    strokeWidth = 2.dp,
-                                )
                             }
                         }
                     }
@@ -5640,6 +5690,7 @@ private fun WorkspaceScreen(
                     messages = state.messages,
                     approval = state.pendingApproval,
                     liveProcess = state.liveProcess,
+                    changes = state.changes,
                     isRunning = state.isRunning,
                     streamingMessageId = state.streamingMessageId,
                     onSend = onSend,
@@ -5687,11 +5738,7 @@ private fun WorkspaceScreen(
                     onSelectAgent = { kind -> viewModel?.selectAgent(kind) },
                     freeModeEnabled = state.freeModeEnabled,
                     projectName = state.activeProject?.name.orEmpty(),
-                    onPushToGitHub = {
-                        viewModel?.gitPush { _, message ->
-                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                        }
-                    },
+                    onPushToGitHub = onPushToGitHubRequest,
                     onOpenGitHubBuild = onOpenCloudHybrid,
                     onOpenAppFactory = onOpenAppFactory,
                 )
@@ -5817,7 +5864,7 @@ private fun WorkspaceCommandPalette(
             command.keywords.contains(normalized)
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -6421,6 +6468,7 @@ private fun ChatTab(
     messages: List<ChatMessage>,
     approval: ToolRequest?,
     liveProcess: List<ActivityItem>,
+    changes: List<ChangeItem> = emptyList(),
     isRunning: Boolean,
     streamingMessageId: String?,
     onSend: (String) -> Unit,
@@ -6469,6 +6517,8 @@ private fun ChatTab(
     val view = LocalView.current
     // Keep the screen on while the selected agent is working in this chat. Released automatically
     // when the task finishes or the user leaves the chat tab.
+    var showLiveActivity by rememberSaveable { mutableStateOf(false) }
+    var pastActivity by remember { mutableStateOf<Pair<List<ActivityItem>, String?>?>(null) }
     DisposableEffect(isRunning) {
         view.keepScreenOn = isRunning
         onDispose { view.keepScreenOn = false }
@@ -6587,6 +6637,25 @@ private fun ChatTab(
         )
     }
 
+    if (showLiveActivity) {
+        ActivitySheet(
+            items = liveProcess,
+            changes = changes,
+            isRunning = true,
+            workedText = null,
+            onDismiss = { showLiveActivity = false },
+        )
+    }
+    pastActivity?.let { (items, worked) ->
+        ActivitySheet(
+            items = items,
+            changes = changes,
+            isRunning = false,
+            workedText = worked,
+            onDismiss = { pastActivity = null },
+        )
+    }
+
     activeCommentTarget?.let { (roadmapId, stepId, stepTitle) ->
         AddRoadmapCommentDialog(
             stepTitle = stepTitle.takeIf(String::isNotBlank),
@@ -6651,6 +6720,38 @@ private fun ChatTab(
             recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
         } else {
             beginVoiceSession()
+        }
+    }
+
+    var voiceCallActive by remember { mutableStateOf(false) }
+
+    fun startVoiceCall() {
+        if (!voiceRecognizer.isAvailable()) {
+            Toast.makeText(context, "Voice recognition not supported on this device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        voiceRecognizer.cancel()
+        voiceInputActive = false
+        voiceCallActive = true
+    }
+
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { isGranted ->
+        if (isGranted) {
+            startVoiceCall()
+        } else {
+            Toast.makeText(context, "Microphone permission is required for voice calls", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val onStartVoiceCall = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            callPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            startVoiceCall()
         }
     }
 
@@ -6774,7 +6875,7 @@ private fun ChatTab(
                         }
                     }
                     if (message.workItems.isNotEmpty()) {
-                        WorkBlockCard(message)
+                        WorkBlockCard(message, onOpenActivity = { pastActivity = message.workItems to (if (message.workItems.lastOrNull()?.title?.startsWith("Task stopped", true) == true) "Task stopped" else "Task completed") })
                     } else {
                         MessageBubble(
                             message = message,
@@ -6801,19 +6902,16 @@ private fun ChatTab(
                         )
                     }
                 }
-                if (liveProcess.isNotEmpty() || thinkingActive) {
-                    item(key = "live-claude-process") {
-                        LiveClaudeProcess(
-                            processItems = liveProcess,
-                            isRunning = isRunning,
-                            startedAtMillis = taskStartedAtMillis,
-                            finishedAtMillis = taskFinishedAtMillis,
-                            thinkingActive = thinkingActive,
-                        )
-                    }
-                }
                 approval?.let { request -> item { ApprovalCard(request, onApproval, onApprovalWithLevel) } }
             }
+        }
+        if (isRunning) {
+            WorkingBar(
+                items = liveProcess,
+                thinkingActive = thinkingActive,
+                startedAtMillis = taskStartedAtMillis,
+                onClick = { showLiveActivity = true },
+            )
         }
         if (readOnly) {
             Surface(
@@ -7158,7 +7256,7 @@ private fun ChatTab(
                                                 prompt = ""
                                                 mentionQuery = null
                                             } else {
-                                                onStartVoiceInput()
+                                                onStartVoiceCall()
                                             }
                                         },
                                     )
@@ -7188,6 +7286,284 @@ private fun ChatTab(
             }
         }
     }
+    if (voiceCallActive) {
+        VoiceCallScreen(
+            recognizer = voiceRecognizer,
+            messages = messages,
+            isRunning = isRunning,
+            onSend = onSend,
+            onClose = { voiceCallActive = false },
+        )
+    }
+}
+
+private enum class VoiceCallPhase { LISTENING, THINKING, SPEAKING }
+
+@Composable
+private fun VoiceCallScreen(
+    recognizer: com.vayro.app.ui.voice.VoiceRecognizer,
+    messages: List<ChatMessage>,
+    isRunning: Boolean,
+    onSend: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    val voiceState by recognizer.state.collectAsState()
+    var muted by remember { mutableStateOf(false) }
+    var phase by remember { mutableStateOf(VoiceCallPhase.LISTENING) }
+    var lastHeard by remember { mutableStateOf("") }
+    var lastSpokenId by remember { mutableStateOf<String?>(null) }
+    var awaitingReply by remember { mutableStateOf(false) }
+    val speakingNow = com.vayro.app.voice.ReadAloudPlayer.playingMessageId != null
+
+    fun endCall() {
+        recognizer.cancel()
+        com.vayro.app.voice.ReadAloudPlayer.stop()
+        onClose()
+    }
+    BackHandler { endCall() }
+
+    val level by produceState(0f) {
+        while (true) {
+            value = recognizer.level
+            kotlinx.coroutines.delay(50)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        phase = VoiceCallPhase.LISTENING
+        recognizer.start()
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            recognizer.cancel()
+            com.vayro.app.voice.ReadAloudPlayer.stop()
+        }
+    }
+
+    // A committed segment that stays stable for a beat = the user finished a turn.
+    LaunchedEffect(voiceState.committed, phase, muted) {
+        if (phase != VoiceCallPhase.LISTENING || muted) return@LaunchedEffect
+        val committed = voiceState.committed
+        if (committed.isBlank()) return@LaunchedEffect
+        kotlinx.coroutines.delay(1100)
+        if (phase == VoiceCallPhase.LISTENING && !muted) {
+            recognizer.finish { finalText ->
+                val text = finalText.trim().ifBlank { committed.trim() }
+                if (text.isNotBlank()) {
+                    lastHeard = text
+                    awaitingReply = true
+                    phase = VoiceCallPhase.THINKING
+                    onSend(text)
+                } else {
+                    recognizer.start()
+                }
+            }
+        }
+    }
+
+    // Agent reply finished arriving -> speak the newest text reply once.
+    LaunchedEffect(isRunning, awaitingReply) {
+        if (awaitingReply && !isRunning && phase == VoiceCallPhase.THINKING) {
+            val reply = messages.lastOrNull { !it.fromUser && it.id != lastSpokenId && it.text.isNotBlank() }
+            if (reply != null) {
+                lastSpokenId = reply.id
+                phase = VoiceCallPhase.SPEAKING
+                com.vayro.app.voice.ReadAloudPlayer.toggle(context, reply.id, reply.text)
+            } else {
+                awaitingReply = false
+                phase = VoiceCallPhase.LISTENING
+                if (!muted) recognizer.start()
+            }
+        }
+    }
+
+    // Speech playback ended -> listen again.
+    LaunchedEffect(speakingNow) {
+        if (phase == VoiceCallPhase.SPEAKING && !speakingNow) {
+            kotlinx.coroutines.delay(300)
+            if (phase == VoiceCallPhase.SPEAKING &&
+                com.vayro.app.voice.ReadAloudPlayer.playingMessageId == null
+            ) {
+                awaitingReply = false
+                phase = VoiceCallPhase.LISTENING
+                if (!muted) recognizer.start()
+            }
+        }
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Voice call",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { endCall() }) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "End call",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            VoiceCallOrb(phase = phase, level = level, speaking = speakingNow)
+            Spacer(Modifier.height(30.dp))
+            Text(
+                when (phase) {
+                    VoiceCallPhase.LISTENING -> if (muted) "Muted" else "Listening…"
+                    VoiceCallPhase.THINKING -> "Thinking…"
+                    VoiceCallPhase.SPEAKING -> "Speaking…"
+                },
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                when (phase) {
+                    VoiceCallPhase.LISTENING -> voiceState.partial.ifBlank { voiceState.committed }.ifBlank { lastHeard }.ifBlank { "Say something to Kodex" }
+                    VoiceCallPhase.THINKING -> lastHeard
+                    VoiceCallPhase.SPEAKING -> "Playing the reply out loud"
+                },
+                fontSize = 13.5.sp,
+                lineHeight = 19.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.weight(1f))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .clickable {
+                            muted = !muted
+                            if (muted) {
+                                recognizer.cancel()
+                            } else if (phase == VoiceCallPhase.LISTENING) {
+                                recognizer.start()
+                            }
+                        },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (muted) Icons.Default.MicOff else Icons.Default.Mic,
+                            contentDescription = if (muted) "Unmute" else "Mute",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(23.dp),
+                        )
+                    }
+                }
+                Surface(
+                    modifier = Modifier
+                        .size(66.dp)
+                        .clip(CircleShape)
+                        .clickable { endCall() },
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.error,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.CallEnd,
+                            contentDescription = "End call",
+                            tint = Color.White,
+                            modifier = Modifier.size(27.dp),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(40.dp))
+        }
+    }
+}
+
+@Composable
+private fun VoiceCallOrb(
+    phase: VoiceCallPhase,
+    level: Float,
+    speaking: Boolean,
+) {
+    val transition = rememberInfiniteTransition(label = "voice-call-orb")
+    val spin by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            tween(if (phase == VoiceCallPhase.THINKING) 5000 else 16000, easing = LinearEasing),
+            RepeatMode.Restart,
+        ),
+        label = "call-spin",
+    )
+    val breathe by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2.0 * PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart),
+        label = "call-breathe",
+    )
+    val clay = com.vayro.app.ui.theme.KodexClay
+    val soft = MaterialTheme.colorScheme.onSurface
+    Canvas(Modifier.size(190.dp)) {
+        val center = size.minDimension / 2f
+        val baseR = size.minDimension * 0.30f
+        val energy = when (phase) {
+            VoiceCallPhase.LISTENING -> 0.25f + level.coerceIn(0f, 1f) * 0.9f
+            VoiceCallPhase.THINKING -> 0.55f
+            VoiceCallPhase.SPEAKING -> if (speaking) 0.5f else 0.3f
+        }
+        val pulse = 1f + 0.05f * sin(breathe.toDouble()).toFloat() + 0.10f * energy * sin((breathe * 2f).toDouble()).toFloat()
+        val count = 110
+        val golden = 2.399963f
+        for (i in 0 until count) {
+            val y = 1f - (i / (count - 1).toFloat()) * 2f
+            val ring = sqrt((1f - y * y).coerceAtLeast(0f).toDouble()).toFloat()
+            val theta = golden * i + spin * (PI / 180.0).toFloat()
+            val wobble = 1f + 0.06f * sin((breathe * 2f + i * 0.7f).toDouble()).toFloat() * (0.5f + energy)
+            val r = baseR * pulse * wobble
+            val x = center + (ring * cos(theta.toDouble()) * r).toFloat()
+            val yy = center + (y * r * 0.92f)
+            val depth = (y + 1f) / 2f
+            val dotR = (1.6f + 2.6f * depth + energy * 1.2f) * (size.minDimension / 190f)
+            drawCircle(
+                color = if (i % 5 == 0) clay else soft.copy(alpha = 0.35f + 0.5f * depth),
+                radius = dotR,
+                center = Offset(x, yy),
+            )
+        }
+        drawCircle(
+            color = clay.copy(alpha = 0.20f + 0.25f * energy),
+            radius = baseR * 0.36f * pulse,
+            center = Offset(center, center),
+        )
+        drawCircle(
+            color = clay.copy(alpha = 0.85f),
+            radius = baseR * 0.10f * pulse + 2f,
+            center = Offset(center, center),
+        )
+    }
 }
 
 @Composable
@@ -7211,21 +7587,177 @@ private fun LiveClaudeProcess(
 }
 
 @Composable
-private fun WorkBlockCard(message: ChatMessage) {
+private fun WorkBlockCard(message: ChatMessage, onOpenActivity: () -> Unit = {}) {
     val seconds = (message.workedMillis / 1_000L).coerceAtLeast(1L)
     val lastTitle = message.workItems.lastOrNull()?.title.orEmpty()
     val isStopped = lastTitle.startsWith("Task stopped", ignoreCase = true)
-    Column {
-        ClaudeActivityDisclosure(
-            items = message.workItems,
-            headline = activityHeadline(message.workItems, seconds, message.workItems.isEmpty()),
-        )
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onOpenActivity).padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.CheckCircle, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.tertiary)
+        Spacer(Modifier.width(9.dp))
         Text(
-            text = if (isStopped) "Task stopped · Worked for ${formatDuration(seconds)}" else "Task completed · Worked for ${formatDuration(seconds)}",
-            modifier = Modifier.padding(start = 29.dp, bottom = 6.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 11.sp,
+            if (isStopped) "Task stopped · Worked for ${formatDuration(seconds)}" else "Worked for ${formatDuration(seconds)}",
+            fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f),
         )
+        Icon(Icons.Default.KeyboardArrowUp, "View activity", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun ThinkingOrb(modifier: Modifier = Modifier, color: Color = com.vayro.app.ui.theme.KodexClay) {
+    val transition = rememberInfiniteTransition(label = "thinking_orb")
+    val phase by transition.animateFloat(
+        initialValue = 0f, targetValue = (2.0 * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(durationMillis = 1800, easing = LinearEasing), RepeatMode.Restart),
+        label = "orb_phase",
+    )
+    Canvas(modifier.size(20.dp)) {
+        val c = Offset(size.width / 2f, size.height / 2f)
+        val orbit = size.minDimension / 2f * 0.72f
+        val dots = 12
+        for (i in 0 until dots) {
+            val a = phase + (2.0 * Math.PI * i / dots).toFloat()
+            val wave = 0.5f + 0.5f * kotlin.math.sin(a * 2f)
+            val r = size.minDimension * (0.045f + 0.05f * wave)
+            drawCircle(
+                color = color.copy(alpha = 0.35f + 0.65f * wave),
+                radius = r,
+                center = Offset(c.x + orbit * kotlin.math.cos(a), c.y + orbit * kotlin.math.sin(a)),
+            )
+        }
+        drawCircle(color = color.copy(alpha = 0.5f + 0.3f * kotlin.math.sin(phase * 2f)), radius = size.minDimension * 0.07f, center = c)
+    }
+}
+
+@Composable
+private fun WorkingBar(
+    items: List<ActivityItem>,
+    thinkingActive: Boolean,
+    startedAtMillis: Long?,
+    onClick: () -> Unit,
+) {
+    val elapsed = startedAtMillis?.let { rememberLiveElapsedSeconds(it) } ?: 0
+    val current = items.lastOrNull { !it.isComplete } ?: items.lastOrNull()
+    val label = when {
+        current != null -> compactActivityText(current)
+        thinkingActive -> "Thinking · Analyzing the request"
+        else -> "Working…"
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).clickable(onClick = onClick),
+    ) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+            ThinkingOrb()
+            Spacer(Modifier.width(10.dp))
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (startedAtMillis != null) {
+                Text(formatDuration(elapsed.toLong()), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(6.dp))
+            }
+            Icon(Icons.Default.KeyboardArrowUp, "View activity", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActivitySheet(
+    items: List<ActivityItem>,
+    changes: List<ChangeItem>,
+    isRunning: Boolean,
+    workedText: String?,
+    onDismiss: () -> Unit,
+) {
+    var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = null,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+    ) {
+        Column(Modifier.padding(bottom = 26.dp)) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Outlined.Close, "Close", Modifier.size(21.dp))
+                }
+                Text("Activity", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center))
+            }
+            LazyColumn(Modifier.heightIn(max = 520.dp).padding(horizontal = 16.dp)) {
+                itemsIndexed(items) { index, item ->
+                    val lastRunning = isRunning && !item.isComplete && index == items.indexOfLast { !it.isComplete }
+                    Row(
+                        Modifier.fillMaxWidth().clickable {
+                            expandedItems = if (index in expandedItems) expandedItems - index else expandedItems + index
+                        }.padding(vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        when {
+                            item.isComplete -> Icon(Icons.Default.CheckCircle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.tertiary)
+                            lastRunning -> ThinkingOrb(Modifier.size(17.dp))
+                            else -> Icon(Icons.Outlined.Circle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f))
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            compactActivityText(item),
+                            fontSize = 13.sp,
+                            color = if (item.isComplete || lastRunning) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                        )
+                        Icon(if (index in expandedItems) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (index in expandedItems) ActivityExpandedDetail(item, activityDetail(item))
+                }
+                val codeChange = changes.lastOrNull { it.diffLines.isNotEmpty() }
+                if (codeChange != null) {
+                    item {
+                        Spacer(Modifier.height(12.dp))
+                        Text("Code", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(6.dp))
+                        Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                            Column(Modifier.padding(vertical = 8.dp)) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(codeChange.path, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                    Text("+${codeChange.additions}", color = PocketGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("−${codeChange.deletions}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                codeChange.diffLines.take(60).forEach { line -> DiffLineRow(line) }
+                                if (codeChange.diffLines.size > 60) {
+                                    Text("… ${codeChange.diffLines.size - 60} more lines", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+                if (changes.isNotEmpty()) {
+                    item {
+                        Spacer(Modifier.height(14.dp))
+                        Text("Files changed", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    itemsIndexed(changes) { _, change ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(change.path, fontSize = 12.5.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            Text("+${change.additions}", color = PocketGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.width(6.dp))
+                            Text("−${change.deletions}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                if (workedText != null) {
+                    item {
+                        Spacer(Modifier.height(10.dp))
+                        Text(workedText, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -7856,14 +8388,49 @@ private fun ApprovalCard(
     onApproval: (Boolean) -> Unit,
     onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit = { _, _ -> },
 ) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Warning, null, tint = PocketOrange)
-                Spacer(Modifier.width(8.dp)); Text("Review this action", fontWeight = FontWeight.Bold)
+                Icon(Icons.Default.Warning, null, tint = com.vayro.app.ui.theme.KodexClay)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (!request.commandPreview.isNullOrBlank()) "Allow this command?" else "Allow this action?",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                )
             }
-            Text(request.explanation)
-            request.affectedPaths.forEach { Text("• $it", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (request.risk.name != "SAFE") {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                ) {
+                    Text(
+                        "Risk: ${request.risk.name}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    )
+                }
+            }
+            Text(request.explanation, fontSize = 13.5.sp)
+            val preview = request.commandPreview
+            if (!preview.isNullOrBlank()) {
+                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Text(
+                        preview,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
+                        fontSize = 12.5.sp,
+                        modifier = Modifier.padding(10.dp),
+                    )
+                }
+            }
+            request.affectedPaths.forEach {
+                Text("• $it", fontSize = 12.5.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(
                     onClick = {
@@ -7872,7 +8439,7 @@ private fun ApprovalCard(
                     },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Reject", fontSize = 12.sp)
+                    Text("Deny", fontSize = 13.sp)
                 }
                 OutlinedButton(
                     onClick = {
@@ -7880,7 +8447,7 @@ private fun ApprovalCard(
                     },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Text("Session", fontSize = 12.sp)
+                    Text("Allow for session", fontSize = 13.sp, maxLines = 1)
                 }
                 Button(
                     onClick = {
@@ -7888,8 +8455,9 @@ private fun ApprovalCard(
                         onApprovalWithLevel(com.vayro.app.security.PermissionLevel.ONCE, true)
                     },
                     modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = com.vayro.app.ui.theme.KodexClay),
                 ) {
-                    Text("Once", fontSize = 12.sp)
+                    Text("Allow once", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                 }
             }
         }

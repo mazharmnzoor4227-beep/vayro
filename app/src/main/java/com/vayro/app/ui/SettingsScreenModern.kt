@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import com.vayro.app.runtime.BackgroundProtectionHelper
@@ -168,7 +169,7 @@ import com.vayro.app.auth.ui.ChangePasswordDialog
 import com.vayro.app.auth.ui.DeleteAccountDialog
 import com.vayro.app.auth.ui.EditDisplayNameDialog
 
-private enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, VOICE, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS }
+internal enum class SettingsSection { ACCOUNT, APPEARANCE, TOOLS, RUNTIME, ENVIRONMENT, VOICE, CONTRIBUTORS, UPDATE_CHANNEL, PERMISSIONS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -220,6 +221,9 @@ fun SettingsScreen(
     onTogglePermissionPolicy: (com.vayro.app.security.PermissionCategory, Boolean) -> Unit = { _, _ -> },
     onClearSecurityAuditLogs: () -> Unit = {},
     onReplayAppTour: () -> Unit = {},
+    focusSections: Set<SettingsSection> = emptySet(),
+    focusTitle: String? = null,
+    onFocusBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val runtimeInstaller = remember { RuntimeInstaller(context) }
@@ -233,6 +237,7 @@ fun SettingsScreen(
     var showReliabilityHelp by rememberSaveable { mutableStateOf(false) }
     var stackPendingRemoval by remember { mutableStateOf<DevStack?>(null) }
     var showAuditLogSheet by rememberSaveable { mutableStateOf(false) }
+    val focusMode = focusSections.isNotEmpty()
     LaunchedEffect(Unit) { onRefreshInstalledAgents() }
 
     stackPendingRemoval?.let { stack ->
@@ -295,6 +300,19 @@ fun SettingsScreen(
 
     Scaffold(
         topBar = {
+            if (focusMode) {
+                TopAppBar(
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { onFocusBack?.invoke() }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                            SerifText(focusTitle ?: "Settings", fontSize = 20)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                )
+            } else {
             TopAppBar(
                 modifier = Modifier.padding(top = 8.dp),
                 title = {
@@ -341,6 +359,7 @@ fun SettingsScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
+            }
         },
     ) { padding ->
         LazyColumn(
@@ -349,7 +368,7 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
 
-            item {
+            if (!focusMode || SettingsSection.ACCOUNT in focusSections) { item {
                 val currentAuth = authViewModel?.authState?.collectAsStateWithLifecycle()?.value ?: AuthState.Unauthenticated
                 val user = when (currentAuth) {
                     is AuthState.Authenticated -> currentAuth.user
@@ -360,8 +379,9 @@ fun SettingsScreen(
                     title = "Account",
                     subtitle = user?.displayName?.ifBlank { null } ?: user?.email ?: if (user != null) "Signed in" else "Guest mode · Local only",
                     icon = Icons.Default.Person,
-                    expanded = expanded == SettingsSection.ACCOUNT,
-                    onClick = { toggle(SettingsSection.ACCOUNT) },
+                    expanded = focusMode || expanded == SettingsSection.ACCOUNT,
+                    onClick = { if (!focusMode) toggle(SettingsSection.ACCOUNT) },
+                    plain = focusMode,
                 ) {
                     if (authViewModel != null) {
                         AccountSectionContent(
@@ -377,15 +397,16 @@ fun SettingsScreen(
                         )
                     }
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.APPEARANCE in focusSections) { item {
                 SettingsAccordion(
                     title = "Appearance",
                     subtitle = when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },
                     icon = Icons.Default.Tune,
-                    expanded = expanded == SettingsSection.APPEARANCE,
-                    onClick = { toggle(SettingsSection.APPEARANCE) },
+                    expanded = focusMode || expanded == SettingsSection.APPEARANCE,
+                    onClick = { if (!focusMode) toggle(SettingsSection.APPEARANCE) },
+                    plain = focusMode,
                 ) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         ModernThemeChoice("Dark", Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
@@ -393,16 +414,17 @@ fun SettingsScreen(
                         ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
                     }
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.TOOLS in focusSections) { item {
                 val installedCount = state.installedDevStacks.count { it != DevStack.WEB }
                 SettingsAccordion(
                     title = "Developer tools",
                     subtitle = "Core tools + $installedCount optional toolchain${if (installedCount == 1) "" else "s"}",
                     icon = Icons.Default.Code,
-                    expanded = expanded == SettingsSection.TOOLS,
-                    onClick = { toggle(SettingsSection.TOOLS) },
+                    expanded = focusMode || expanded == SettingsSection.TOOLS,
+                    onClick = { if (!focusMode) toggle(SettingsSection.TOOLS) },
+                    plain = focusMode,
                 ) {
                     // Top Overview Card matching EnvironmentUpdateCenter
                     Surface(
@@ -708,15 +730,16 @@ fun SettingsScreen(
                         }
                     }
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.RUNTIME in focusSections) { item {
                 SettingsAccordion(
                     title = "Linux runtime",
                     subtitle = "Ubuntu 20.04 PRoot · ARM64",
                     icon = Icons.Default.Terminal,
-                    expanded = expanded == SettingsSection.RUNTIME,
-                    onClick = { toggle(SettingsSection.RUNTIME) },
+                    expanded = focusMode || expanded == SettingsSection.RUNTIME,
+                    onClick = { if (!focusMode) toggle(SettingsSection.RUNTIME) },
+                    plain = focusMode,
                 ) {
                     RuntimeInfoRow("Architecture", "ARM64 (aarch64)")
                     RuntimeInfoRow("Environment", "Ubuntu 20.04 PRoot")
@@ -828,33 +851,35 @@ fun SettingsScreen(
                         }
                     }
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.ENVIRONMENT in focusSections) { item {
                 SettingsAccordion(
                     title = "Environment updates",
                     subtitle = "Core, Python, Android & AI agent runtimes",
                     icon = Icons.Default.Refresh,
-                    expanded = expanded == SettingsSection.ENVIRONMENT,
-                    onClick = { toggle(SettingsSection.ENVIRONMENT) },
+                    expanded = focusMode || expanded == SettingsSection.ENVIRONMENT,
+                    onClick = { if (!focusMode) toggle(SettingsSection.ENVIRONMENT) },
+                    plain = focusMode,
                 ) {
                     EnvironmentUpdateCenter()
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.VOICE in focusSections) { item {
                 SettingsAccordion(
                     title = "Voice",
                     subtitle = "Read-aloud voice for agent replies",
                     icon = Icons.Default.RecordVoiceOver,
-                    expanded = expanded == SettingsSection.VOICE,
-                    onClick = { toggle(SettingsSection.VOICE) },
+                    expanded = focusMode || expanded == SettingsSection.VOICE,
+                    onClick = { if (!focusMode) toggle(SettingsSection.VOICE) },
+                    plain = focusMode,
                 ) {
                     VoiceSettingsSection()
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.UPDATE_CHANNEL in focusSections) { item {
                 AppUpdateChannelSection(
                     initialUrl = initialUpdateManifestUrl.ifBlank { initialDebugUpdateManifestUrl },
                     initialToken = initialUpdateAuthToken,
@@ -869,15 +894,16 @@ fun SettingsScreen(
                     },
                     onCheckNow = onCheckForUpdate,
                 )
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.PERMISSIONS in focusSections) { item {
                 SettingsAccordion(
                     title = "Permissions & Safety",
                     subtitle = "Granular execution boundaries & audit trails",
                     icon = Icons.Default.Lock,
-                    expanded = expanded == SettingsSection.PERMISSIONS,
-                    onClick = { toggle(SettingsSection.PERMISSIONS) },
+                    expanded = focusMode || expanded == SettingsSection.PERMISSIONS,
+                    onClick = { if (!focusMode) toggle(SettingsSection.PERMISSIONS) },
+                    plain = focusMode,
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
@@ -1051,15 +1077,16 @@ fun SettingsScreen(
                         }
                     }
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.CONTRIBUTORS in focusSections) { item {
                 SettingsAccordion(
                     title = "Developer",
                     subtitle = "The person behind Kodex",
                     icon = Icons.Default.Person,
-                    expanded = expanded == SettingsSection.CONTRIBUTORS,
-                    onClick = { toggle(SettingsSection.CONTRIBUTORS) },
+                    expanded = focusMode || expanded == SettingsSection.CONTRIBUTORS,
+                    onClick = { if (!focusMode) toggle(SettingsSection.CONTRIBUTORS) },
+                    plain = focusMode,
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         CONTRIBUTORS.forEach { contributor ->
@@ -1072,9 +1099,9 @@ fun SettingsScreen(
                         )
                     }
                 }
-            }
+            } }
 
-            item {
+            if (!focusMode || SettingsSection.CONTRIBUTORS in focusSections) { item {
                 Surface(
                     color = Color.Transparent,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -1149,7 +1176,7 @@ fun SettingsScreen(
                     }
                 }
                 Spacer(Modifier.height(18.dp))
-            }
+            } }
         }
     }
 
@@ -1177,6 +1204,7 @@ fun SettingsScreen(
 
         ModalBottomSheet(
             onDismissRequest = { showAuditLogSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface,
         ) {
             Column(
                 modifier = Modifier
@@ -1666,8 +1694,20 @@ private fun SettingsAccordion(
     icon: ImageVector,
     expanded: Boolean,
     onClick: () -> Unit,
+    plain: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    if (plain) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+        }
+        return
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -1990,7 +2030,7 @@ private fun ContributorLinkButton(label: String, url: String, modifier: Modifier
 }
 
 @Composable
-private fun AccountSectionContent(
+internal fun AccountSectionContent(
     viewModel: AuthViewModel,
     authState: AuthState,
     onNavigateToAuth: () -> Unit,

@@ -1,6 +1,7 @@
 package com.vayro.app.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -51,6 +52,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowUpward
@@ -89,8 +92,10 @@ import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Storefront
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -108,6 +113,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -126,6 +132,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -636,6 +643,7 @@ internal fun ChatHomeScreen(
     onSelectAgent: (AgentKind) -> Unit,
     onMoreAgents: () -> Unit,
     onOpenConnectors: () -> Unit,
+    onPushToGitHub: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -820,7 +828,7 @@ internal fun ChatHomeScreen(
                 sheetOpen = false
                 showGitHubDialog = true
             },
-            onPushToGitHub = {},
+            onPushToGitHub = onPushToGitHub,
             onGitHubBuild = {},
             onOpenFactory = {},
             onOpenConnectors = {
@@ -1746,6 +1754,7 @@ internal fun ClaudeSettingsHome(
     onOpenDeveloperTools: () -> Unit,
     onOpenPrivacy: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenAllSettings: () -> Unit,
     onLogout: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -1930,6 +1939,7 @@ internal fun ClaudeSettingsHome(
                     ShellRow(Icons.Outlined.Info, "About", value = "v${BuildConfig.VERSION_NAME}", onClick = onOpenAbout)
                 }
             }
+            item { ShellCard { ShellRow(Icons.Outlined.Settings, "All settings", value = "Classic view", onClick = onOpenAllSettings) } }
             item {
                 ShellCard {
                     ShellRow(
@@ -2332,6 +2342,419 @@ private fun ElevenLabsVoiceCard() {
         }
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// Git push — picker sheet, progress dialog and result dialog. The host
+// (PocketDevApp) owns the real push work; this is presentation only.
+// ---------------------------------------------------------------------------
+
+internal class GitPushUiState {
+    var phase by mutableStateOf(0)          // 0 hidden, 1 picking, 2 pushing, 3 done
+    var targetName by mutableStateOf("")
+    var resultOk by mutableStateOf(false)
+    var resultText by mutableStateOf("")
+    fun showPicker() { phase = 1 }
+    fun beginPush(name: String) { targetName = name; phase = 2 }
+    fun finish(ok: Boolean, text: String) { resultOk = ok; resultText = text; phase = 3 }
+    fun dismiss() { phase = 0 }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun GitPushUi(
+    state: GitPushUiState,
+    projects: List<Project>,
+    onPickProject: (Project) -> Unit,
+) {
+    when (state.phase) {
+        1 -> {
+            ModalBottomSheet(
+                onDismissRequest = { state.dismiss() },
+                containerColor = MaterialTheme.colorScheme.surface,
+                dragHandle = null,
+                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            ) {
+                Column(Modifier.padding(bottom = 26.dp)) {
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        IconButton(onClick = { state.dismiss() }, modifier = Modifier.align(Alignment.CenterStart)) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Close", modifier = Modifier.size(21.dp))
+                        }
+                        Text(
+                            "Push to GitHub",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+                    if (projects.isEmpty()) {
+                        Text(
+                            "No projects yet — create a project first, then push it.",
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 13.dp),
+                        )
+                    } else {
+                        projects.forEach { project ->
+                            AttachRow(Icons.Outlined.Folder, project.name, value = project.slug, onClick = { onPickProject(project) })
+                        }
+                    }
+                }
+            }
+        }
+        2 -> {
+            Dialog(onDismissRequest = {}) {
+                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+                    Column(
+                        Modifier.padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(color = KodexClay)
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "Pushing ${state.targetName} to GitHub…",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "This can take a moment — keep the app open.",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
+        }
+        3 -> {
+            val message = state.resultText.trim().ifBlank {
+                if (state.resultOk) "The latest changes are now on GitHub." else "The push did not go through. Check the GitHub connection and try again."
+            }
+            Dialog(onDismissRequest = { state.dismiss() }) {
+                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface) {
+                    Column(
+                        Modifier.padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(
+                            if (state.resultOk) Icons.Default.CheckCircle else Icons.Default.Error,
+                            contentDescription = null,
+                            modifier = Modifier.size(34.dp),
+                            tint = if (state.resultOk) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            if (state.resultOk) "Pushed to GitHub" else "Push failed",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            if (state.targetName.isBlank()) message else "${state.targetName}\n$message",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(
+                            onClick = { state.dismiss() },
+                            colors = ButtonDefaults.buttonColors(containerColor = KodexClay),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Done", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Profile page — dedicated Settings → Profile page: account card plus the
+// full account section (or a sign-in row when auth is unavailable).
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun ProfilePage(
+    accountName: String,
+    accountEmail: String?,
+    isGuest: Boolean,
+    authViewModel: com.vayro.app.auth.ui.AuthViewModel?,
+    authState: com.vayro.app.auth.model.AuthState,
+    onBack: () -> Unit,
+    onNavigateToAuth: () -> Unit,
+) {
+    val initial = (accountName.firstOrNull()?.uppercaseChar() ?: 'K').toString()
+    Column(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            SerifText("Profile", fontSize = 21, modifier = Modifier.align(Alignment.Center))
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ShellCard {
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier.size(44.dp).background(KodexClay, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(initial, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(accountName, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            accountEmail ?: if (isGuest) "Guest mode · Local only" else "Signed in",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            if (authViewModel != null) {
+                ShellCard {
+                    Column(Modifier.padding(16.dp)) {
+                        AccountSectionContent(viewModel = authViewModel, authState = authState, onNavigateToAuth = onNavigateToAuth)
+                    }
+                }
+            } else {
+                ShellCard {
+                    ShellRow(Icons.Outlined.Person, "Sign in", onClick = onNavigateToAuth)
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// License page — dedicated Settings → License page over the local
+// LicenseStore: status rows and license removal for this phone.
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun LicensePage(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var refreshTick by remember { mutableIntStateOf(0) }
+    val lic = remember(refreshTick) { com.vayro.app.license.LicenseStore(context) }
+    var showConfirm by remember { mutableStateOf(false) }
+    val dateFmt = remember { java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()) }
+    val dateTimeFmt = remember { java.text.SimpleDateFormat("MMM dd, yyyy · HH:mm", java.util.Locale.getDefault()) }
+
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Remove license?") },
+            text = { Text("This removes the license stored on this phone. If license checks are on, Kodex will ask for a code the next time it starts.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        lic.clearLicense()
+                        refreshTick++
+                        showConfirm = false
+                    },
+                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            SerifText("License", fontSize = 21, modifier = Modifier.align(Alignment.Center))
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ShellCard {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Status", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text(if (lic.token == null) "Not activated on this phone" else "Active", fontSize = 14.5.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Type", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text(lic.licenseType ?: "—", fontSize = 14.5.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Expires", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text(
+                            when {
+                                lic.token == null -> "—"
+                                lic.expiresAt > 0 -> dateFmt.format(java.util.Date(lic.expiresAt))
+                                else -> "Lifetime"
+                            },
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Activated", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text(if (lic.activatedAt > 0) dateTimeFmt.format(java.util.Date(lic.activatedAt)) else "—", fontSize = 14.5.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Last verified", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        Text(if (lic.lastOkAt > 0) dateTimeFmt.format(java.util.Date(lic.lastOkAt)) else "—", fontSize = 14.5.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+            if (lic.token != null) {
+                ShellCard {
+                    ShellRow(Icons.Outlined.Lock, "Remove license from this phone", labelColor = MaterialTheme.colorScheme.error, onClick = { showConfirm = true })
+                }
+            } else {
+                Text(
+                    "No license is stored on this phone. If license checks are on, Kodex will ask for a code the next time it starts.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Notifications page — dedicated Settings → Notifications page: real
+// system permission status, permission request and system settings link.
+// Per-channel control lives in system settings, so there are no toggles.
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun NotificationsPage(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(false) }
+    fun refresh() {
+        enabled = androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
+    }
+    LaunchedEffect(Unit) { refresh() }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) refresh()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refresh() }
+
+    Column(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            SerifText("Notifications", fontSize = 21, modifier = Modifier.align(Alignment.Center))
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ShellCard {
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Outlined.Notifications, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(13.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (enabled) "Notifications are on" else "Notifications are off", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            if (enabled) "Kodex can send task and update notifications." else "Turn notifications on so Kodex can tell you when a task finishes or an update is ready.",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            ShellCard {
+                if (!enabled && Build.VERSION.SDK_INT >= 33) {
+                    ShellRow(Icons.Outlined.Notifications, "Allow notifications", onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) })
+                    ShellCardDivider()
+                }
+                ShellRow(
+                    Icons.Outlined.Settings,
+                    "Open notification settings",
+                    onClick = {
+                        context.startActivity(
+                            Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    },
+                )
+            }
+            ShellCard {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column {
+                        Text("Running coding tasks", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("Progress while Kodex is working in the background", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Column {
+                        Text("Task results", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("When a coding task finishes or needs attention", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Column {
+                        Text("Kodex updates", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("Remote updates for projects and agent sessions", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Column {
+                        Text("App updates", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text("When a new Kodex version is ready", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // Connectors header — sits above the existing MCP surface (SkillsScreen's

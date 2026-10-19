@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.AddComment
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Error
@@ -64,6 +65,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -810,6 +813,10 @@ fun EngineeringStateBanner(
     if (snapshot == null || snapshot.state == EngineeringState.IDLE || snapshot.state == EngineeringState.ANALYZING) return
 
     val state = snapshot.state
+    val terminal = state == EngineeringState.COMPLETED || state == EngineeringState.FAILED || state == EngineeringState.ROLLED_BACK
+    var dismissed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state) { if (!terminal) dismissed = false }
+    if (terminal && dismissed) return
     val (label, color, icon) = when (state) {
         EngineeringState.IDLE -> Triple("Idle", MaterialTheme.colorScheme.onSurfaceVariant, Icons.Default.Pause)
         EngineeringState.ANALYZING -> Triple("Analyzing Requirements", MaterialTheme.colorScheme.primary, null)
@@ -829,8 +836,8 @@ fun EngineeringStateBanner(
 
     Surface(
         shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.5f)),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = modifier.fillMaxWidth(),
     ) {
         Row(
@@ -881,6 +888,12 @@ fun EngineeringStateBanner(
                     ) {
                         Text("Revert Baseline", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
                     }
+                }
+            }
+
+            if (terminal) {
+                IconButton(onClick = { dismissed = true }, modifier = Modifier.size(28.dp)) {
+                    Icon(Icons.Default.Close, "Dismiss", Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
