@@ -880,7 +880,7 @@ private fun AntigravityOnboardingScreen(
             Modifier.fillMaxSize().padding(padding).padding(24.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Connect your Google account", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Connect your Google account", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily), fontWeight = FontWeight.Normal)
             Text(
                 "Kodex runs Google's official agy CLI inside its private Linux environment. Google handles authentication and agy owns the saved session.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1043,7 +1043,7 @@ private fun BackgroundTaskSetupScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Kodex", fontWeight = FontWeight.Bold)
+                        Text("Kodex", fontWeight = FontWeight.SemiBold)
                     }
                 },
                 actions = {
@@ -1066,7 +1066,7 @@ private fun BackgroundTaskSetupScreen(
                 .verticalScroll(rememberScrollState()),
         ) {
             Spacer(Modifier.height(8.dp))
-            Text("Prepare for reliable setup", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text("Prepare for reliable setup", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily), fontWeight = FontWeight.Normal)
             Spacer(Modifier.height(8.dp))
             Text(
                 "Setup time depends on the toolchains you choose next. You may leave Kodex in the background while it works.",
@@ -1110,7 +1110,7 @@ private fun BackgroundTaskSetupScreen(
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("STEP ${currentStep + 1} OF 3", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                            Text("STEP ${currentStep + 1} OF 3", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp)
                             Text(currentTitle, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         }
                         if (currentGranted) Icon(Icons.Default.Check, "Granted", tint = PocketGreen)
@@ -1178,7 +1178,7 @@ private fun BackgroundTaskSetupScreen(
                                 1 -> if (batteryGranted) "Next" else "Open battery settings"
                                 else -> "Enable and finish"
                             },
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                         )
                         Spacer(Modifier.width(8.dp))
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, null, modifier = Modifier.size(18.dp))
@@ -1340,7 +1340,7 @@ private fun RuntimeSetupPromptScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Kodex", fontWeight = FontWeight.Bold)
+                        Text("Kodex", fontWeight = FontWeight.SemiBold)
                     }
                 },
                 navigationIcon = {
@@ -1377,14 +1377,14 @@ private fun RuntimeSetupPromptScreen(
                     text = "DEVICE CHECK",
                     color = MaterialTheme.colorScheme.primary,
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.sp,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "Ready to build on this phone",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily),
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(Modifier.height(8.dp))
@@ -1421,7 +1421,7 @@ private fun RuntimeSetupPromptScreen(
                                 Column {
                                     Text(
                                         "System compatibility",
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.SemiBold,
                                         fontSize = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurface,
                                     )
@@ -1500,7 +1500,7 @@ private fun RuntimeSetupPromptScreen(
                     ) {
                         Text(
                             text = if (compatible) "Continue to tool setup" else "Device not supported",
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             fontSize = 15.sp,
                         )
                         Spacer(Modifier.width(8.dp))
@@ -1524,14 +1524,14 @@ private fun RuntimeSetupPromptScreen(
                     "TOOLCHAIN SETUP",
                     color = MaterialTheme.colorScheme.primary,
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.sp,
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = "Choose your tools",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily),
+                    fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(Modifier.height(6.dp))
@@ -1574,7 +1574,7 @@ private fun RuntimeSetupPromptScreen(
                 }
 
                 Spacer(Modifier.height(18.dp))
-                Text("CODING AGENT", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
+                Text("CODING AGENT", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.9.sp)
                 Spacer(Modifier.height(8.dp))
 
                 Surface(
@@ -1607,7 +1607,7 @@ private fun RuntimeSetupPromptScreen(
                 )
 
                 Spacer(Modifier.height(18.dp))
-                Text("OPTIONAL TOOLCHAINS", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.9.sp)
+                Text("OPTIONAL TOOLCHAINS", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.9.sp)
                 Spacer(Modifier.height(8.dp))
 
                 Surface(
@@ -1675,7 +1675,7 @@ private fun RuntimeSetupPromptScreen(
                         Spacer(Modifier.width(10.dp))
                         Text(
                             text = if (compatible) "Install Kodex" else "Device not supported",
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                             fontSize = 15.sp,
                         )
                         if (compatible) {
@@ -2024,7 +2024,7 @@ private fun RuntimeInstallationScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Set up Kodex", fontWeight = FontWeight.Bold)
+                        Text("Set up Kodex", fontWeight = FontWeight.SemiBold)
                     }
                 },
                 actions = {
@@ -2049,7 +2049,7 @@ private fun RuntimeInstallationScreen(
                 Text(
                     "STEP 1 OF 3",
                     fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     color = PocketOrange,
                     letterSpacing = 1.1.sp,
                 )
@@ -2071,8 +2071,8 @@ private fun RuntimeInstallationScreen(
             Spacer(Modifier.height(10.dp))
             Text(
                 "Build your workspace",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.headlineMedium.copy(fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily),
+                fontWeight = FontWeight.Normal,
             )
             Spacer(Modifier.height(4.dp))
             Box(Modifier.fillMaxWidth().heightIn(min = 42.dp), contentAlignment = Alignment.CenterStart) {
@@ -2097,7 +2097,7 @@ private fun RuntimeInstallationScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Installation progress", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.weight(1f))
-                        Text("${(state.startupProgress * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text("${(state.startupProgress * 100).toInt()}%", color = MaterialTheme.colorScheme.primary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Spacer(Modifier.height(12.dp))
                     LinearProgressIndicator(
@@ -2202,7 +2202,14 @@ private fun StartupLoadingScreen(
                     alpha = 0.82f + ((logoPulse - 0.96f) / 0.08f) * 0.18f
                 },
             )
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "Kodex",
+                fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
+                fontSize = 30.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(8.dp))
             AnimatedContent(
                 targetState = messages[messageIndex],
                 label = "startup message",
@@ -2513,7 +2520,7 @@ private fun StartupErrorScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         BrandMark(compact = true)
                         Spacer(Modifier.width(9.dp))
-                        Text("Kodex", fontWeight = FontWeight.Bold)
+                        Text("Kodex", fontWeight = FontWeight.SemiBold)
                     }
                 },
                 actions = {
@@ -2539,8 +2546,8 @@ private fun StartupErrorScreen(
             Spacer(Modifier.height(20.dp))
             Text(
                 if (isOffline) "You're offline" else "Kodex couldn't finish starting",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.headlineSmall.copy(fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily),
+                fontWeight = FontWeight.Normal,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(10.dp))
@@ -3244,7 +3251,7 @@ private fun ProviderSetupScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (onboarding) "Set up Kodex" else "AI Provider & Settings") },
+                title = { Text(if (onboarding) "Set up Kodex" else "AI Provider & Settings", fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
                     if (handleBack != null) {
                         IconButton(onClick = handleBack) {
@@ -3386,7 +3393,7 @@ private fun DeviceCheckStep(context: Context, onContinue: () -> Unit) {
     val compatible = arm64
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
         BrandMark()
-        Text("Your phone is the workspace", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Your phone is the workspace", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily), fontWeight = FontWeight.Normal)
         Text("Kodex checks compatibility before downloading the private Linux runtime.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         CheckRow(Icons.Default.Memory, "Memory", "$totalRamLabel GB usable · ${if (totalRamGb >= 7.5) "Full mode" else "Lite mode"}", true)
         CheckRow(Icons.Default.Code, "Processor", Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", arm64)
@@ -7440,20 +7447,46 @@ private fun ChatTab(
             recognizer = voiceRecognizer,
             messages = messages,
             isRunning = isRunning,
+            approval = approval,
             onSend = onSend,
+            onApproval = onApproval,
+            onApprovalWithLevel = onApprovalWithLevel,
             onClose = { voiceCallActive = false },
         )
     }
-}
 
-private enum class VoiceCallPhase { LISTENING, THINKING, SPEAKING }
+private enum class VoiceCallPhase { LISTENING, SENT, THINKING, SPEAKING }
 
+/**
+ * Hands-free voice call (v3.2.36 rewrite of the conversation loop).
+ *
+ * The v3.2.33 loop lost replies silently: a one-shot effect keyed only on
+ * (isRunning, awaitingReply) evaluated once with the message list captured
+ * at launch, so it either fired against the pre-send list (speaking a stale
+ * reply and disarming itself) or never re-fired when the final message
+ * landed in a later state emission than isRunning=false. It also had no
+ * answer for a run parked on an approval (the card sat in the chat behind
+ * this full-screen surface, isRunning stayed true, and the call waited in
+ * "Thinking…" forever), and every failure was invisible.
+ *
+ * This version is an explicit state machine driven by live state:
+ * LISTENING (live partials) -> SENT (the exact committed text, shown) ->
+ * THINKING (agent working; a pending approval is surfaced HERE with the
+ * chat's own handlers) -> SPEAKING (the reply line is shown AND spoken via
+ * ReadAloudPlayer with the user's selected voice) -> LISTENING.
+ * A reply only counts if it is a NEW assistant message (id recorded at
+ * send time as the baseline), and every failure lands on a visible status
+ * line instead of silence.
+ */
 @Composable
 private fun VoiceCallScreen(
     recognizer: com.vayro.app.ui.voice.VoiceRecognizer,
     messages: List<ChatMessage>,
     isRunning: Boolean,
+    approval: ToolRequest?,
     onSend: (String) -> Unit,
+    onApproval: (Boolean) -> Unit,
+    onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -7461,9 +7494,27 @@ private fun VoiceCallScreen(
     var muted by remember { mutableStateOf(false) }
     var phase by remember { mutableStateOf(VoiceCallPhase.LISTENING) }
     var lastHeard by remember { mutableStateOf("") }
-    var lastSpokenId by remember { mutableStateOf<String?>(null) }
+    var sentText by remember { mutableStateOf("") }
+    var replyText by remember { mutableStateOf("") }
+    var statusLine by remember { mutableStateOf<String?>(null) }
+    var statusIsError by remember { mutableStateOf(false) }
     var awaitingReply by remember { mutableStateOf(false) }
+    var baselineAssistantId by remember { mutableStateOf<String?>(null) }
+    var baselineUserId by remember { mutableStateOf<String?>(null) }
+    var lastSpokenId by remember { mutableStateOf<String?>(null) }
+    var speakingId by remember { mutableStateOf<String?>(null) }
     val speakingNow = com.vayro.app.voice.ReadAloudPlayer.playingMessageId != null
+
+    fun resumeListening(keepStatus: Boolean = false) {
+        awaitingReply = false
+        speakingId = null
+        phase = VoiceCallPhase.LISTENING
+        if (!keepStatus) {
+            statusLine = null
+            statusIsError = false
+        }
+        if (!muted) recognizer.start()
+    }
 
     fun endCall() {
         recognizer.cancel()
@@ -7490,19 +7541,38 @@ private fun VoiceCallScreen(
         }
     }
 
-    // A committed segment that stays stable for a beat = the user finished a turn.
+    // Recognizer failures are shown on the call screen, never swallowed.
+    LaunchedEffect(voiceState.error) {
+        val err = voiceState.error
+        if (err != null && phase == VoiceCallPhase.LISTENING) {
+            statusLine = err
+            statusIsError = true
+        }
+    }
+
+    // A committed segment that stays stable for a short beat = the user
+    // finished a turn. Commit on the recognizer's final result as soon as
+    // it is stable (700ms, tightened from 1100ms) and show the exact text
+    // on screen the moment it is sent (SENT phase).
     LaunchedEffect(voiceState.committed, phase, muted) {
         if (phase != VoiceCallPhase.LISTENING || muted) return@LaunchedEffect
         val committed = voiceState.committed
         if (committed.isBlank()) return@LaunchedEffect
-        kotlinx.coroutines.delay(1100)
+        kotlinx.coroutines.delay(700)
         if (phase == VoiceCallPhase.LISTENING && !muted) {
             recognizer.finish { finalText ->
                 val text = finalText.trim().ifBlank { committed.trim() }
                 if (text.isNotBlank()) {
+                    com.vayro.app.voice.ReadAloudPlayer.stop()
+                    baselineAssistantId = messages.lastOrNull { !it.fromUser }?.id
+                    baselineUserId = messages.lastOrNull { it.fromUser }?.id
                     lastHeard = text
+                    sentText = text
+                    replyText = ""
+                    statusLine = null
+                    statusIsError = false
                     awaitingReply = true
-                    phase = VoiceCallPhase.THINKING
+                    phase = VoiceCallPhase.SENT
                     onSend(text)
                 } else {
                     recognizer.start()
@@ -7511,32 +7581,111 @@ private fun VoiceCallScreen(
         }
     }
 
-    // Agent reply finished arriving -> speak the newest text reply once.
-    LaunchedEffect(isRunning, awaitingReply) {
-        if (awaitingReply && !isRunning && phase == VoiceCallPhase.THINKING) {
-            val reply = messages.lastOrNull { !it.fromUser && it.id != lastSpokenId && it.text.isNotBlank() }
-            if (reply != null) {
-                lastSpokenId = reply.id
-                phase = VoiceCallPhase.SPEAKING
-                com.vayro.app.voice.ReadAloudPlayer.toggle(context, reply.id, reply.text)
-            } else {
-                awaitingReply = false
-                phase = VoiceCallPhase.LISTENING
-                if (!muted) recognizer.start()
-            }
+    // SENT is a brief confirmation beat; the reply machine below keys off
+    // awaitingReply and live chat state, not this phase, so nothing waits
+    // on the beat finishing.
+    LaunchedEffect(phase) {
+        if (phase == VoiceCallPhase.SENT) {
+            kotlinx.coroutines.delay(650)
+            if (phase == VoiceCallPhase.SENT) phase = VoiceCallPhase.THINKING
         }
     }
 
-    // Speech playback ended -> listen again.
-    LaunchedEffect(speakingNow) {
-        if (phase == VoiceCallPhase.SPEAKING && !speakingNow) {
-            kotlinx.coroutines.delay(300)
-            if (phase == VoiceCallPhase.SPEAKING &&
-                com.vayro.app.voice.ReadAloudPlayer.playingMessageId == null
-            ) {
-                awaitingReply = false
-                phase = VoiceCallPhase.LISTENING
-                if (!muted) recognizer.start()
+    // Reply machine. Keyed on every value it reads, so it re-evaluates as
+    // chat state lands instead of judging once from a stale snapshot.
+    LaunchedEffect(awaitingReply, isRunning, approval, messages) {
+        if (!awaitingReply) return@LaunchedEffect
+        if (phase == VoiceCallPhase.SPEAKING) return@LaunchedEffect
+        if (approval != null) return@LaunchedEffect // the approval card below owns this moment
+        if (isRunning) return@LaunchedEffect
+        // The run is over (or never visibly started). A short grace lets
+        // the final message emission land before judging; if nothing new
+        // exists at all, one longer beat covers a queued send.
+        kotlinx.coroutines.delay(500)
+        if (!awaitingReply || isRunning || approval != null) return@LaunchedEffect
+        var candidate = messages.lastOrNull {
+            !it.fromUser && it.id != baselineAssistantId && it.id != lastSpokenId
+        }
+        if (candidate == null) {
+            kotlinx.coroutines.delay(1200)
+            if (!awaitingReply || isRunning || approval != null) return@LaunchedEffect
+            candidate = messages.lastOrNull {
+                !it.fromUser && it.id != baselineAssistantId && it.id != lastSpokenId
+            }
+        }
+        val reply = candidate
+        if (reply == null) {
+            val userLanded = messages.lastOrNull { it.fromUser }?.id != baselineUserId
+            statusIsError = !userLanded
+            statusLine = if (userLanded) {
+                "The reply had no text to read out."
+            } else {
+                "No reply came back — the message may not have been sent."
+            }
+            resumeListening(keepStatus = true)
+            return@LaunchedEffect
+        }
+        // Speakable text: the reply's own text; for a pure work/plan card
+        // fall back to its visible status/title so the turn still answers.
+        val speakText = reply.text.takeIf { it.isNotBlank() }
+            ?: reply.workItems.lastOrNull()?.let { item ->
+                listOf(item.title, item.detail).filter { it.isNotBlank() }.joinToString(". ")
+            }?.takeIf { it.isNotBlank() }
+            ?: reply.roadmap?.let { plan ->
+                listOf("Plan ready: ${plan.title}", plan.summary)
+                    .filter { it.isNotBlank() }.joinToString(". ")
+            }?.takeIf { it.isNotBlank() }
+        if (speakText == null) {
+            lastSpokenId = reply.id
+            statusLine = "The reply had no text to read out."
+            statusIsError = false
+            resumeListening(keepStatus = true)
+            return@LaunchedEffect
+        }
+        lastSpokenId = reply.id
+        replyText = speakText
+        statusLine = null
+        statusIsError = false
+        awaitingReply = false
+        speakingId = reply.id
+        phase = VoiceCallPhase.SPEAKING
+        // Actively start playback of THIS reply (the old loop's other
+        // failure: nothing guaranteed the player was ever invoked for the
+        // new message). toggle() stops when the same id is already
+        // playing, so only call it when it is not.
+        val player = com.vayro.app.voice.ReadAloudPlayer
+        if (player.playingMessageId != reply.id) {
+            if (player.playingMessageId != null) player.stop()
+            player.toggle(context, reply.id, speakText)
+        }
+    }
+
+    // Playback finished (or wedged) -> listen again. Polls the player's
+    // observable state; the generous cap keeps a stuck player (e.g. a TTS
+    // engine init failure, which never clears playingMessageId) from
+    // parking the call on SPEAKING forever with no sound and no way out.
+    LaunchedEffect(speakingId) {
+        val id = speakingId ?: return@LaunchedEffect
+        val startedAt = System.currentTimeMillis()
+        val capMs = 30_000L + replyText.length * 120L
+        var wedged = false
+        while (phase == VoiceCallPhase.SPEAKING && speakingId == id) {
+            if (com.vayro.app.voice.ReadAloudPlayer.playingMessageId == null) break
+            if (System.currentTimeMillis() - startedAt > capMs) {
+                com.vayro.app.voice.ReadAloudPlayer.stop()
+                wedged = true
+                break
+            }
+            kotlinx.coroutines.delay(200)
+        }
+        if (phase == VoiceCallPhase.SPEAKING && speakingId == id) {
+            if (wedged) {
+                statusLine = "The reply could not be played out loud."
+                statusIsError = true
+            }
+            kotlinx.coroutines.delay(250)
+            if (phase == VoiceCallPhase.SPEAKING && speakingId == id) {
+                resumeListening(keepStatus = wedged)
             }
         }
     }
@@ -7572,33 +7721,69 @@ private fun VoiceCallScreen(
                 }
             }
             Spacer(Modifier.weight(1f))
-            VoiceCallOrb(phase = phase, level = level, speaking = speakingNow)
-            Spacer(Modifier.height(30.dp))
-            Text(
-                when (phase) {
-                    VoiceCallPhase.LISTENING -> if (muted) "Muted" else "Listening…"
-                    VoiceCallPhase.THINKING -> "Thinking…"
-                    VoiceCallPhase.SPEAKING -> "Speaking…"
-                },
-                fontSize = 15.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                when (phase) {
-                    VoiceCallPhase.LISTENING -> voiceState.partial.ifBlank { voiceState.committed }.ifBlank { lastHeard }.ifBlank { "Say something to Kodex" }
-                    VoiceCallPhase.THINKING -> lastHeard
-                    VoiceCallPhase.SPEAKING -> "Playing the reply out loud"
-                },
-                fontSize = 13.5.sp,
-                lineHeight = 19.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (approval != null) {
+                // The agent is parked on an approval in the chat behind
+                // this screen. Surface the same card with the same
+                // handlers so the call can continue from here.
+                Text(
+                    "Kodex needs your approval",
+                    fontSize = 15.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(14.dp))
+                ApprovalCard(
+                    request = approval,
+                    onApproval = onApproval,
+                    onApprovalWithLevel = onApprovalWithLevel,
+                )
+            } else {
+                VoiceCallOrb(phase = phase, level = level, speaking = speakingNow)
+                Spacer(Modifier.height(30.dp))
+                Text(
+                    when (phase) {
+                        VoiceCallPhase.LISTENING -> if (muted) "Muted" else "Listening…"
+                        VoiceCallPhase.SENT -> "Sent"
+                        VoiceCallPhase.THINKING -> "Thinking…"
+                        VoiceCallPhase.SPEAKING -> "Speaking…"
+                    },
+                    fontSize = 15.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    when (phase) {
+                        VoiceCallPhase.LISTENING -> voiceState.partial.ifBlank { voiceState.committed }.ifBlank { lastHeard }.ifBlank { "Say something to Kodex" }
+                        VoiceCallPhase.SENT -> sentText
+                        VoiceCallPhase.THINKING -> sentText
+                        VoiceCallPhase.SPEAKING -> replyText
+                    },
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (phase == VoiceCallPhase.SPEAKING) 4 else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (statusLine != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        statusLine!!,
+                        fontSize = 12.5.sp,
+                        lineHeight = 17.sp,
+                        color = if (statusIsError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (voiceState.error != null && phase == VoiceCallPhase.LISTENING) {
+                        TextButton(onClick = { recognizer.start() }) {
+                            Text("Try listening again")
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.weight(1f))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -7680,6 +7865,7 @@ private fun VoiceCallOrb(
         val baseR = size.minDimension * 0.30f
         val energy = when (phase) {
             VoiceCallPhase.LISTENING -> 0.25f + level.coerceIn(0f, 1f) * 0.9f
+            VoiceCallPhase.SENT -> 0.45f
             VoiceCallPhase.THINKING -> 0.55f
             VoiceCallPhase.SPEAKING -> if (speaking) 0.5f else 0.3f
         }

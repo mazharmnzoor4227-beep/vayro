@@ -152,8 +152,9 @@ fun AuthScreen(
 
                 Text(
                     text = "Kodex",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
+                    fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Normal,
                 )
 
                 Text(
@@ -196,7 +197,7 @@ fun AuthScreen(
                             ) {
                                 Text(
                                     "Sign In",
-                                    fontWeight = if (!uiState.isSignUpMode) FontWeight.Bold else FontWeight.Medium,
+                                    fontWeight = if (!uiState.isSignUpMode) FontWeight.SemiBold else FontWeight.Medium,
                                     fontSize = 14.sp,
                                     color = if (!uiState.isSignUpMode) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -215,7 +216,7 @@ fun AuthScreen(
                             ) {
                                 Text(
                                     "Create Account",
-                                    fontWeight = if (uiState.isSignUpMode) FontWeight.Bold else FontWeight.Medium,
+                                    fontWeight = if (uiState.isSignUpMode) FontWeight.SemiBold else FontWeight.Medium,
                                     fontSize = 14.sp,
                                     color = if (uiState.isSignUpMode) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -326,7 +327,7 @@ fun AuthScreen(
                             } else {
                                 Text(
                                     if (uiState.isSignUpMode) "Create Account" else "Sign In",
-                                    fontWeight = FontWeight.Bold,
+                                    fontWeight = FontWeight.SemiBold,
                                     fontSize = 15.sp,
                                 )
                             }

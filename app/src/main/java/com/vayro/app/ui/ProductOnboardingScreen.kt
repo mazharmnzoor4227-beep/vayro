@@ -29,7 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material3.Button
@@ -138,7 +138,7 @@ fun ProductOnboardingScreen(
                 Text(
                     text = "Kodex Tour",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                 )
 
                 TextButton(onClick = onComplete) {
@@ -184,8 +184,10 @@ fun ProductOnboardingScreen(
                     // Title & Subtitle
                     Text(
                         text = slide.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
+                        ),
+                        fontWeight = FontWeight.Normal,
                         textAlign = TextAlign.Center,
                     )
                     Text(
@@ -215,7 +217,7 @@ fun ProductOnboardingScreen(
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {
                                     Icon(
-                                        Icons.Default.CheckCircle,
+                                        Icons.Default.Check,
                                         contentDescription = null,
                                         modifier = Modifier
                                             .size(16.dp)
@@ -307,7 +309,7 @@ fun ProductOnboardingScreen(
                         Text(
                             text = "Try it now",
                             fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
@@ -349,7 +351,7 @@ fun ProductOnboardingScreen(
                         Text(
                             text = if (isLast) "Get Started" else "Next (${pagerState.currentPage + 1}/${slides.size})",
                             fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
                 }
