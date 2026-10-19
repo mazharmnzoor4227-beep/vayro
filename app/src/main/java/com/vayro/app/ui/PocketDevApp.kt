@@ -7454,6 +7454,7 @@ private fun ChatTab(
             onClose = { voiceCallActive = false },
         )
     }
+}
 
 private enum class VoiceCallPhase { LISTENING, SENT, THINKING, SPEAKING }
 
