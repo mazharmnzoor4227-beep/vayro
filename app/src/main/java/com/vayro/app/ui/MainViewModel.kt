@@ -4409,7 +4409,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val modeInstruction = if (conversational) "" else agentChatController.buildModeInstruction(mode, requestText)
         _state.update {
             val startedAt = System.currentTimeMillis()
-            val thinkItem = ActivityItem("Think", requestPlanningSummary(requestText, it.agentKind), false)
+            val thinkItem = ActivityItem("Think", requestPlanningSummary(requestText, it.agentKind), false, startedAtMillis = System.currentTimeMillis())
             val initialScratchpad = deriveScratchpadItems(it.activeRoadmap, listOf(thinkItem), true)
             it.copy(
                 messages = it.messages + ChatMessage(fromUser = true, text = requestText, attachments = attachments),
@@ -4700,10 +4700,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun attachTaskDuration(current: AppUiState, finishedAt: Long): AppUiState =
         current.copy(messages = agentChatController.attachTaskDuration(current.messages, current.taskStartedAtMillis, finishedAt))
 
+    /**
+     * v3.2.40 (Scope D): a live tool step — created by ToolStarted with a
+     * "Running <tool>" title, flipped ONLY by its own ToolCompleted.
+     * Milestone sweeps (a new work item landing, a new reasoning block)
+     * must never tick one of these complete early: on the user's phone
+     * that is exactly how a step showed a tick while it was still
+     * running, and how parallel tool calls lost their running rows.
+     */
+    private fun isLiveToolItem(item: ActivityItem): Boolean =
+        !item.isComplete && item.title.startsWith("Running ")
+
+    /** Completes every settled item, leaving live tool steps running. */
+    private fun completeSettledItems(items: List<ActivityItem>): List<ActivityItem> =
+        items.map { if (!it.isComplete && !isLiveToolItem(it)) it.copy(isComplete = true) else it }
+
     private fun appendWorkItem(current: AppUiState, item: ActivityItem): AppUiState {
         if (isNoisyRuntimeItem(item)) return current
         return current.copy(
-            liveProcess = current.liveProcess.map { if (!it.isComplete) it.copy(isComplete = true) else it } + item,
+            liveProcess = completeSettledItems(current.liveProcess) + item,
             liveThinking = false,
             workSegmentStartedAtMillis = current.workSegmentStartedAtMillis ?: System.currentTimeMillis(),
         )
@@ -4921,6 +4936,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         detail = current.liveProcess.getOrNull(existingIndex)?.detail
                             ?: requestPlanningSummary(current.currentTaskRequest.orEmpty(), current.agentKind),
                         isComplete = false,
+                        startedAtMillis = current.liveProcess.getOrNull(existingIndex)?.startedAtMillis
+                            ?.takeIf { it > 0 } ?: System.currentTimeMillis(),
                     )
                     val process = if (existingIndex >= 0) {
                         current.liveProcess.toMutableList().also { it[existingIndex] = reasoning }
@@ -4938,16 +4955,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val process = current.liveProcess.toMutableList()
                     val existingIndex = process.indexOfLast { !it.isComplete && it.title == "Think" }
                     if (event.startsNewBlock) {
+                        // Scope D: a new reasoning block settles THINK
+                        // items — never a live tool step (see
+                        // isLiveToolItem); a tool keeps its running row
+                        // until its own ToolCompleted lands.
                         process.indices.forEach { index ->
-                            if (!process[index].isComplete) process[index] = process[index].copy(isComplete = true)
+                            if (!process[index].isComplete && !isLiveToolItem(process[index])) {
+                                process[index] = process[index].copy(isComplete = true)
+                            }
                         }
                         val initial = summary.ifBlank { "Thinking…" }
                         val replaceFallback = current.activeThinkingBlockId == null &&
                             process.size == 1 && process.first().title == "Think"
+                        val thinkItem = ActivityItem(
+                            "Think",
+                            initial,
+                            event.isFinal,
+                            startedAtMillis = if (event.isFinal) 0L else System.currentTimeMillis(),
+                        )
                         if (replaceFallback) {
-                            process[0] = ActivityItem("Think", initial, event.isFinal)
+                            process[0] = thinkItem
                         } else {
-                            process += ActivityItem("Think", initial, event.isFinal)
+                            process += thinkItem
                         }
                     } else if (current.activeThinkingBlockId == event.blockId && existingIndex >= 0 && summary.isNotBlank()) {
                         process[existingIndex] = process[existingIndex].copy(
@@ -4965,10 +4994,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 is RuntimeEvent.ToolStarted -> {
-                    val process = current.liveProcess.map { item ->
-                        if (!item.isComplete) item.copy(isComplete = true) else item
-                    }
-                    val toolItem = ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash")
+                    // v3.2.40 (Scope D): the step is born HERE, at start,
+                    // stamped with its start time — and settled sweeps
+                    // leave it running until its own ToolCompleted.
+                    val process = completeSettledItems(current.liveProcess)
+                    val toolItem = ActivityItem(
+                        "Running ${event.toolName}",
+                        event.detail,
+                        false,
+                        isCommand = event.toolName == "Bash",
+                        startedAtMillis = System.currentTimeMillis(),
+                    )
                     val updatedProcess = process + toolItem
                     val scratchpad = deriveScratchpadItems(current.activeRoadmap, updatedProcess, true)
                     val planned = current.copy(
@@ -4976,9 +5012,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         scratchpadItems = scratchpad,
                         liveThinking = false,
                         activeThinkingBlockId = null,
-                        activity = listOf(
-                            ActivityItem("Running ${event.toolName}", event.detail, false, isCommand = event.toolName == "Bash"),
-                        ) + current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
+                        activity = listOf(toolItem) + completeSettledItems(current.activity),
                     )
                     appendWorkItem(
                         planned,

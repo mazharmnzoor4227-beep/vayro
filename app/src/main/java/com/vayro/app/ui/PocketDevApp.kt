@@ -243,6 +243,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
@@ -6949,6 +6950,7 @@ private fun ChatTab(
             changes = changes,
             isRunning = true,
             workedText = null,
+            runStartedAtMillis = taskStartedAtMillis,
             onDismiss = { showLiveActivity = false },
         )
     }
@@ -8667,11 +8669,22 @@ private fun ActivitySheet(
     changes: List<ChangeItem>,
     isRunning: Boolean,
     workedText: String?,
+    runStartedAtMillis: Long? = null,
     onDismiss: () -> Unit,
 ) {
     // v3.2.35 (U6d): this sheet is VIEW-ONLY — thinking, steps and code.
     // Approvals live in the chat flow as cards, never in here.
     var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
+    // v3.2.40 (Scope D): the run's live clock, one hook for the whole
+    // sheet; a running row's own elapsed is arithmetic from its start
+    // stamp (ActivityItem.startedAtMillis) — no hooks inside list rows.
+    // Fixed per sheet instance: the live sheet always passes a start,
+    // the history sheet never does.
+    val liveElapsedSeconds = if (isRunning && runStartedAtMillis != null) {
+        rememberLiveElapsedSeconds(runStartedAtMillis)
+    } else {
+        0
+    }
     // v3.2.39 (Scope 6) — why this sheet used to jerk, and the fix. The
     // old sheet had THREE geometry fights at once: (1) TWO resting
     // anchors (skipPartiallyExpanded = false), so it could snap between
@@ -8688,25 +8701,53 @@ private fun ActivitySheet(
     // inside it), and the keyboard is dismissed the moment the sheet
     // opens so sheet and keyboard never fight. After opening, live
     // updates change only list rows — the sheet itself never moves.
+    //
+    // v3.2.40 (Scope B): the FIXED height itself is now gone — the user
+    // filmed a one-line sheet ("Write · …/products.js") opening at the
+    // full 92%. The sheet HUGS its content instead: the list is CAPPED,
+    // not fixed (heightIn max ≈ 90% of the screen minus the sheet's own
+    // chrome), and the column springs between measured content sizes
+    // (animateContentSize), so a streaming row grows the sheet
+    // continuously and the list scrolls only once the cap is reached.
+    // Scope 6's actual root causes stay fixed: still ONE anchor, the
+    // keyboard is still dismissed on open, and growth is a continuous
+    // size animation of the content under that single anchor — never a
+    // second resting height or a re-anchor. Same-size content changes
+    // (the ticking elapsed text in a row) do not resize anything.
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val keyboardController = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { keyboardController?.hide() }
+    val configuration = LocalConfiguration.current
+    val listMaxHeight = (configuration.screenHeightDp.dp * 0.90f - 130.dp).coerceAtLeast(140.dp)
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
-        Column(Modifier.fillMaxWidth().fillMaxHeight(0.92f).padding(bottom = 26.dp)) {
+        Column(
+            Modifier.fillMaxWidth()
+                .animateContentSize(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                )
+                .padding(bottom = 26.dp),
+        ) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
                     Icon(Icons.Outlined.Close, "Close", Modifier.size(21.dp))
                 }
                 Text("Activity", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center))
             }
-            LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = listMaxHeight).padding(horizontal = 16.dp)) {
                 itemsIndexed(items) { index, item ->
-                    val lastRunning = isRunning && !item.isComplete && index == items.indexOfLast { !it.isComplete }
+                    // v3.2.40 (Scope D): ANY incomplete row is a step that
+                    // is running right now — orb + live elapsed, exactly
+                    // like the chat working row. (Before, only the LAST
+                    // incomplete row got the orb, and none showed time.)
+                    val running = isRunning && !item.isComplete
                     Row(
                         Modifier.fillMaxWidth().clickable {
                             expandedItems = if (index in expandedItems) expandedItems - index else expandedItems + index
@@ -8715,16 +8756,29 @@ private fun ActivitySheet(
                     ) {
                         when {
                             item.isComplete -> Icon(Icons.Default.CheckCircle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.tertiary)
-                            lastRunning -> ThinkingOrb(Modifier.size(17.dp))
+                            running -> ThinkingOrb(Modifier.size(17.dp))
                             else -> Icon(Icons.Outlined.Circle, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f))
                         }
                         Spacer(Modifier.width(10.dp))
                         Text(
                             compactActivityText(item),
                             fontSize = 13.sp,
-                            color = if (item.isComplete || lastRunning) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (item.isComplete || running) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
                         )
+                        if (running) {
+                            val stepElapsed = if (item.startedAtMillis > 0L && runStartedAtMillis != null) {
+                                (liveElapsedSeconds - ((item.startedAtMillis - runStartedAtMillis) / 1000L).toInt()).coerceAtLeast(0)
+                            } else {
+                                liveElapsedSeconds
+                            }
+                            Text(
+                                formatDuration(stepElapsed.toLong()),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.width(6.dp))
+                        }
                         Icon(if (index in expandedItems) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (index in expandedItems) ActivityExpandedDetail(item, activityDetail(item))
