@@ -604,6 +604,14 @@ fun RoadmapCard(
     }
 }
 
+/**
+ * U7d: plan/step bodies are plain Text here (the file chips render
+ * separately), so raw markdown link syntax like [`app.apk`](file:///…)
+ * would show literally. Strip the link syntax, keep the clean label.
+ */
+private fun stripMarkdownLinkSyntax(text: String): String =
+    text.replace(Regex("""\[([^\]]+)\]\((?:[^()]|\([^()]*\))*\)"""), "$1")
+
 @Composable
 private fun RoadmapStepRow(
     index: Int,
@@ -653,7 +661,7 @@ private fun RoadmapStepRow(
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = step.title,
+                text = stripMarkdownLinkSyntax(step.title),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (isCompleted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
@@ -662,7 +670,7 @@ private fun RoadmapStepRow(
 
             if (step.description.isNotBlank()) {
                 Text(
-                    text = step.description,
+                    text = stripMarkdownLinkSyntax(step.description),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 15.sp,

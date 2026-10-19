@@ -133,6 +133,9 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Edit
@@ -5343,13 +5346,19 @@ private fun WorkspaceScreen(
     )
     val chatListState = rememberLazyListState()
     var userScrolledUp by rememberSaveable { mutableStateOf(false) }
+    // U8a: true while a sheet/dialog covers the chat (reported by ChatTab).
+    // The follow-scroll below pauses then, so the list is exactly where
+    // the user left it when the sheet closes.
+    var chatOverlayOpen by remember { mutableStateOf(false) }
 
     // Item count of the chat LazyColumn: messages + the in-flow working
     // row (v3.2.34, U4 — it is a list item now, not a docked bar) + the
-    // approval card. The follow-scroll effects below key off this count.
+    // approval card + the end-of-run changes review card (U6d). The
+    // follow-scroll effects below key off this count.
     val chatItemCount = state.messages.size +
         (if (state.isRunning) 1 else 0) +
-        (if (state.pendingApproval != null) 1 else 0)
+        (if (state.pendingApproval != null) 1 else 0) +
+        (if (!state.isRunning && state.changes.isNotEmpty()) 1 else 0)
 
     LaunchedEffect(state.activeChatId) {
         userScrolledUp = false
@@ -5378,7 +5387,7 @@ private fun WorkspaceScreen(
         state.liveProcess.lastOrNull()?.detail,
         state.pendingApproval,
     ) {
-        if (!state.isRunning || chatItemCount <= 0 || userScrolledUp || chatListState.isScrollInProgress) return@LaunchedEffect
+        if (!state.isRunning || chatItemCount <= 0 || userScrolledUp || chatListState.isScrollInProgress || chatOverlayOpen) return@LaunchedEffect
         if (!chatListState.canScrollForward) {
             chatListState.scrollToItem(chatItemCount - 1)
         }
@@ -5394,9 +5403,16 @@ private fun WorkspaceScreen(
     // so the handler reads live tab state. Dialogs/sheets (chats, palette)
     // register their own handlers later in this composition, so back still
     // dismisses them before this handler runs.
-    BackHandler(onBack = {
+    // v3.2.35 (U6d): ONE step-back used by BOTH the system BackHandler and
+    // the header back arrow. The header arrow used to call onBack()
+    // (= closeProject) directly from every tab, so Back from the Changes
+    // review closed the whole project and wiped the pending changes from
+    // state. That bypass is the root cause of "Back throws everything
+    // away" — both back paths now share this exact behavior.
+    val stepBackInWorkspace: () -> Unit = {
         if (selectedTab != WorkspaceTab.CHAT) selectedTab = WorkspaceTab.CHAT else onBack()
-    })
+    }
+    BackHandler(onBack = stepBackInWorkspace)
     var lastHandledPreviewUrl by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(state.previewUrl, state.previewReady) {
         if (!state.previewReady || state.previewUrl.isNullOrBlank()) {
@@ -5567,7 +5583,7 @@ private fun WorkspaceScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.weight(1f),
                         ) {
-                            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                            IconButton(onClick = stepBackInWorkspace, modifier = Modifier.size(40.dp)) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.size(21.dp))
                             }
                             Text(
@@ -5784,7 +5800,15 @@ private fun WorkspaceScreen(
                     onInstallApkPath = { path -> viewModel?.installBuiltApkByPath(path) },
                     onShareApkPath = { path -> viewModel?.shareBuiltApkByPath(path) },
                     onSaveApkPath = { path -> viewModel?.saveBuiltApkByPath(path) },
-                    onLoadApkInfo = { path -> viewModel?.apkDeliveryInfo(path) },
+                    onLoadDeliveredApk = { path -> viewModel?.loadDeliveredApk(path) },
+                    onPreviewDelivered = { kind, target -> viewModel?.previewDelivered(kind, target) },
+                    onLocateApk = {
+                        selectedTab = WorkspaceTab.FILES
+                        onRefreshFiles()
+                    },
+                    onKeepChanges = onKeepChanges,
+                    onUndoChanges = onUndoChanges,
+                    onModalOverlayChange = { chatOverlayOpen = it },
                     executionMode = state.executionMode,
                     onSelectExecutionMode = onSelectExecutionMode,
                     scratchpadItems = state.scratchpadItems,
@@ -6554,7 +6578,16 @@ private fun ChatTab(
     onInstallApkPath: (String) -> Unit = {},
     onShareApkPath: (String) -> Unit = {},
     onSaveApkPath: (String) -> Unit = {},
-    onLoadApkInfo: suspend (String) -> ApkDeliveryInfo? = { null },
+    onLoadDeliveredApk: suspend (String) -> DeliveredApkData? = { null },
+    onPreviewDelivered: (String, String) -> Unit = { _, _ -> },
+    onLocateApk: (() -> Unit)? = null,
+    // U6d: the end-of-run changes review lives in the chat as a card,
+    // wired to the same keep/revert handlers as the Changes tab.
+    onKeepChanges: () -> Unit = {},
+    onUndoChanges: () -> Unit = {},
+    // U8a: tells the workspace when a sheet/dialog covers the chat, so
+    // the background list can be gesture-locked and follow-scroll paused.
+    onModalOverlayChange: (Boolean) -> Unit = {},
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
@@ -6584,6 +6617,10 @@ private fun ChatTab(
     // when the task finishes or the user leaves the chat tab.
     var showLiveActivity by rememberSaveable { mutableStateOf(false) }
     var pastActivity by remember { mutableStateOf<Pair<List<ActivityItem>, String?>?>(null) }
+    // U8a: any modal surface over the chat (Activity sheet, add-to-chat
+    // sheet, agent picker, voice call) locks the background list. The
+    // tool/agent sheet states are declared further below, so this is a
+    // derived value computed at the list (see below).
     DisposableEffect(isRunning) {
         view.keepScreenOn = isRunning
         onDispose { view.keepScreenOn = false }
@@ -6709,11 +6746,6 @@ private fun ChatTab(
             isRunning = true,
             workedText = null,
             onDismiss = { showLiveActivity = false },
-            // U6c: a pending approval pins to the bottom of the sheet,
-            // wired to the very same handlers as the in-flow card.
-            approval = approval,
-            onApproval = onApproval,
-            onApprovalWithLevel = onApprovalWithLevel,
         )
     }
     pastActivity?.let { (items, worked) ->
@@ -6926,10 +6958,18 @@ private fun ChatTab(
                 }
             }
         }
+    val anyOverlayOpen = showLiveActivity || pastActivity != null || toolsOpen ||
+        showAgentSheet || voiceCallActive
+    LaunchedEffect(anyOverlayOpen) { onModalOverlayChange(anyOverlayOpen) }
         Box(Modifier.weight(1f)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 state = listState,
+                // U8a: while any sheet/dialog covers the chat, the list
+                // ignores user gestures entirely — sheet drags and inner
+                // scrolls can no longer leak into the conversation, and
+                // the list stays exactly where the user left it.
+                userScrollEnabled = !anyOverlayOpen,
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -6969,7 +7009,9 @@ private fun ChatTab(
                             onInstallApkPath = onInstallApkPath,
                             onShareApkPath = onShareApkPath,
                             onSaveApkPath = onSaveApkPath,
-                            onLoadApkInfo = onLoadApkInfo,
+                            onLoadDeliveredApk = onLoadDeliveredApk,
+                            onPreviewDelivered = onPreviewDelivered,
+                            onLocateApk = onLocateApk,
                             onAddRoadmapComment = { stepId ->
                                 val stepTitle = message.roadmap?.steps?.firstOrNull { it.id == stepId }?.title ?: ""
                                 message.roadmap?.let { r ->
@@ -7002,6 +7044,18 @@ private fun ChatTab(
                     }
                 }
                 approval?.let { request -> item { ApprovalCard(request, onApproval, onApprovalWithLevel) } }
+                // U6d: the end-of-run changes review is a card IN the
+                // chat flow. Keep/Revert right here; the Changes tab
+                // stays available for the detailed per-file diffs.
+                if (!isRunning && changes.isNotEmpty()) {
+                    item(key = "changes-review") {
+                        ChangesReviewCard(
+                            changes = changes,
+                            onKeep = onKeepChanges,
+                            onUndo = onUndoChanges,
+                        )
+                    }
+                }
             }
         }
         if (readOnly) {
@@ -7769,10 +7823,9 @@ private fun ActivitySheet(
     isRunning: Boolean,
     workedText: String?,
     onDismiss: () -> Unit,
-    approval: ToolRequest? = null,
-    onApproval: (Boolean) -> Unit = {},
-    onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit = { _, _ -> },
 ) {
+    // v3.2.35 (U6d): this sheet is VIEW-ONLY — thinking, steps and code.
+    // Approvals live in the chat flow as cards, never in here.
     var expandedItems by rememberSaveable { mutableStateOf(emptyList<Int>()) }
     // v3.2.34 (U6): the sheet is user-expandable — it starts partially
     // expanded and can be dragged to near-full height (visible handle),
@@ -7851,17 +7904,6 @@ private fun ActivitySheet(
                         Spacer(Modifier.height(10.dp))
                         Text(workedText, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
-            }
-            // v3.2.34 (U6c): a pending approval pins to the bottom of
-            // the sheet — answerable right here, without closing the
-            // sheet or hunting through the message list. Same card and
-            // same handlers as the in-flow one; answering in either
-            // place resolves the request in both.
-            if (approval != null) {
-                Spacer(Modifier.height(10.dp))
-                Box(Modifier.padding(horizontal = 16.dp)) {
-                    ApprovalCard(approval, onApproval, onApprovalWithLevel)
                 }
             }
         }
@@ -8244,7 +8286,9 @@ private fun MessageBubble(
     onInstallApkPath: (String) -> Unit = {},
     onShareApkPath: (String) -> Unit = {},
     onSaveApkPath: (String) -> Unit = {},
-    onLoadApkInfo: suspend (String) -> ApkDeliveryInfo? = { null },
+    onLoadDeliveredApk: suspend (String) -> DeliveredApkData? = { null },
+    onPreviewDelivered: (String, String) -> Unit = { _, _ -> },
+    onLocateApk: (() -> Unit)? = null,
 ) {
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
@@ -8259,7 +8303,12 @@ private fun MessageBubble(
         if (message.fromUser) {
             null
         } else {
-            Regex("""[A-Za-z0-9_./~-]+\.apk""").find(message.text)?.value
+            // U7a: prefer the FULLEST path in the message — a markdown
+            // label like [`app-debug.apk`](file:///…/app-debug.apk) puts
+            // the bare name first, and resolving that name alone failed.
+            Regex("""[A-Za-z0-9_./~-]+\.apk""").findAll(message.text)
+                .map { it.value }
+                .maxByOrNull { it.count { c -> c == '/' } }
         }
     }
 
@@ -8416,10 +8465,12 @@ private fun MessageBubble(
         if (!isStreaming && deliveredApkPath != null) {
             DeliveredApkCard(
                 apkPath = deliveredApkPath,
-                loadInfo = onLoadApkInfo,
+                loadData = onLoadDeliveredApk,
                 onInstall = onInstallApkPath,
                 onShare = onShareApkPath,
                 onSave = onSaveApkPath,
+                onPreview = onPreviewDelivered,
+                onLocate = onLocateApk,
                 modifier = Modifier
                     .fillMaxWidth(if (message.fromUser) .82f else .92f)
                     .padding(top = 6.dp),
@@ -8646,6 +8697,72 @@ private fun formatFileSize(bytes: Long): String = when {
     else -> "%.1f MB".format(bytes / 1_048_576.0)
 }
 
+/**
+ * U6d: end-of-run changes review as an in-chat card. Shows what changed
+ * and takes the Keep/Revert decision right in the conversation — the
+ * same handlers as the Changes tab, so both stay in sync through state.
+ */
+@Composable
+private fun ChangesReviewCard(
+    changes: List<ChangeItem>,
+    onKeep: () -> Unit,
+    onUndo: () -> Unit,
+) {
+    val added = changes.sumOf { it.additions }
+    val deleted = changes.sumOf { it.deletions }
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Changes to review", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                Text("+$added", color = PocketGreen, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Spacer(Modifier.width(8.dp))
+                Text("−$deleted", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            changes.take(6).forEach { change ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        change.path,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("+${change.additions}", color = PocketGreen, fontSize = 12.sp)
+                    Spacer(Modifier.width(5.dp))
+                    Text("−${change.deletions}", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+            if (changes.size > 6) {
+                Text(
+                    "+${changes.size - 6} more files — open the Changes tab for every diff",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onUndo, modifier = Modifier.weight(1f).height(44.dp)) {
+                    Text("Revert", maxLines = 1, softWrap = false)
+                }
+                Button(onClick = onKeep, modifier = Modifier.weight(1f).height(44.dp)) {
+                    Text("Keep changes", maxLines = 1, softWrap = false)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun ChangesTab(
     changes: List<ChangeItem>,
@@ -8826,19 +8943,30 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
 // ---------------------------------------------------------------------------
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun DeliveredApkCard(
     apkPath: String,
-    loadInfo: suspend (String) -> ApkDeliveryInfo?,
+    loadData: suspend (String) -> DeliveredApkData?,
     onInstall: (String) -> Unit,
     onShare: (String) -> Unit,
     onSave: (String) -> Unit,
+    onPreview: (String, String) -> Unit,
+    onLocate: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    val info by produceState<ApkDeliveryInfo?>(initialValue = null, apkPath) {
-        value = loadInfo(apkPath)
+    // U7a: the load ALWAYS completes — "loading" and "couldn't read" are
+    // separate states now, so the card can never sit on "Reading APK
+    // info…" forever when the file cannot be found.
+    var data by remember(apkPath) { mutableStateOf<DeliveredApkData?>(null) }
+    var loaded by remember(apkPath) { mutableStateOf(false) }
+    LaunchedEffect(apkPath) {
+        data = runCatching { loadData(apkPath) }.getOrNull()
+        loaded = true
     }
+    var showActions by remember { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
@@ -8860,59 +8988,167 @@ private fun DeliveredApkCard(
                 Text("Delivered", fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
             Text(
-                apkPath.substringAfterLast('/'),
+                data?.fileName ?: apkPath.substringAfterLast('/'),
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
             )
-            val meta = info
-            if (meta == null) {
-                Text(
+            val resolved = data?.resolvedPath
+            when {
+                !loaded -> Text(
                     "Reading APK info…",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            } else {
-                DeliveredMetaRow("App", meta.appName)
-                DeliveredMetaRow("Package", meta.packageId)
-                DeliveredMetaRow("Version", meta.versionLabel)
-                DeliveredMetaRow("Size", meta.sizeLabel)
-                DeliveredMetaRow("Stack", meta.stack)
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                resolved == null -> {
+                    // U7a honest not-found state: no live-looking Install
+                    // button — a Locate action into the project Files
+                    // instead.
                     Text(
-                        "SHA-256",
-                        fontSize = 11.sp,
+                        "Kodex couldn't find this APK in the project files. It may have been moved or the build may not have finished.",
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.width(64.dp),
                     )
+                    if (onLocate != null) {
+                        OutlinedButton(
+                            onClick = onLocate,
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                        ) {
+                            Text("Locate APK")
+                        }
+                    }
+                }
+                else -> {
+                    val meta = data?.info
+                    if (meta != null) {
+                        DeliveredMetaRow("App", meta.appName)
+                        DeliveredMetaRow("Package", meta.packageId)
+                        DeliveredMetaRow("Version", meta.versionLabel)
+                        DeliveredMetaRow("Size", meta.sizeLabel)
+                        DeliveredMetaRow("Stack", meta.stack)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "SHA-256",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.width(64.dp),
+                            )
+                            Text(
+                                meta.sha256.take(16) + "…",
+                                fontSize = 11.sp,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
+                                modifier = Modifier.clickable {
+                                    clipboardManager.setText(AnnotatedString(meta.sha256))
+                                    Toast.makeText(context, "SHA-256 copied", Toast.LENGTH_SHORT).show()
+                                },
+                            )
+                        }
+                    } else {
+                        // Metadata unreadable — name + size from the file
+                        // itself still beats a stuck loading label.
+                        data?.sizeLabel?.let { DeliveredMetaRow("Size", it) }
+                        Text(
+                            "Full APK details couldn't be read, but the file is here and ready.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Button(
+                            onClick = { onInstall(resolved) },
+                            modifier = Modifier.weight(1f).height(44.dp),
+                        ) {
+                            Text("Install", maxLines = 1, softWrap = false)
+                        }
+                        val previewTarget = data?.previewTarget
+                        if (!data?.previewKind.isNullOrEmpty() && previewTarget != null) {
+                            OutlinedButton(
+                                onClick = { onPreview(data?.previewKind.orEmpty(), previewTarget) },
+                                modifier = Modifier.weight(1f).height(44.dp),
+                            ) {
+                                Text("Preview", maxLines = 1, softWrap = false)
+                            }
+                        }
+                        IconButton(onClick = { showActions = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More actions")
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { onSave(resolved) },
+                            modifier = Modifier.weight(1f).height(44.dp),
+                        ) {
+                            Text("Save", maxLines = 1, softWrap = false)
+                        }
+                        OutlinedButton(
+                            onClick = { onShare(resolved) },
+                            modifier = Modifier.weight(1f).height(44.dp),
+                        ) {
+                            Text("Share", maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // U7c polish: card actions overflow opens the app's own sheet —
+    // no default dropdown menus.
+    if (showActions) {
+        val resolvedPath = data?.resolvedPath
+        ModalBottomSheet(
+            onDismissRequest = { showActions = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        ) {
+            Column(Modifier.padding(bottom = 26.dp)) {
+                Box(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                     Text(
-                        meta.sha256.take(16) + "…",
-                        fontSize = 11.sp,
-                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
-                        modifier = Modifier.clickable {
-                            clipboardManager.setText(AnnotatedString(meta.sha256))
-                            Toast.makeText(context, "SHA-256 copied", Toast.LENGTH_SHORT).show()
+                        data?.fileName ?: "Delivered APK",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+                if (resolvedPath != null) {
+                    AttachMenuRow(
+                        icon = Icons.Outlined.ContentCopy,
+                        title = "Copy APK path",
+                        subtitle = "The full path of the built file",
+                        enabled = true,
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(resolvedPath))
+                            Toast.makeText(context, "APK path copied", Toast.LENGTH_SHORT).show()
+                            showActions = false
                         },
                     )
                 }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { onInstall(apkPath) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Install")
+                val sha = data?.info?.sha256
+                if (sha != null) {
+                    AttachMenuRow(
+                        icon = Icons.Outlined.Fingerprint,
+                        title = "Copy SHA-256",
+                        subtitle = "Verify the file is exactly what was built",
+                        enabled = true,
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(sha))
+                            Toast.makeText(context, "SHA-256 copied", Toast.LENGTH_SHORT).show()
+                            showActions = false
+                        },
+                    )
                 }
-                OutlinedButton(
-                    onClick = { onSave(apkPath) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Save")
-                }
-                OutlinedButton(
-                    onClick = { onShare(apkPath) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Share")
+                if (onLocate != null) {
+                    AttachMenuRow(
+                        icon = Icons.Outlined.FolderOpen,
+                        title = "Locate in Files",
+                        subtitle = "Open the project files",
+                        enabled = true,
+                        onClick = {
+                            showActions = false
+                            onLocate()
+                        },
+                    )
                 }
             }
         }

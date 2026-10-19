@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -368,6 +369,9 @@ fun SettingsScreen(
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).imePadding(),
+            // U8b: saveable state — leaving a section page and coming
+            // back restores the scroll position instead of the top.
+            state = rememberSaveable(saver = LazyListState.Saver, key = "settings-sections-list-state") { LazyListState() },
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {

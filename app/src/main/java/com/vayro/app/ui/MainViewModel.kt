@@ -230,6 +230,21 @@ data class ApkDeliveryInfo(
     val sha256: String,
 )
 
+/**
+ * U7a/U7c: one-shot state for the chat Delivered card — the resolved file
+ * (null when the APK cannot be located in the project), its metadata when
+ * readable, and an optional Preview target ("web" = local index.html path,
+ * "app" = installed package name, "" = no preview available).
+ */
+data class DeliveredApkData(
+    val resolvedPath: String?,
+    val info: ApkDeliveryInfo?,
+    val fileName: String,
+    val sizeLabel: String?,
+    val previewKind: String,
+    val previewTarget: String?,
+)
+
 data class AppUiState(
     val startupStage: StartupStage = StartupStage.CHECKING,
     val startupProgress: Float = 0f,
@@ -3732,6 +3747,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun sanitizeAttachmentName(name: String): String =
         agentChatController.sanitizeAttachmentName(name)
 
+    /**
+     * U9: conservative conversation classifier. A turn counts as plain talk
+     * only when it clearly needs no tools and changes nothing: no
+     * attachments, no @file mentions, short, no task verbs and no
+     * file/project/code references. Anything ambiguous stays on the full
+     * task pipeline (plan + permissions stay available for real work).
+     */
+    private fun isConversationalTurn(
+        text: String,
+        hasAttachments: Boolean,
+        mentionedPaths: List<String>,
+    ): Boolean {
+        if (hasAttachments || mentionedPaths.isNotEmpty()) return false
+        val t = text.trim()
+        if (t.isEmpty() || t.length > 240) return false
+        val lower = t.lowercase()
+        val taskWords = listOf(
+            "build", "create", "make", "fix", "add", "change", "update", "delete",
+            "remove", "write", "edit", "install", "run", "push", "deploy",
+            "generate", "design", "implement", "refactor", "convert", "download",
+            "upload", "set up", "setup", "configure", "debug", "open", "code",
+            "file", "project", "website", "screen", "feature",
+            ".kt", ".apk", ".html", ".json", "/",
+        )
+        if (taskWords.any { lower.contains(it) }) return false
+        val greetingStart = Regex(
+            "^(hi|hii+|hello|hey|aoa|assalam|salam|thanks|thank you|shukria|ok|okay|great|nice|good|bye|who are you|what can you do|tum kon|aap kon)"
+        ).containsMatchIn(lower)
+        if (greetingStart) return true
+        if (lower.endsWith("?")) return true
+        return t.split(Regex("\\s+")).size <= 5
+    }
+
     fun sendPrompt(prompt: String) {
         if (permissionPolicyEngine.isEmergencyKillSwitchEngaged()) {
             _state.update { it.copy(toastMessage = "Emergency kill switch is ACTIVE — agent sessions are blocked until it is turned off.") }
@@ -3778,8 +3826,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val sessionId = UUID.randomUUID().toString()
         val mentionedPaths = resolveMentionedWorkspacePaths(requestText, project)
         updateActiveChatTitle(requestText)
+        // U9: plain conversation (greetings, small talk, tool-free questions)
+        // skips the whole task ceremony — no mode wrap, no delivery
+        // contract, no plan item, no orchestrator task.
+        val conversational = isConversationalTurn(requestText, attachments.isNotEmpty(), mentionedPaths)
         val mode = _state.value.executionMode
-        val modeInstruction = agentChatController.buildModeInstruction(mode, requestText)
+        val modeInstruction = if (conversational) "" else agentChatController.buildModeInstruction(mode, requestText)
         _state.update {
             val startedAt = System.currentTimeMillis()
             val thinkItem = ActivityItem("Think", requestPlanningSummary(requestText, it.agentKind), false)
@@ -3789,9 +3841,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 pendingAttachments = emptyList(),
                 isRunning = true,
                 streamingMessageId = null,
-                activity = listOf(ActivityItem("Understanding your request", "Preparing a safe plan", false)) + it.activity,
-                liveProcess = listOf(thinkItem),
-                scratchpadItems = initialScratchpad,
+                activity = if (conversational) {
+                    listOf(ActivityItem("Thinking", "Replying to your message", false)) + it.activity
+                } else {
+                    listOf(ActivityItem("Understanding your request", "Preparing a safe plan", false)) + it.activity
+                },
+                liveProcess = if (conversational) emptyList() else listOf(thinkItem),
+                scratchpadItems = if (conversational) it.scratchpadItems else initialScratchpad,
                 liveThinking = true,
                 activeThinkingBlockId = null,
                 taskStartedAtMillis = startedAt,
@@ -3801,7 +3857,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val activeProj = state.value.activeProject
-        if (activeProj != null) {
+        if (activeProj != null && !conversational) {
             val workspaceDir = File(getApplication<Application>().filesDir, "projects/${activeProj.id}")
             agentOrchestrator.startTask(
                 projectId = activeProj.id,
@@ -3829,6 +3885,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             attachments = attachments,
             guestRoot = guestRootFor(project),
             skillContext = skillManager.buildPromptContext(state.value.agentKind),
+            conversational = conversational,
         )
         failedApiKeyIds.clear()
         val bridge = sessionBridge(project.id)
@@ -5412,11 +5469,113 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
         val project = _state.value.activeProject ?: return null
         val root = projectWorkspaceRoot(project)
         val cleaned = path.trim().trim('`', '"', '\'', ',', ')')
+            .removePrefix("file://")
         val guestStripped = cleaned
             .removePrefix("/workspace/${project.slug}/")
             .removePrefix("workspace/${project.slug}/")
-        return listOf(File(cleaned), File(root, cleaned), File(root, guestStripped))
+        val direct = listOf(File(cleaned), File(root, cleaned), File(root, guestStripped))
             .firstOrNull { it.isFile && it.extension.equals("apk", ignoreCase = true) }
+        if (direct != null) return direct
+        // U7a step 3: the agent often reports a bare file name (e.g. taken
+        // from a markdown link label) or a path rooted in a nested project
+        // folder. Search the project tree for the same file name, prefer
+        // build-output locations, then the newest file.
+        val fileName = cleaned.substringAfterLast('/').takeIf { it.isNotBlank() } ?: return null
+        if (!fileName.endsWith(".apk", ignoreCase = true)) return null
+        val matches = mutableListOf<File>()
+        runCatching {
+            root.walkTopDown()
+                .maxDepth(10)
+                .onEnter { dir -> dir.name != ".git" && dir.name != ".gradle" }
+                .forEach { f ->
+                    if (f.isFile && f.name.equals(fileName, ignoreCase = true)) matches += f
+                }
+        }
+        return matches.maxWithOrNull(
+            compareBy<File> { it.absolutePath.contains("/build/outputs/apk/") }
+                .thenBy { it.lastModified() },
+        )
+    }
+
+    /**
+     * U7a/U7c: everything the Delivered card needs, resolved ONCE: the real
+     * file (robust path resolution), its metadata (null when the archive
+     * cannot be read — the card then falls back to name + size), and the
+     * Preview target for this project (web entry point, else the delivered
+     * app when it is installed, else none). Always returns — the card can
+     * never hang on a loading state.
+     */
+    suspend fun loadDeliveredApk(path: String): DeliveredApkData = withContext(Dispatchers.IO) {
+        val fileName = path.trim().trim('`', '"', '\'', ',', ')')
+            .removePrefix("file://").substringAfterLast('/').ifBlank { "app.apk" }
+        val resolved = runCatching { resolveReportedApk(path) }.getOrNull()
+        val info = resolved?.let { runCatching { apkDeliveryInfo(it.absolutePath) }.getOrNull() }
+        val sizeLabel = resolved?.let { String.format("%.1f MB", it.length() / 1_048_576.0) }
+        var previewKind = ""
+        var previewTarget: String? = null
+        val project = _state.value.activeProject
+        if (project != null) {
+            val root = projectWorkspaceRoot(project)
+            val webEntry = listOf(
+                File(root, "index.html"),
+                File(root, "assets/index.html"),
+                File(root, "app/src/main/assets/index.html"),
+            ).firstOrNull { it.isFile } ?: runCatching {
+                root.walkTopDown().maxDepth(4)
+                    .onEnter { dir -> dir.name != ".git" && dir.name != ".gradle" }
+                    .filter { it.isFile && it.name.equals("index.html", ignoreCase = true) }
+                    .minByOrNull { it.absolutePath.length }
+            }.getOrNull()
+            if (webEntry != null) {
+                previewKind = "web"
+                previewTarget = webEntry.absolutePath
+            }
+        }
+        if (previewKind.isEmpty() && info != null && info.packageId.isNotBlank()) {
+            val installed = runCatching {
+                getApplication<android.app.Application>().packageManager
+                    .getPackageInfo(info.packageId, 0)
+            }.isSuccess
+            if (installed) {
+                previewKind = "app"
+                previewTarget = info.packageId
+            }
+        }
+        DeliveredApkData(
+            resolvedPath = resolved?.absolutePath,
+            info = info,
+            fileName = fileName,
+            sizeLabel = sizeLabel,
+            previewKind = previewKind,
+            previewTarget = previewTarget,
+        )
+    }
+
+    /** U7c: runs the Delivered card's Preview action. */
+    fun previewDelivered(kind: String, target: String) {
+        when (kind) {
+            "web" -> {
+                // Reset first so re-previewing the same file still switches
+                // the workspace to the Preview tab (its effect keys on the
+                // URL changing).
+                _state.update { it.copy(previewReady = false, previewUrl = null) }
+                openPreviewUrl("file://$target")
+            }
+            "app" -> {
+                val context = getApplication<android.app.Application>()
+                val intent = runCatching {
+                    context.packageManager.getLaunchIntentForPackage(target)
+                }.getOrNull()
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    runCatching { context.startActivity(intent) }.onFailure {
+                        _state.update { it.copy(toastMessage = "Could not open the app.") }
+                    }
+                } else {
+                    _state.update { it.copy(toastMessage = "That app is not installed.") }
+                }
+            }
+        }
     }
 
     fun installBuiltApkByPath(path: String) {

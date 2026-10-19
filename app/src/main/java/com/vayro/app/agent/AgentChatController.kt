@@ -32,11 +32,17 @@ DELIVERY CONTRACT — whenever the user asks you to build, create, or update an 
 1. Finish the whole job in ONE continuous turn: understand the request, make a short plan, build everything, verify the result, and deliver it in your final message. Never stop after only writing code, and never end with "tell me when to continue".
 2. Speed defaults: when GitHub is connected, prefer building with GitHub CI / GitHub Actions instead of slow on-device builds. Skip unit tests and Play Store listing preparation unless the user explicitly asks for them.
 3. Your FINAL message must contain the deliverable itself:
-   - Android app: the workspace-relative path of the built APK file, for example: app/build/outputs/apk/debug/app-debug.apk — the app turns that path into an Install/Share card automatically.
+   - Android app: the ABSOLUTE path of the built APK file, starting with the project root, for example: /workspace/<project>/app/build/outputs/apk/debug/app-debug.apk — never report a build-dir-relative path (like app/build/outputs/...) on its own; the app turns the absolute path into an Install/Share card automatically.
    - Website: push the finished site to the connected GitHub account, enable GitHub Pages for that repository (GitHub API: POST /repos/{owner}/{repo}/pages with a JSON body {"source": {"branch": "<the branch you pushed>", "path": "/"}}), wait until it is live, and include the full https:// page URL in the final message — the app turns it into an openable link card automatically.
 4. If a build fails, fix the problem and retry — at most 2 automatic fix attempts. If it still fails, say plainly, in simple English, exactly where it stopped and what the error is. Never claim success without a real built file or a real live URL.
 5. Always reply in simple, easy English. Short sentences. Explain any technical word in one short line.
+6. Conversation: if the user's message is conversation, a greeting, or a question that needs no tools and changes nothing, reply directly and briefly as chat. Never ask permission to reply, never emit a plan for talk. Permissions are requested only at the moment a real command/file action is about to run.
 </delivery_contract>"""
+
+        const val CONVERSATION_INSTRUCTION = """<conversation>
+If the user's message is conversation, a greeting, or a question that needs no tools and changes nothing, reply directly and briefly as chat. Never ask permission to reply, never emit a plan for talk. Permissions are requested only at the moment a real command/file action is about to run.
+For this turn: answer directly in simple, easy English. Do not use tools, do not inspect files, do not produce a plan or roadmap.
+</conversation>"""
     }
 
     /**
@@ -132,14 +138,22 @@ CRITICAL INSTRUCTIONS FOR UNIFIED MODE PHASE 1:
         attachments: List<ChatAttachment>,
         guestRoot: String,
         skillContext: String = "",
+        conversational: Boolean = false,
     ): String = buildString {
         appendLine(requestText)
-        if (modeInstruction.isNotBlank()) {
+        if (conversational) {
+            // U9: plain talk gets the lightest prompt — no mode wrap, no
+            // delivery contract, no plan ceremony.
             appendLine()
-            appendLine(modeInstruction)
+            appendLine(CONVERSATION_INSTRUCTION)
+        } else {
+            if (modeInstruction.isNotBlank()) {
+                appendLine()
+                appendLine(modeInstruction)
+            }
+            appendLine()
+            appendLine(DELIVERY_CONTRACT)
         }
-        appendLine()
-        appendLine(DELIVERY_CONTRACT)
         if (mentionedPaths.isNotEmpty()) {
             appendLine()
             appendLine("<mentioned_files>")

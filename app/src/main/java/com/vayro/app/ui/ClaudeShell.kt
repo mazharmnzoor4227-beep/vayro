@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -1593,6 +1594,7 @@ internal fun ChatsScreen(
             } else {
                 LazyColumn(
                     Modifier.weight(1f).fillMaxWidth(),
+                    state = rememberSaveable(saver = LazyListState.Saver, key = "chats-list-state") { LazyListState() },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                 ) {
                     items(visible, key = { it.id }) { project ->
@@ -1834,8 +1836,11 @@ internal fun ClaudeSettingsHome(
             }
             SerifText("Settings", fontSize = 21, modifier = Modifier.align(Alignment.Center))
         }
+        // U8b: saveable list state — Back from a settings page returns
+        // to the exact scroll position, not the top.
         LazyColumn(
             Modifier.fillMaxSize(),
+            state = rememberSaveable(saver = LazyListState.Saver, key = "settings-home-list-state") { LazyListState() },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -2216,6 +2221,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
         }
         LazyColumn(
             Modifier.fillMaxSize(),
+            state = rememberSaveable(saver = LazyListState.Saver, key = "voice-settings-list-state") { LazyListState() },
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -201,6 +202,7 @@ fun SkillsScreen(
             // ==================== SKILLS TAB ====================
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
+                state = rememberSaveable(saver = LazyListState.Saver, key = "skills-tab-list-state") { LazyListState() },
                 contentPadding = PaddingValues(18.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -440,6 +442,7 @@ fun SkillsScreen(
             // ==================== MCP PLATFORM TAB ====================
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
+                state = rememberSaveable(saver = LazyListState.Saver, key = "mcp-tab-list-state") { LazyListState() },
                 contentPadding = PaddingValues(18.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
