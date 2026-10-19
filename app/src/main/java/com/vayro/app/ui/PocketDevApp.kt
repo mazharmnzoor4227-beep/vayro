@@ -8944,7 +8944,6 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private fun DeliveredApkCard(
     apkPath: String,
     loadData: suspend (String) -> DeliveredApkData?,
