@@ -377,21 +377,28 @@ object AttachmentIntake {
             while (true) {
                 val entry = zip.nextEntry ?: break
                 totalEntries++
-                if (totalEntries <= MAX_ZIP_ENTRIES) {
-                    entries += ZipEntryInfo(entry.name, entry.size, entry.isDirectory)
-                }
-                if (!entry.isDirectory && contents.size < MAX_ZIP_TEXT_FILES &&
-                    isTextLike(entry.name) && entry.size in 0..MAX_ZIP_TEXT_FILE_BYTES
-                ) {
-                    val data = readBounded(zip, MAX_ZIP_TEXT_CHARS_EACH * 2)
-                    val text = String(data, Charsets.UTF_8)
-                    contents[entry.name] = if (text.length > MAX_ZIP_TEXT_CHARS_EACH) {
-                        text.substring(0, MAX_ZIP_TEXT_CHARS_EACH)
-                    } else {
-                        text
+                // NOTE: entry.size is -1 at this point for archives
+                // whose sizes live in data descriptors (many real-world
+                // zips) — never gate reads on it. The entry's real
+                // size is only known after it has been read through,
+                // so the tree entry is recorded AFTER closeEntry.
+                val entryName = entry.name
+                val entryIsDir = entry.isDirectory
+                if (!entryIsDir && contents.size < MAX_ZIP_TEXT_FILES && isTextLike(entryName)) {
+                    val data = readBounded(zip, MAX_ZIP_TEXT_FILE_BYTES.toInt())
+                    if (data.size <= MAX_ZIP_TEXT_FILE_BYTES) {
+                        val text = String(data, Charsets.UTF_8)
+                        contents[entryName] = if (text.length > MAX_ZIP_TEXT_CHARS_EACH) {
+                            text.substring(0, MAX_ZIP_TEXT_CHARS_EACH)
+                        } else {
+                            text
+                        }
                     }
                 }
                 zip.closeEntry()
+                if (totalEntries <= MAX_ZIP_ENTRIES) {
+                    entries += ZipEntryInfo(entryName, entry.size, entryIsDir)
+                }
             }
         }
         if (totalEntries > MAX_ZIP_ENTRIES) {
