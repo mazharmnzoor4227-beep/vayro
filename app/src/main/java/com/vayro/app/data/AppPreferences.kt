@@ -498,6 +498,7 @@ class AppPreferences(private val context: Context) {
                 put("id", m.id)
                 put("fromUser", m.fromUser)
                 put("text", m.text)
+                m.pastedText?.takeIf { it.isNotBlank() }?.let { put("pastedText", it) }
                 put("createdAt", m.createdAt.toString())
                 put("attachments", JSONArray().apply {
                     m.attachments.forEach { attachment ->
@@ -617,6 +618,7 @@ class AppPreferences(private val context: Context) {
                     id = obj.getString("id"),
                     fromUser = obj.getBoolean("fromUser"),
                     text = obj.getString("text"),
+                    pastedText = obj.optString("pastedText").ifBlank { null },
                     createdAt = runCatching { Instant.parse(obj.getString("createdAt")) }
                         .getOrDefault(Instant.now()),
                     attachments = obj.optJSONArray("attachments")?.let { attachments ->

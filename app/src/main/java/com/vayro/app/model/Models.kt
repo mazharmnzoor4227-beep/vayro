@@ -518,6 +518,10 @@ data class ChatMessage(
     val text: String,
     val createdAt: Instant = Instant.now(),
     val attachments: List<ChatAttachment> = emptyList(),
+    // v3.2.40 (Scope F): long pasted content carried as the message's
+    // TXT chip — rendered as a card; the model received it in full
+    // inside the request text at send time.
+    val pastedText: String? = null,
     val workItems: List<ActivityItem> = emptyList(),
     val workedMillis: Long = 0L,
     val roadmap: ActiveRoadmap? = null,

@@ -12,7 +12,12 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
@@ -35,6 +40,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -133,6 +139,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -177,6 +184,7 @@ import com.vayro.app.ui.voice.VoiceRecognizer
 import java.io.File
 import java.util.Calendar
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
@@ -1030,6 +1038,7 @@ private fun HomeMessageRow(
     message: com.vayro.app.data.HomeChatMessage,
     movedProjectName: String?,
     onOpenInWork: (String) -> Unit,
+    onOpenPasted: (String) -> Unit = {},
 ) {
     when (message.kind) {
         "system" -> {
@@ -1127,18 +1136,39 @@ private fun HomeMessageRow(
                         // v3.2.39 (Scope 5): the workspace renders user
                         // messages through MarkdownText with the copy circle
                         // at the bottom-end — home now does exactly the same.
-                        Box {
-                            SelectionContainer {
-                                MarkdownText(
-                                    markdown = message.text,
-                                    modifier = Modifier.padding(start = 14.dp, end = 44.dp, top = 10.dp, bottom = 10.dp),
+                        Column {
+                            if (message.text.isNotBlank()) {
+                                Box {
+                                    SelectionContainer {
+                                        MarkdownText(
+                                            markdown = message.text,
+                                            modifier = Modifier.padding(start = 14.dp, end = 44.dp, top = 10.dp, bottom = 10.dp),
+                                        )
+                                    }
+                                    MessageCopyButton(
+                                        text = if (message.pastedText.isNotBlank()) message.modelText() else message.text,
+                                        fromUser = true,
+                                        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 4.dp),
+                                    )
+                                }
+                            } else if (message.pastedText.isNotBlank()) {
+                                // Chip-only message: copy still yields the
+                                // full content, from the card itself.
+                                MessageCopyButton(
+                                    text = message.modelText(),
+                                    fromUser = true,
+                                    modifier = Modifier.align(Alignment.End).padding(end = 4.dp, top = 4.dp),
                                 )
                             }
-                            MessageCopyButton(
-                                text = message.text,
-                                fromUser = true,
-                                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 4.dp),
-                            )
+                            if (message.pastedText.isNotBlank()) {
+                                // v3.2.40 (Scope F): the sent message shows
+                                // the same TXT card; tapping opens the
+                                // full-screen viewer.
+                                PastedContentCard(
+                                    onOpen = { onOpenPasted(message.pastedText) },
+                                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -1247,7 +1277,7 @@ internal fun ChatHomeScreen(
     appUpdateAvailable: Boolean,
     onOpenDrawer: () -> Unit,
     onOpenUpdate: () -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (String, String?) -> Unit,
     onAttach: (List<Uri>) -> Unit,
     onSelectAgent: (AgentKind) -> Unit,
     onMoreAgents: () -> Unit,
@@ -1256,6 +1286,9 @@ internal fun ChatHomeScreen(
     onVoiceCall: () -> Unit = {},
     // v3.2.37 (Parts D/F/F2): home thread + work actions.
     homeMessages: List<com.vayro.app.data.HomeChatMessage> = emptyList(),
+    // v3.2.40 (Scope I/I2): the active thread's id, so its scroll
+    // position is saved/restored per thread (ChatScrollStore).
+    homeThreadId: String = "",
     homeSending: Boolean = false,
     homeProviderName: String = "",
     onNewChat: () -> Unit = {},
@@ -1276,6 +1309,9 @@ internal fun ChatHomeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var prompt by rememberSaveable { mutableStateOf("") }
+    // v3.2.40 (Scope F): the TXT chip's content + the viewer target.
+    var pastedText by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewingPasted by remember { mutableStateOf<String?>(null) }
     var sheetOpen by rememberSaveable { mutableStateOf(false) }
     var workSheetOpen by rememberSaveable { mutableStateOf(false) }
     var agentSheetOpen by rememberSaveable { mutableStateOf(false) }
@@ -1433,6 +1469,9 @@ internal fun ChatHomeScreen(
             onDismiss = { agentSheetOpen = false },
         )
     }
+    viewingPasted?.let { pasted ->
+        PastedContentViewerDialog(text = pasted, onDismiss = { viewingPasted = null })
+    }
     if (modelPickerOpen) {
         ChatModelPickerSheet(
             choices = chatChoices,
@@ -1533,17 +1572,50 @@ internal fun ChatHomeScreen(
             else -> "Coffee and Kodex time?"
         }
     }
-    val canSend = prompt.isNotBlank()
+    val canSend = prompt.isNotBlank() || pastedText != null
     val hasThread = homeMessages.isNotEmpty()
     // v3.2.38 (Part I): thread scroll survives leaving to Work and back,
     // like every other list in the shell (U8b pattern).
     val threadListState = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
         androidx.compose.foundation.lazy.LazyListState()
     }
+    // v3.2.40 (Scope I/I2): the thread's scroll position belongs to
+    // the user. It is captured per thread into the process-level
+    // ChatScrollStore; opening or returning to a thread restores its
+    // saved position (a thread with none starts at its end, as
+    // before). The old effect scrolled to the end on EVERY message
+    // count / sending change — including a reply finishing while the
+    // user was reading up-list, and every return to this screen.
+    val homeScrollKey = "home:$homeThreadId"
+    LaunchedEffect(threadListState, homeScrollKey) {
+        snapshotFlow {
+            threadListState.firstVisibleItemIndex to threadListState.firstVisibleItemScrollOffset
+        }.collect { (index, offset) ->
+            if (homeThreadId.isNotBlank()) ChatScrollStore.save(homeScrollKey, index, offset)
+        }
+    }
+    LaunchedEffect(homeThreadId) {
+        val savedScroll = ChatScrollStore.get(homeScrollKey)
+        if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0)) {
+            threadListState.scrollToItem(savedScroll.first, savedScroll.second)
+        } else if (homeMessages.isNotEmpty()) {
+            threadListState.scrollToItem(homeMessages.lastIndex)
+        }
+    }
+    var lastHomeMessageCount by rememberSaveable { mutableStateOf(0) }
     LaunchedEffect(homeMessages.size, homeSending) {
         if (hasThread) {
-            val last = (homeMessages.size - 1 + if (homeSending) 1 else 0).coerceAtLeast(0)
-            threadListState.animateScrollToItem(last)
+            // Follow new content ONLY for the user's own send (jump
+            // to latest, as always) or when he is already at the
+            // bottom. A reply landing while he reads up-list moves
+            // nothing — the Scope H arrow is his way back.
+            val ownSend = homeMessages.size > lastHomeMessageCount &&
+                homeMessages.lastOrNull()?.fromUser == true
+            lastHomeMessageCount = homeMessages.size
+            if (ownSend || !threadListState.canScrollForward) {
+                val last = (homeMessages.size - 1 + if (homeSending) 1 else 0).coerceAtLeast(0)
+                threadListState.animateScrollToItem(last)
+            }
         }
     }
 
@@ -1623,9 +1695,10 @@ internal fun ChatHomeScreen(
                 }
             }
         } else {
+          Box(Modifier.weight(1f).fillMaxWidth()) {
             androidx.compose.foundation.lazy.LazyColumn(
                 state = threadListState,
-                modifier = Modifier.weight(1f).fillMaxWidth().then(swipeToWorkModifier).padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxSize().then(swipeToWorkModifier).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 10.dp),
             ) {
@@ -1638,6 +1711,7 @@ internal fun ChatHomeScreen(
                                 it.createdAtMillis >= message.createdAtMillis
                         }?.projectName,
                         onOpenInWork = onOpenInWork,
+                        onOpenPasted = { viewingPasted = it },
                     )
                 }
                 if (homeSending) {
@@ -1656,6 +1730,24 @@ internal fun ChatHomeScreen(
                     }
                 }
             }
+            // v3.2.40 (Scope H): floating scroll-to-bottom arrow for
+            // the home thread — same rule and behaviour as Work chat.
+            val homeLayoutInfo = threadListState.layoutInfo
+            ScrollToBottomButton(
+                visible = isFarFromBottom(
+                    totalItems = homeLayoutInfo.totalItemsCount,
+                    lastVisibleIndex = homeLayoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                    visibleCount = homeLayoutInfo.visibleItemsInfo.size,
+                ),
+                onClick = {
+                    scope.launch {
+                        val total = threadListState.layoutInfo.totalItemsCount
+                        if (total > 0) threadListState.animateScrollToItem(total - 1, Int.MAX_VALUE)
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+            )
+          }
         }
         Column(
             Modifier
@@ -1676,9 +1768,11 @@ internal fun ChatHomeScreen(
                     onSend = { spoken ->
                         val merged = listOf(prompt, spoken).filter { it.isNotBlank() }.joinToString(" ").trim()
                         voiceInputActive = false
-                        if (merged.isNotBlank()) {
+                        if (merged.isNotBlank() || pastedText != null) {
                             prompt = ""
-                            onSend(merged)
+                            val chip = pastedText
+                            pastedText = null
+                            onSend(merged, chip)
                         }
                     },
                     onError = { message ->
@@ -1688,6 +1782,49 @@ internal fun ChatHomeScreen(
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
             } else {
+                // v3.2.40 (Scope F/F2): two-state bottom area, cloned
+                // from the user's Claude reference. The text field
+                // NEVER changes parent — only its row siblings and
+                // the controls row below animate — so focus and the
+                // keyboard survive the state flip. States: empty +
+                // keyboard closed = ONE row (+, field, mic, voice);
+                // keyboard open OR content present = the field's row
+                // plus the controls row (+, provider-model pill,
+                // mic, send/voice) under it.
+                val imeOpen = WindowInsets.ime.getBottom(androidx.compose.ui.platform.LocalDensity.current) > 0
+                val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null
+                val sendOrVoice: @Composable () -> Unit = {
+                    if (canSend) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(KodexClay, CircleShape)
+                                .clickable {
+                                    val text = prompt
+                                    val pasted = pastedText
+                                    prompt = ""
+                                    pastedText = null
+                                    onSend(text, pasted)
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Outlined.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
+                        }
+                    } else {
+                        // Waveform button = voice call (unchanged
+                        // behavior); the host presents the call over
+                        // THIS home thread (Part F2 routing).
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(KodexClay, CircleShape)
+                                .clickable(onClick = onVoiceCall),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Filled.GraphicEq, contentDescription = "Voice call", tint = Color.White, modifier = Modifier.size(19.dp))
+                        }
+                    }
+                }
                 Surface(
                     shape = RoundedCornerShape(24.dp),
                     color = MaterialTheme.colorScheme.surface,
@@ -1696,13 +1833,38 @@ internal fun ChatHomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-                        BasicTextField(
-                            value = prompt,
-                            onValueChange = { prompt = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 6.dp)
-                                .heightIn(min = 26.dp, max = 130.dp),
+                        if (pastedText != null) {
+                            PastedContentChip(
+                                onOpen = { viewingPasted = pastedText },
+                                onRemove = { pastedText = null },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            if (!controlsVisible) {
+                                IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
+                                    Icon(Icons.Outlined.Add, contentDescription = "Add to chat", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            BasicTextField(
+                                value = prompt,
+                                onValueChange = { newText ->
+                                    // Scope F: a >2000-char paste becomes
+                                    // the TXT chip; the field keeps the
+                                    // typed text only.
+                                    val split = splitPasteChange(prompt, newText, pastedText)
+                                    prompt = split.fieldText
+                                    pastedText = split.chipText
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                // Scope F2: grows to 8 whole lines, then
+                                // scrolls inside — maxLines keeps the
+                                // height a whole number of line heights,
+                                // so no line is ever half-clipped.
+                                minLines = 1,
+                                maxLines = COMPOSER_MAX_LINES,
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 15.5.sp,
@@ -1721,7 +1883,19 @@ internal fun ChatHomeScreen(
                                     innerTextField()
                                 }
                             },
-                        )
+                            )
+                            if (!controlsVisible) {
+                                IconButton(onClick = onStartVoiceInput, modifier = Modifier.size(38.dp)) {
+                                    Icon(Icons.Outlined.Mic, contentDescription = "Voice input", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                sendOrVoice()
+                            }
+                        }
+                        AnimatedVisibility(
+                            visible = controlsVisible,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically(),
+                        ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
                                 Icon(Icons.Outlined.Add, contentDescription = "Add to chat", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1756,34 +1930,8 @@ internal fun ChatHomeScreen(
                             IconButton(onClick = onStartVoiceInput, modifier = Modifier.size(38.dp)) {
                                 Icon(Icons.Outlined.Mic, contentDescription = "Voice input", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (canSend) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(KodexClay, CircleShape)
-                                        .clickable {
-                                            val text = prompt
-                                            prompt = ""
-                                            onSend(text)
-                                        },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(Icons.Outlined.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
-                                }
-                            } else {
-                                // Waveform button = voice call (unchanged
-                                // behavior); the host now presents the call
-                                // over THIS home thread (Part F2 routing).
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(KodexClay, CircleShape)
-                                        .clickable(onClick = onVoiceCall),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(Icons.Filled.GraphicEq, contentDescription = "Voice call", tint = Color.White, modifier = Modifier.size(19.dp))
-                                }
-                            }
+                            sendOrVoice()
+                        }
                         }
                     }
                 }

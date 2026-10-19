@@ -23,7 +23,14 @@ data class HomeChatMessage(
     val kind: String = "text",
     val taskText: String = "",
     val projectName: String = "",
-)
+    // v3.2.40 (Scope F): long pasted content carried as the message's
+    // TXT chip — rendered as a card, sent to the model in full.
+    val pastedText: String = "",
+) {
+    /** The full text the model receives: typed text + pasted content. */
+    fun modelText(): String =
+        listOf(text.trim(), pastedText.trim()).filter { it.isNotBlank() }.joinToString("\n\n")
+}
 
 /** A persisted home conversation. Home threads are NOT workspace projects. */
 data class HomeThread(
@@ -63,6 +70,7 @@ class HomeChatStore(context: Context) {
                                 kind = m.optString("kind").ifBlank { "text" },
                                 taskText = m.optString("taskText"),
                                 projectName = m.optString("projectName"),
+                                pastedText = m.optString("pastedText"),
                             ),
                         )
                     }
@@ -93,7 +101,8 @@ class HomeChatStore(context: Context) {
                             .put("createdAtMillis", m.createdAtMillis)
                             .put("kind", m.kind)
                             .put("taskText", m.taskText)
-                            .put("projectName", m.projectName),
+                            .put("projectName", m.projectName)
+                            .put("pastedText", m.pastedText),
                     )
                 }
                 array.put(

@@ -229,6 +229,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -749,7 +751,7 @@ fun PocketDevApp(
         state.activeProject != null && state.workspaceVisible -> WorkspaceScreen(
             state = state,
             onBack = viewModel::closeProject,
-            onSend = viewModel::sendPrompt,
+            onSend = { text, pasted -> viewModel.sendPrompt(text, pasted) },
             onStop = viewModel::stopTask,
             onApproval = viewModel::answerApproval,
             onRefreshFiles = viewModel::refreshProjectFiles,
@@ -2782,7 +2784,7 @@ private fun RootScreenHost(
                     // (Part F2); a task gets the "Open in Work" handoff card
                     // instead of a silent teleport into a quick project.
                     // Attachments still go to Work (they need a workspace).
-                    onSend = { text -> viewModel.sendHomeMessage(text) },
+                    onSend = { text, pasted -> viewModel.sendHomeMessage(text, pasted) },
                     onAttach = onHomeAttach,
                     onVoiceCall = { startHomeCall() },
                     onSelectAgent = viewModel::selectAgent,
@@ -2790,6 +2792,7 @@ private fun RootScreenHost(
                     onOpenConnectors = { screen = RootScreen.CONNECTORS },
                     onPushToGitHub = onPushRequest,
                     homeMessages = activeHomeThread?.messages ?: emptyList(),
+                    homeThreadId = activeHomeThread?.id ?: "",
                     homeSending = state.homeSending,
                     homeProviderName = state.homeChatProviderName,
                     onNewChat = { viewModel.newHomeThread() },
@@ -5436,7 +5439,7 @@ private fun ReadOnlyProjectScreen(
 private fun WorkspaceScreen(
     state: AppUiState,
     onBack: () -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (String, String?) -> Unit,
     onStop: () -> Unit,
     onApproval: (Boolean) -> Unit,
     onRefreshFiles: () -> Unit,
@@ -5565,9 +5568,50 @@ private fun WorkspaceScreen(
         (if (state.pendingApproval != null) 1 else 0) +
         (if (!state.isRunning && state.changes.isNotEmpty()) 1 else 0)
 
+    // v3.2.40 (Scope I/I2): the chat's scroll position belongs to the
+    // user. It is captured continuously into the process-level
+    // ChatScrollStore (per project+chat), because the events that kept
+    // throwing the chat to the top — the Activity sheet cycle, an app
+    // background/foreground round trip, a Chat<->Work round trip —
+    // tear down or rebuild this screen's composition, and a state held
+    // only in this screen's `remember` (chatListState above) cannot
+    // survive all of them.
+    val chatScrollKey = "ws:${state.activeProject?.id ?: ""}:${state.activeChatId ?: ""}"
+    LaunchedEffect(chatListState, chatScrollKey) {
+        snapshotFlow {
+            chatListState.firstVisibleItemIndex to chatListState.firstVisibleItemScrollOffset
+        }
+            .collect { (index, offset) -> ChatScrollStore.save(chatScrollKey, index, offset) }
+    }
+
     LaunchedEffect(state.activeChatId) {
         userScrolledUp = false
-        if (chatItemCount > 0) chatListState.scrollToItem(chatItemCount - 1)
+        // A saved position for THIS chat wins: returning to the chat
+        // (re-entry, background return, Work round trip) restores
+        // exactly where the user left it. Only a chat with no saved
+        // position starts at its end, as before.
+        val savedScroll = ChatScrollStore.get(chatScrollKey)
+        if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0)) {
+            chatListState.scrollToItem(savedScroll.first, savedScroll.second)
+        } else if (chatItemCount > 0) {
+            chatListState.scrollToItem(chatItemCount - 1)
+        }
+    }
+
+    // Scope I: closing a sheet/dialog over the chat must hand back the
+    // exact position from the moment it opened — the store captured
+    // it continuously while the sheet was up (scrolling was locked).
+    // Restore only if the live state actually came back zeroed.
+    LaunchedEffect(chatOverlayOpen) {
+        if (!chatOverlayOpen) {
+            val savedScroll = ChatScrollStore.get(chatScrollKey)
+            if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0) &&
+                chatListState.firstVisibleItemIndex == 0 &&
+                chatListState.firstVisibleItemScrollOffset == 0
+            ) {
+                chatListState.scrollToItem(savedScroll.first, savedScroll.second)
+            }
+        }
     }
 
     // When the user actively scrolls/touches the screen, detect if they scrolled up to read thinking/messages.
@@ -6783,7 +6827,7 @@ private fun ChatTab(
     changes: List<ChangeItem> = emptyList(),
     isRunning: Boolean,
     streamingMessageId: String?,
-    onSend: (String) -> Unit,
+    onSend: (String, String?) -> Unit,
     onStop: () -> Unit,
     onApproval: (Boolean) -> Unit,
     listState: LazyListState,
@@ -6856,6 +6900,9 @@ private fun ChatTab(
         onDispose { view.keepScreenOn = false }
     }
     var prompt by rememberSaveable { mutableStateOf("") }
+    // v3.2.40 (Scope F): the TXT chip's content + the viewer target.
+    var pastedText by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewingPasted by remember { mutableStateOf<String?>(null) }
     var inputFocused by remember { mutableStateOf(false) }
     var inputLineCount by remember { mutableStateOf(1) }
     var inputSectionHeight by remember { mutableStateOf(0.dp) }
@@ -7258,6 +7305,7 @@ private fun ChatTab(
                                     onApproveAndBuildRoadmap(r, null)
                                 }
                             },
+                            onOpenPasted = { viewingPasted = it },
                         )
                     }
                 }
@@ -7292,6 +7340,26 @@ private fun ChatTab(
                     }
                 }
             }
+            // v3.2.40 (Scope H): floating scroll-to-bottom arrow — in
+            // the list layer only (under every sheet/dialog), shown
+            // when a screenful or more sits below the viewport; one
+            // tap animates to the very end (working row included).
+            // Streaming never auto-yanks: this arrow is the way back.
+            val wsLayoutInfo = listState.layoutInfo
+            ScrollToBottomButton(
+                visible = !anyOverlayOpen && isFarFromBottom(
+                    totalItems = wsLayoutInfo.totalItemsCount,
+                    lastVisibleIndex = wsLayoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                    visibleCount = wsLayoutInfo.visibleItemsInfo.size,
+                ),
+                onClick = {
+                    chatScope.launch {
+                        val total = listState.layoutInfo.totalItemsCount
+                        if (total > 0) listState.animateScrollToItem(total - 1, Int.MAX_VALUE)
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
+            )
         }
         if (readOnly) {
             Surface(
@@ -7359,7 +7427,7 @@ private fun ChatTab(
                     }
                 }
 
-                val canSend = prompt.isNotBlank() || pendingAttachments.isNotEmpty()
+                val canSend = prompt.isNotBlank() || pendingAttachments.isNotEmpty() || pastedText != null
 
                 if (mentionCandidates.isNotEmpty()) {
                     Surface(
@@ -7501,9 +7569,10 @@ private fun ChatTab(
                         onSend = { spoken ->
                             val merged = listOf(prompt, spoken).filter { it.isNotBlank() }.joinToString(" ").trim()
                             voiceInputActive = false
-                            if (merged.isNotBlank()) {
-                                onSend(merged)
+                            if (merged.isNotBlank() || pastedText != null) {
+                                onSend(merged, pastedText)
                                 prompt = ""
+                                pastedText = null
                                 mentionQuery = null
                             }
                         },
@@ -7513,7 +7582,81 @@ private fun ChatTab(
                         },
                         modifier = Modifier.padding(vertical = 4.dp),
                     )
-                } else Surface(
+                } else {
+                // v3.2.40 (Scope F/F2): two-state bottom area, cloned
+                // from the user's Claude reference — the same contract
+                // as the home composer: the text field never changes
+                // parent (focus and the keyboard survive the flip);
+                // empty + keyboard closed shows ONE row (+, field,
+                // mic, voice); editing or content present adds the
+                // controls row (tools +, provider pill, mic,
+                // send/stop) under the field.
+                val imeOpen = WindowInsets.ime.getBottom(density) > 0
+                val controlsVisible = imeOpen || prompt.isNotEmpty() || pastedText != null
+                val sendStopButton: @Composable () -> Unit = {
+                    if (isRunning) {
+                        Box(
+                            modifier = Modifier
+                                .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                .clickable(onClick = onStop),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.error,
+                                        shape = CircleShape,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Stop,
+                                    contentDescription = "Stop AI task",
+                                    tint = MaterialTheme.colorScheme.onError,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                .clickable(
+                                    enabled = true,
+                                    onClick = {
+                                        if (canSend) {
+                                            onSend(prompt, pastedText)
+                                            prompt = ""
+                                            pastedText = null
+                                            mentionQuery = null
+                                        } else {
+                                            onStartVoiceCall()
+                                        }
+                                    },
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.primary,
+                                        shape = CircleShape,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = if (canSend) Icons.Default.ArrowUpward else Icons.Default.GraphicEq,
+                                    contentDescription = if (canSend) "Send" else "Voice mode",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(19.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                Surface(
                     shape = RoundedCornerShape(26.dp),
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
@@ -7524,63 +7667,59 @@ private fun ChatTab(
                         .fillMaxWidth()
                         .animateContentSize(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)),
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(
-                            onClick = { toolsOpen = !toolsOpen },
-                            modifier = Modifier.size(40.dp).align(if (inputLineCount > 1) Alignment.Bottom else Alignment.CenterVertically),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .graphicsLayer { rotationZ = plusRotation },
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Column {
+                        if (pastedText != null) {
+                            PastedContentChip(
+                                onOpen = { viewingPasted = pastedText },
+                                onRemove = { pastedText = null },
+                                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 6.dp),
                             )
                         }
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        Row(
                             modifier = Modifier
-                                .clickable { showAgentSheet = true }
-                                .align(if (inputLineCount > 1) Alignment.Bottom else Alignment.CenterVertically),
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.Bottom,
                         ) {
-                            Row(
-                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    agentKind.title.removeSuffix(" CLI").removeSuffix(" Harness"),
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                )
-                                Icon(
-                                    Icons.Default.KeyboardArrowDown,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(15.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                            if (!controlsVisible) {
+                                IconButton(
+                                    onClick = { toolsOpen = !toolsOpen },
+                                    modifier = Modifier.size(40.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .graphicsLayer { rotationZ = plusRotation },
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
-                        }
-                        BasicTextField(
-                            value = prompt,
-                            onValueChange = {
-                                prompt = it
-                                updateMentionQuery(it)
-                            },
-                            onTextLayout = { inputLineCount = it.lineCount },
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 4.dp)
-                                .heightIn(min = 24.dp, max = 150.dp)
-                                .onFocusChanged { inputFocused = it.isFocused },
-                            maxLines = if (inputFocused) Int.MAX_VALUE else 1,
+                            BasicTextField(
+                                value = prompt,
+                                onValueChange = { newText ->
+                                    // Scope F: a >2000-char paste becomes
+                                    // the TXT chip; the field keeps the
+                                    // typed text only.
+                                    val split = splitPasteChange(prompt, newText, pastedText)
+                                    prompt = split.fieldText
+                                    pastedText = split.chipText
+                                    updateMentionQuery(split.fieldText)
+                                },
+                                onTextLayout = { inputLineCount = it.lineCount },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(horizontal = 4.dp)
+                                    .onFocusChanged { inputFocused = it.isFocused },
+                                // Scope F2: grows to 8 whole lines in
+                                // EVERY state — the old rule (1 line
+                                // unfocused, unlimited focused, 150dp
+                                // cap) is what half-clipped lines and
+                                // made scrolling jump. Past the cap the
+                                // field scrolls inside, caret visible.
+                                minLines = 1,
+                                maxLines = COMPOSER_MAX_LINES,
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 15.sp,
@@ -7603,84 +7742,92 @@ private fun ChatTab(
                                 }
                             },
                         )
-                        IconButton(
-                            onClick = onStartVoiceInput,
-                            modifier = Modifier.size(40.dp).align(if (inputLineCount > 1) Alignment.Bottom else Alignment.CenterVertically),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Mic,
-                                contentDescription = "Voice input",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-
-                        if (isRunning) {
-                            Box(
-                                modifier = Modifier
-                                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                                    .clickable(onClick = onStop)
-                                    .align(Alignment.Bottom),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(
-                                            color = MaterialTheme.colorScheme.error,
-                                            shape = CircleShape,
-                                        ),
-                                    contentAlignment = Alignment.Center,
+                            if (!controlsVisible) {
+                                IconButton(
+                                    onClick = onStartVoiceInput,
+                                    modifier = Modifier.size(40.dp),
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.Stop,
-                                        contentDescription = "Stop AI task",
-                                        tint = MaterialTheme.colorScheme.onError,
-                                        modifier = Modifier.size(18.dp),
+                                        imageVector = Icons.Default.Mic,
+                                        contentDescription = "Voice input",
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
+                                sendStopButton()
                             }
-                        } else {
-                            Box(
+                        }
+                        AnimatedVisibility(
+                            visible = controlsVisible,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically(),
+                        ) {
+                            Row(
                                 modifier = Modifier
-                                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                                    .clickable(
-                                        enabled = true,
-                                        onClick = {
-                                            if (canSend) {
-                                                onSend(prompt)
-                                                prompt = ""
-                                                mentionQuery = null
-                                            } else {
-                                                onStartVoiceCall()
-                                            }
-                                        },
-                                    )
-                                    .align(Alignment.Bottom),
-                                contentAlignment = Alignment.Center,
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(
-                                            color = MaterialTheme.colorScheme.primary,
-                                            shape = CircleShape,
-                                        ),
-                                    contentAlignment = Alignment.Center,
+                                IconButton(
+                                    onClick = { toolsOpen = !toolsOpen },
+                                    modifier = Modifier.size(40.dp),
                                 ) {
                                     Icon(
-                                        imageVector = if (canSend) Icons.Default.ArrowUpward else Icons.Default.GraphicEq,
-                                        contentDescription = if (canSend) "Send" else "Voice mode",
-                                        tint = MaterialTheme.colorScheme.onPrimary,
-                                        modifier = Modifier.size(19.dp),
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .graphicsLayer { rotationZ = plusRotation },
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.clickable { showAgentSheet = true },
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            agentKind.title.removeSuffix(" CLI").removeSuffix(" Harness"),
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                        )
+                                        Icon(
+                                            Icons.Default.KeyboardArrowDown,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(15.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.weight(1f))
+                                IconButton(
+                                    onClick = onStartVoiceInput,
+                                    modifier = Modifier.size(40.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Mic,
+                                        contentDescription = "Voice input",
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                sendStopButton()
                             }
                         }
                     }
                 }
+                }
             }
         }
+    }
+    // Scope F: full-screen viewer for a pasted-content card/chip.
+    viewingPasted?.let { pasted ->
+        PastedContentViewerDialog(text = pasted, onDismiss = { viewingPasted = null })
     }
     if (voiceCallActive) {
         VoiceCallScreen(
@@ -7688,7 +7835,7 @@ private fun ChatTab(
             messages = messages,
             isRunning = isRunning,
             approval = approval,
-            onSend = onSend,
+            onSend = { text -> onSend(text, null) },
             onApproval = onApproval,
             onApprovalWithLevel = onApprovalWithLevel,
             onClose = { voiceCallActive = false },
@@ -9216,6 +9363,7 @@ private const val MAX_STREAMING_DISPLAY_CHARS = 30_000
 private fun MessageBubble(
     message: ChatMessage,
     isStreaming: Boolean = false,
+    onOpenPasted: (String) -> Unit = {},
     onRunInTerminal: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onSaveAttachment: (ChatAttachment) -> Unit = {},
@@ -9324,6 +9472,16 @@ private fun MessageBubble(
                             AttachmentChip(attachment = attachment, onOpen = { onOpenAttachment(attachment) }, onSave = { onSaveAttachment(attachment) }, onRemove = null)
                         }
                     }
+                }
+
+                if (!message.pastedText.isNullOrBlank()) {
+                    // v3.2.40 (Scope F): the sent message shows the same
+                    // TXT card as the home thread; tapping opens the
+                    // full-screen viewer.
+                    PastedContentCard(
+                        onOpen = { onOpenPasted(message.pastedText!!) },
+                        modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                    )
                 }
 
                 if (!message.fromUser && message.workedMillis > 0L) {

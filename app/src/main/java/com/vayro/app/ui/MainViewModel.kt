@@ -709,7 +709,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val pendingAssistantDeltas = ConcurrentHashMap<String, StringBuilder>()
     private val assistantDeltaFlushJobs = ConcurrentHashMap<String, Job>()
     private val lastAssistantDeltaPersistAtMillis = ConcurrentHashMap<String, Long>()
-    private data class QueuedSessionStart(val projectId: String, val prompt: String, val attachments: List<ChatAttachment>)
+    private data class QueuedSessionStart(
+        val projectId: String,
+        val prompt: String,
+        val attachments: List<ChatAttachment>,
+        // v3.2.40 (Scope F): the bubble's display text + TXT chip, so a
+        // queued start renders exactly like an immediate one.
+        val displayText: String = prompt,
+        val pastedText: String? = null,
+    )
     private val sessionStartQueue = ArrayDeque<QueuedSessionStart>()
     private val failedApiKeyIds = mutableSetOf<String>()
     @Volatile private var lastOpenedAntigravityAuthUrl: String? = null
@@ -4030,15 +4038,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.keepWorkingInBackground = enabled
     }
 
-    fun sendHomeMessage(text: String) {
+    fun sendHomeMessage(text: String, pastedText: String? = null) {
         val trimmed = text.trim()
-        if (trimmed.isBlank() || _state.value.homeSending) return
+        // v3.2.40 (Scope F): a TXT chip alone is a sendable message.
+        val pasted = pastedText?.takeIf { it.isNotBlank() }
+        if ((trimmed.isBlank() && pasted == null) || _state.value.homeSending) return
         val thread = activeHomeThread() ?: run {
             newHomeThread()
             activeHomeThread() ?: return
         }
-        appendHomeMessage(thread.id, com.vayro.app.data.HomeChatMessage(fromUser = true, text = trimmed))
-        if (!isConversationalTurn(trimmed, hasAttachments = false, mentionedPaths = emptyList())) {
+        appendHomeMessage(
+            thread.id,
+            com.vayro.app.data.HomeChatMessage(fromUser = true, text = trimmed, pastedText = pasted ?: ""),
+        )
+        // Classification and the Work handoff see the FULL content
+        // (typed + pasted) — the model does too (modelText()).
+        val fullText = listOf(trimmed, pasted).filterNotNull().filter { it.isNotBlank() }.joinToString("\n\n")
+        if (!isConversationalTurn(fullText, hasAttachments = false, mentionedPaths = emptyList())) {
             // A job, not a chat (Part N: only an unmistakable creation
             // command lands here). Acknowledge in words first; the card
             // below is the action. Nothing is created or sent anywhere
@@ -4057,7 +4073,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     fromUser = false,
                     text = "This is a job for Work",
                     kind = "handoff",
-                    taskText = trimmed,
+                    taskText = fullText,
                 ),
             )
             return
@@ -4081,7 +4097,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val turns = thread.messages.filter { it.kind == "text" }.takeLast(10)
         if (turns.size <= 1) return taskText
         val digest = turns.joinToString("\n") { message ->
-            (if (message.fromUser) "Me: " else "Kodex: ") + message.text
+            (if (message.fromUser) "Me: " else "Kodex: ") + message.modelText()
         }
         return "Context from my chat with you:\n$digest\n\nMy task: $taskText"
     }
@@ -4214,7 +4230,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         try {
             val thread = _state.value.homeThreads.firstOrNull { it.id == threadId } ?: return
             val turns = thread.messages.filter { it.kind == "text" }.takeLast(20).map {
-                ProviderApiClient.ChatTurn(if (it.fromUser) "user" else "assistant", it.text)
+                // Scope F: pasted content reaches the model in full.
+                ProviderApiClient.ChatTurn(if (it.fromUser) "user" else "assistant", it.modelText())
             }
             val switches = mutableListOf<String>()
             var reply: String? = null
@@ -4385,7 +4402,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun sendPrompt(prompt: String) {
+    fun sendPrompt(prompt: String, pastedText: String? = null) {
         if (permissionPolicyEngine.isEmergencyKillSwitchEngaged()) {
             _state.update { it.copy(toastMessage = "Emergency kill switch is ACTIVE — agent sessions are blocked until it is turned off.") }
             return
@@ -4401,11 +4418,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val attachments = state.value.pendingAttachments
-        if ((prompt.isBlank() && attachments.isEmpty()) || state.value.isRunning) return
-        val requestText = prompt.trim().ifBlank { "Please review the attached files." }
+        // v3.2.40 (Scope F): a TXT chip alone is a sendable message.
+        val pasted = pastedText?.takeIf { it.isNotBlank() }
+        if ((prompt.isBlank() && attachments.isEmpty() && pasted == null) || state.value.isRunning) return
+        val typedText = prompt.trim()
+        // The model/runtime receives typed + pasted IN FULL; the
+        // bubble displays the typed text plus the TXT card.
+        val requestText = combinedModelText(typedText, pasted)
+            .ifBlank { "Please review the attached files." }
         MobileHarnessApplication.appScope.launch { runCatching { teamConcurrencyController.evaluateNow() } }
         if (runningSessions.size >= teamConcurrencyController.currentMaxAgents()) {
-            sessionStartQueue.addLast(QueuedSessionStart(project.id, requestText, attachments))
+            sessionStartQueue.addLast(QueuedSessionStart(project.id, requestText, attachments, typedText, pasted))
             val reason = teamConcurrencyController.state.value.throttleReason
             _state.update {
                 it.copy(
@@ -4416,15 +4439,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        beginSession(project, requestText, attachments)
+        beginSession(project, requestText, attachments, displayText = typedText, pastedText = pasted)
     }
 
-    private fun beginSession(project: Project, requestText: String, attachments: List<ChatAttachment>, admissionChecked: Boolean = false) {
+    private fun beginSession(
+        project: Project,
+        requestText: String,
+        attachments: List<ChatAttachment>,
+        admissionChecked: Boolean = false,
+        displayText: String = requestText,
+        pastedText: String? = null,
+    ) {
         if (_state.value.activeProject?.id == project.id && _state.value.isRunning) return
         if (!admissionChecked) {
             MobileHarnessApplication.appScope.launch { runCatching { teamConcurrencyController.evaluateNow() } }
             if (runningSessions.size >= teamConcurrencyController.currentMaxAgents()) {
-                sessionStartQueue.addLast(QueuedSessionStart(project.id, requestText, attachments))
+                sessionStartQueue.addLast(QueuedSessionStart(project.id, requestText, attachments, displayText, pastedText))
                 return
             }
         }
@@ -4442,7 +4472,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val thinkItem = ActivityItem("Think", requestPlanningSummary(requestText, it.agentKind), false, startedAtMillis = System.currentTimeMillis())
             val initialScratchpad = deriveScratchpadItems(it.activeRoadmap, listOf(thinkItem), true)
             it.copy(
-                messages = it.messages + ChatMessage(fromUser = true, text = requestText, attachments = attachments),
+                messages = it.messages + ChatMessage(
+                    fromUser = true,
+                    // Scope F: with a chip, the bubble shows the typed
+                    // text + the TXT card; without one, exactly as before.
+                    text = if (pastedText != null) displayText else displayText.ifBlank { requestText },
+                    attachments = attachments,
+                    pastedText = pastedText,
+                ),
                 pendingAttachments = emptyList(),
                 isRunning = true,
                 streamingMessageId = null,
@@ -4562,7 +4599,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val queued = sessionStartQueue.removeFirstOrNull() ?: return@launch
                 val project = _state.value.projects.firstOrNull { it.id == queued.projectId } ?: continue
                 if (_state.value.activeProject?.id != project.id) openProject(project)
-                beginSession(project, queued.prompt, queued.attachments, admissionChecked = true)
+                beginSession(project, queued.prompt, queued.attachments, admissionChecked = true, displayText = queued.displayText, pastedText = queued.pastedText)
             }
         }
     }
