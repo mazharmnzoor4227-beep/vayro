@@ -116,6 +116,7 @@ object ReadAloudPlayer {
             }
             return
         }
+        applyVoicePrefs(engine, context)
         val chunks = chunkText(text, 1100)
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) = Unit
@@ -152,6 +153,25 @@ object ReadAloudPlayer {
             )
             if (best != null) engine.voice = best
             engine.setSpeechRate(0.98f)
+            engine.setPitch(1.0f)
+        }
+    }
+
+    /**
+     * Applies the voice + pace picked on the Voice settings screen
+     * (ClaudeShell VoiceSettingsScreen, prefs "kodex_voice_settings").
+     * Runs on every speak so a new choice takes effect immediately;
+     * with nothing saved, the previous defaults apply.
+     */
+    private fun applyVoicePrefs(engine: TextToSpeech, context: Context) {
+        runCatching {
+            val prefs = context.getSharedPreferences("kodex_voice_settings", Context.MODE_PRIVATE)
+            val savedName = prefs.getString("voice_name", null)
+            if (!savedName.isNullOrBlank()) {
+                engine.voices?.firstOrNull { it.name == savedName }?.let { engine.voice = it }
+            }
+            val pace = prefs.getFloat("pace_rate", -1f)
+            engine.setSpeechRate(if (pace > 0f) pace else 0.98f)
             engine.setPitch(1.0f)
         }
     }

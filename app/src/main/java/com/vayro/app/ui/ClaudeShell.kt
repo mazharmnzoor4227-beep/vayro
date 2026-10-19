@@ -1,0 +1,2384 @@
+package com.vayro.app.ui
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Factory
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Hub
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SmartDisplay
+import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Storefront
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.core.content.FileProvider
+import com.vayro.app.BuildConfig
+import com.vayro.app.R
+import com.vayro.app.data.ApiKeyVault
+import com.vayro.app.model.AgentKind
+import com.vayro.app.model.Project
+import com.vayro.app.model.agentsForPicker
+import com.vayro.app.ui.components.TikTokLinkDialog
+import com.vayro.app.ui.components.WebLinkDialog
+import com.vayro.app.ui.components.GitHubRepoDialog
+import com.vayro.app.ui.components.fetchTikTokInfo
+import com.vayro.app.ui.components.fetchWebPageText
+import com.vayro.app.ui.theme.AppFontStyle
+import com.vayro.app.ui.theme.AppThemeMode
+import com.vayro.app.ui.theme.KodexBlue
+import com.vayro.app.ui.theme.KodexClay
+import com.vayro.app.ui.theme.SourceSerifFontFamily
+import com.vayro.app.ui.voice.VoiceInputBar
+import com.vayro.app.ui.voice.VoiceRecognizer
+import java.io.File
+import java.util.Calendar
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+// ---------------------------------------------------------------------------
+// Kodex Claude-style shell (v3.2.32).
+//
+// Presentation-only layer cloned from the Claude Android app: warm palette
+// (tokens live in theme/Theme.kt), Source Serif display titles, hairline
+// cards, content-sized sheets (~300 ms easeOutExpo family), small centered
+// radio popups (150-200 ms). All actions are lambdas wired by
+// RootScreenHost / ChatTab to the existing view-model — no backend logic
+// lives here.
+// ---------------------------------------------------------------------------
+
+internal val ShellEase = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
+internal const val VOICE_PREFS = "kodex_voice_settings"
+internal const val VOICE_KEY_NAME = "voice_name"
+internal const val VOICE_KEY_PACE = "pace_rate"
+
+@Composable
+internal fun SerifText(
+    text: String,
+    fontSize: Int = 24,
+    color: Color = MaterialTheme.colorScheme.onBackground,
+    modifier: Modifier = Modifier,
+    maxLines: Int = 1,
+) {
+    Text(
+        text = text,
+        fontFamily = SourceSerifFontFamily,
+        fontWeight = FontWeight.Normal,
+        fontSize = fontSize.sp,
+        color = color,
+        maxLines = maxLines,
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier,
+    )
+}
+
+/** iOS-style pill switch, ON = Claude blue, as in the reference app. */
+@Composable
+internal fun ShellSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = KodexBlue,
+            checkedBorderColor = Color.Transparent,
+            uncheckedThumbColor = Color.White,
+            uncheckedTrackColor = MaterialTheme.colorScheme.outlineVariant,
+            uncheckedBorderColor = Color.Transparent,
+        ),
+    )
+}
+
+@Composable
+internal fun ShellLogo(modifier: Modifier = Modifier, size: Int = 56) {
+    Box(
+        modifier = modifier
+            .size(size.dp)
+            .clip(RoundedCornerShape((size / 4).dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.foundation.Image(
+            painter = painterResource(id = R.drawable.vayro_logo),
+            contentDescription = "Kodex",
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+/** One Claude-style settings/nav row inside a card. */
+@Composable
+internal fun ShellRow(
+    icon: ImageVector,
+    label: String,
+    value: String? = null,
+    labelColor: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(21.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(13.dp))
+        Text(
+            label,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            color = labelColor,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (value != null) {
+            Text(
+                value,
+                fontSize = 13.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Spacer(Modifier.width(4.dp))
+        }
+        if (onClick != null) {
+            Icon(
+                Icons.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun ShellCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shadowElevation = 1.dp,
+    ) {
+        Column { content() }
+    }
+}
+
+@Composable
+internal fun ShellCardDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 50.dp),
+        thickness = 0.7.dp,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f),
+    )
+}
+
+/** Centered rounded radio popup — the Claude Color mode / Font style pattern. */
+@Composable
+internal fun ShellRadioPopup(
+    title: String,
+    options: List<Triple<ImageVector?, String, String>>,
+    selectedKey: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 6.dp,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(vertical = 10.dp)) {
+                Text(
+                    title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+                options.forEach { (icon, label, key) ->
+                    val selected = key == selectedKey
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(key) }
+                            .padding(horizontal = 20.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (icon != null) {
+                            Icon(
+                                icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = if (selected) KodexBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.width(12.dp))
+                        }
+                        Text(
+                            label,
+                            fontSize = 15.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (selected) KodexBlue else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (selected) {
+                            Icon(
+                                Icons.Outlined.Check,
+                                contentDescription = "Selected",
+                                modifier = Modifier.size(19.dp),
+                                tint = KodexBlue,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+        }
+    }
+}
+
+/** Small custom popup menu (never the default Android menu). */
+@Composable
+internal fun ShellPopupMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    items: List<Pair<String, () -> Unit>>,
+) {
+    if (!expanded) return
+    androidx.compose.ui.window.Popup(
+        alignment = Alignment.TopEnd,
+        offset = IntOffset(0, 52),
+        onDismissRequest = onDismiss,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            shadowElevation = 6.dp,
+            modifier = Modifier.padding(end = 12.dp),
+        ) {
+            Column(Modifier.padding(vertical = 6.dp)) {
+                items.forEach { (label, action) ->
+                    Text(
+                        label,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clickable {
+                                onDismiss()
+                                action()
+                            }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Creates a content Uri for a camera capture inside the shared cache dir. */
+internal fun createCameraImageUri(context: Context): Uri {
+    val dir = File(context.cacheDir, "shared/camera").apply { mkdirs() }
+    val file = File(dir, "capture-${System.currentTimeMillis()}.jpg")
+    return FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+}
+
+// ---------------------------------------------------------------------------
+// "Add to chat" sheet — Claude's structure: X top-left, centered title,
+// three big tiles, then analyzer / work-action / project rows. Sized to its
+// content only.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun AttachTile(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(86.dp)
+            .clickable(onClick = onClick),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(26.dp), tint = MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.height(7.dp))
+            Text(label, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun AttachRow(icon: ImageVector, label: String, value: String? = null, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(13.dp))
+        Text(label, fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+        if (value != null) {
+            Text(value, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Spacer(Modifier.width(4.dp))
+        }
+        Icon(
+            Icons.Outlined.KeyboardArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun AddToChatSheet(
+    onDismiss: () -> Unit,
+    currentProjectName: String?,
+    showWorkActions: Boolean,
+    workActionsEnabled: Boolean,
+    showConnectors: Boolean,
+    showCustomize: Boolean,
+    customizeActive: Boolean,
+    onCamera: () -> Unit,
+    onPhotos: () -> Unit,
+    onFiles: () -> Unit,
+    onYouTube: () -> Unit,
+    onTikTok: () -> Unit,
+    onWebLink: () -> Unit,
+    onGitHub: () -> Unit,
+    onPushToGitHub: () -> Unit,
+    onGitHubBuild: () -> Unit,
+    onOpenFactory: () -> Unit,
+    onOpenConnectors: () -> Unit,
+    onCustomize: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = null,
+    ) {
+        Column(Modifier.padding(bottom = 26.dp)) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close", modifier = Modifier.size(21.dp))
+                }
+                Text(
+                    "Add to chat",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(Modifier.weight(1f)) { AttachTile(Icons.Outlined.PhotoCamera, "Camera", onCamera) }
+                Box(Modifier.weight(1f)) { AttachTile(Icons.Outlined.PhotoLibrary, "Photos", onPhotos) }
+                Box(Modifier.weight(1f)) { AttachTile(Icons.Outlined.Folder, "Files", onFiles) }
+            }
+            AttachRow(Icons.Outlined.SmartDisplay, "YouTube Analyzer", onClick = onYouTube)
+            AttachRow(Icons.Outlined.MusicNote, "TikTok Analyzer", onClick = onTikTok)
+            AttachRow(Icons.Outlined.Link, "Web link", onClick = onWebLink)
+            AttachRow(Icons.Outlined.Code, "GitHub repo", onClick = onGitHub)
+            if (showWorkActions) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                    thickness = 0.7.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                AttachRow(Icons.Outlined.CloudUpload, "Push to GitHub", onClick = { if (workActionsEnabled) onPushToGitHub() })
+                AttachRow(Icons.Outlined.CloudUpload, "Build APK (GitHub)", onClick = onGitHubBuild)
+                AttachRow(Icons.Outlined.Factory, "Open in App Factory", onClick = onOpenFactory)
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                thickness = 0.7.dp,
+                color = MaterialTheme.colorScheme.outlineVariant,
+            )
+            AttachRow(
+                Icons.Outlined.Folder,
+                "Add to project",
+                value = currentProjectName?.takeIf { it.isNotBlank() } ?: "None",
+                onClick = onDismiss,
+            )
+            if (showConnectors) {
+                AttachRow(Icons.Outlined.Hub, "Connectors", onClick = onOpenConnectors)
+            }
+            if (showCustomize) {
+                AttachRow(
+                    Icons.Outlined.Tune,
+                    if (customizeActive) "Customize (on)" else "Customize",
+                    onClick = onCustomize,
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// "Select agent" sheet — Claude's Select-model pattern: name + one-line
+// description per row, check on the current one, "More agents" below.
+// ---------------------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun SelectAgentSheet(
+    selected: AgentKind,
+    freeModeEnabled: Boolean,
+    onSelect: (AgentKind) -> Unit,
+    onMoreAgents: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val agents = remember(freeModeEnabled) { agentsForPicker(freeModeEnabled) }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = null,
+    ) {
+        Column(Modifier.padding(bottom = 26.dp)) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close", modifier = Modifier.size(21.dp))
+                }
+                Text(
+                    "Select agent",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            agents.forEach { agent ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(agent) }
+                        .padding(horizontal = 20.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(agent.title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            agent.subtitle,
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (agent == selected) {
+                        Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = KodexBlue, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+            if (onMoreAgents != null) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                    thickness = 0.7.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+                AttachRow(Icons.Outlined.SmartToy, "More agents", onClick = onMoreAgents)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chat home — the app opens here: logo + serif greeting in the center, a
+// Claude composer card docked at the bottom. Sending (or attaching) creates
+// the quick project through the host callbacks and the existing workspace
+// takes over.
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun ChatHomeScreen(
+    agentKind: AgentKind,
+    freeModeEnabled: Boolean,
+    appUpdateAvailable: Boolean,
+    onOpenDrawer: () -> Unit,
+    onOpenUpdate: () -> Unit,
+    onSend: (String) -> Unit,
+    onAttach: (List<Uri>) -> Unit,
+    onSelectAgent: (AgentKind) -> Unit,
+    onMoreAgents: () -> Unit,
+    onOpenConnectors: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var prompt by rememberSaveable { mutableStateOf("") }
+    var sheetOpen by rememberSaveable { mutableStateOf(false) }
+    var agentSheetOpen by rememberSaveable { mutableStateOf(false) }
+    var showYouTubeDialog by rememberSaveable { mutableStateOf(false) }
+    var showTikTokDialog by rememberSaveable { mutableStateOf(false) }
+    var showWebLinkDialog by rememberSaveable { mutableStateOf(false) }
+    var showGitHubDialog by rememberSaveable { mutableStateOf(false) }
+
+    val photoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onAttach(uris)
+    }
+    val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onAttach(uris)
+    }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val uri = cameraUri
+        cameraUri = null
+        if (success && uri != null) onAttach(listOf(uri))
+    }
+
+    // Inline voice input (same in-app recognizer as the workspace chat).
+    val voiceRecognizer = remember { VoiceRecognizer(context) }
+    var voiceInputActive by remember { mutableStateOf(false) }
+    DisposableEffect(voiceRecognizer) { onDispose { voiceRecognizer.release() } }
+    fun beginVoiceSession() {
+        if (!voiceRecognizer.isAvailable()) {
+            Toast.makeText(context, "Voice recognition not supported on this device", Toast.LENGTH_SHORT).show()
+            return
+        }
+        voiceInputActive = true
+        voiceRecognizer.start()
+    }
+    val recordAudioLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) beginVoiceSession()
+        else Toast.makeText(context, "Microphone permission is required for voice input", Toast.LENGTH_SHORT).show()
+    }
+    val onStartVoiceInput = {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            beginVoiceSession()
+        }
+    }
+
+    if (showYouTubeDialog) {
+        com.vayro.app.ui.components.YouTubeVideoDialog(
+            initialUrl = if (com.vayro.app.util.YouTubeUrlValidator.isValid(prompt)) prompt.trim() else "",
+            onDismiss = { showYouTubeDialog = false },
+            onAnalyze = { videoInfo, userQuery, focusMode ->
+                val videoPrompt = com.vayro.app.util.YouTubeUrlValidator.buildGeminiVideoPrompt(
+                    info = videoInfo,
+                    userQuery = userQuery,
+                    focusMode = focusMode,
+                )
+                showYouTubeDialog = false
+                prompt = ""
+                onSend(videoPrompt)
+            },
+        )
+    }
+    if (showTikTokDialog) {
+        TikTokLinkDialog(
+            onDismiss = { showTikTokDialog = false },
+            onAnalyze = { url, question ->
+                showTikTokDialog = false
+                scope.launch {
+                    val info = fetchTikTokInfo(url)
+                    val message = buildString {
+                        appendLine("TikTok video shared: $url")
+                        if (info != null) {
+                            appendLine("Title: ${info.title}")
+                            appendLine("Author: ${info.authorName} (${info.authorUrl})")
+                            appendLine("Thumbnail: ${info.thumbnailUrl}")
+                            appendLine()
+                            appendLine("Note: TikTok gives no public transcript. Base your analysis on the title, author and thumbnail above, and say clearly what else could not be obtained.")
+                        } else {
+                            appendLine("Note: the app could not fetch public details for this link (it may be private, removed, or region-locked). Only the link itself is available - say so clearly.")
+                        }
+                        if (!question.isNullOrBlank()) {
+                            appendLine()
+                            appendLine("My question: $question")
+                        }
+                    }
+                    onSend(message.trim())
+                }
+            },
+        )
+    }
+    if (showWebLinkDialog) {
+        WebLinkDialog(
+            onDismiss = { showWebLinkDialog = false },
+            onFetch = { url ->
+                showWebLinkDialog = false
+                scope.launch {
+                    val page = fetchWebPageText(url)
+                    if (page == null) {
+                        Toast.makeText(context, "Could not fetch that page.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        val (pageTitle, pageText) = page
+                        onSend(
+                            buildString {
+                                appendLine("Web page shared: $url")
+                                if (pageTitle.isNotBlank()) appendLine("Title: $pageTitle")
+                                appendLine()
+                                appendLine(pageText.take(6000))
+                                if (pageText.length > 6000) appendLine("\n… (page text truncated)")
+                                appendLine()
+                                appendLine("Use this page content as context for my request.")
+                            },
+                        )
+                    }
+                }
+            },
+        )
+    }
+    if (showGitHubDialog) {
+        GitHubRepoDialog(
+            onDismiss = { showGitHubDialog = false },
+            onInspect = { url ->
+                showGitHubDialog = false
+                onSend("Clone this GitHub repository into the workspace, inspect its structure (file tree, README, manifest/build files, entry points), and summarize what it does, its main features, and how it is built: $url")
+            },
+        )
+    }
+    if (agentSheetOpen) {
+        SelectAgentSheet(
+            selected = agentKind,
+            freeModeEnabled = freeModeEnabled,
+            onSelect = { kind ->
+                agentSheetOpen = false
+                onSelectAgent(kind)
+            },
+            onMoreAgents = {
+                agentSheetOpen = false
+                onMoreAgents()
+            },
+            onDismiss = { agentSheetOpen = false },
+        )
+    }
+    if (sheetOpen) {
+        AddToChatSheet(
+            onDismiss = { sheetOpen = false },
+            currentProjectName = null,
+            showWorkActions = false,
+            workActionsEnabled = false,
+            showConnectors = true,
+            showCustomize = false,
+            customizeActive = false,
+            onCamera = {
+                sheetOpen = false
+                val uri = createCameraImageUri(context)
+                cameraUri = uri
+                cameraLauncher.launch(uri)
+            },
+            onPhotos = {
+                sheetOpen = false
+                photoLauncher.launch(arrayOf("image/*", "video/*"))
+            },
+            onFiles = {
+                sheetOpen = false
+                fileLauncher.launch(arrayOf("*/*"))
+            },
+            onYouTube = {
+                sheetOpen = false
+                showYouTubeDialog = true
+            },
+            onTikTok = {
+                sheetOpen = false
+                showTikTokDialog = true
+            },
+            onWebLink = {
+                sheetOpen = false
+                showWebLinkDialog = true
+            },
+            onGitHub = {
+                sheetOpen = false
+                showGitHubDialog = true
+            },
+            onPushToGitHub = {},
+            onGitHubBuild = {},
+            onOpenFactory = {},
+            onOpenConnectors = {
+                sheetOpen = false
+                onOpenConnectors()
+            },
+            onCustomize = {},
+        )
+    }
+
+    val greeting = remember {
+        when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+            in 5..11 -> "Good morning"
+            in 12..16 -> "Good afternoon"
+            in 17..20 -> "Good evening"
+            else -> "Coffee and Kodex time?"
+        }
+    }
+    val canSend = prompt.isNotBlank()
+
+    Column(Modifier.fillMaxSize().imePadding()) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onOpenDrawer) {
+                Icon(Icons.Outlined.Menu, contentDescription = "Menu", modifier = Modifier.size(23.dp))
+            }
+            Spacer(Modifier.weight(1f))
+            if (appUpdateAvailable) {
+                IconButton(onClick = onOpenUpdate) {
+                    Box {
+                        Icon(Icons.Outlined.Notifications, contentDescription = "Update available", modifier = Modifier.size(22.dp))
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .align(Alignment.TopEnd)
+                                .background(KodexClay, CircleShape),
+                        )
+                    }
+                }
+            }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                ShellLogo(size = 60)
+                Spacer(Modifier.height(18.dp))
+                SerifText(greeting, fontSize = 28)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "What should we build today?",
+                    fontSize = 14.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            if (voiceInputActive) {
+                VoiceInputBar(
+                    recognizer = voiceRecognizer,
+                    onCancel = { voiceInputActive = false },
+                    onStop = { spoken ->
+                        if (spoken.isNotBlank()) {
+                            prompt = if (prompt.isBlank()) spoken else "$prompt $spoken"
+                        }
+                        voiceInputActive = false
+                    },
+                    onSend = { spoken ->
+                        val merged = listOf(prompt, spoken).filter { it.isNotBlank() }.joinToString(" ").trim()
+                        voiceInputActive = false
+                        if (merged.isNotBlank()) {
+                            prompt = ""
+                            onSend(merged)
+                        }
+                    },
+                    onError = { message ->
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        voiceInputActive = false
+                    },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    shadowElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        BasicTextField(
+                            value = prompt,
+                            onValueChange = { prompt = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                                .heightIn(min = 26.dp, max = 130.dp),
+                            textStyle = TextStyle(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 15.5.sp,
+                                lineHeight = 21.sp,
+                            ),
+                            cursorBrush = SolidColor(KodexClay),
+                            decorationBox = { innerTextField ->
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (prompt.isEmpty()) {
+                                        Text(
+                                            "Message Kodex…",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 15.5.sp,
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
+                                Icon(Icons.Outlined.Add, contentDescription = "Add to chat", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(999.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.clickable { agentSheetOpen = true },
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        agentKind.title.removeSuffix(" CLI").removeSuffix(" Harness"),
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                    )
+                                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = onStartVoiceInput, modifier = Modifier.size(38.dp)) {
+                                Icon(Icons.Outlined.Mic, contentDescription = "Voice input", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (canSend) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(KodexClay, CircleShape)
+                                        .clickable {
+                                            val text = prompt
+                                            prompt = ""
+                                            onSend(text)
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(Icons.Outlined.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .background(KodexClay, CircleShape)
+                                        .clickable(onClick = onStartVoiceInput),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(Icons.Filled.GraphicEq, contentDescription = "Voice mode", tint = Color.White, modifier = Modifier.size(19.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar — Claude's pattern: serif app name, quick actions and nav rows,
+// Pinned + Recents, and a bottom bar with the profile avatar (→ Settings)
+// and a white "+ New chat" pill. Slides in ~300 ms; closes by scrim tap,
+// Back, or swipe.
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun SidebarRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(12.dp))
+        Text(label, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun SidebarSectionLabel(text: String) {
+    Text(
+        text,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 10.dp, top = 14.dp, bottom = 4.dp),
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@Composable
+internal fun KodexSidebar(
+    userInitial: String,
+    userName: String,
+    projects: List<Project>,
+    pinnedIds: Set<String>,
+    activeProjectId: String?,
+    pushEnabled: Boolean,
+    onClose: () -> Unit,
+    onNewChat: () -> Unit,
+    onOpenChats: () -> Unit,
+    onOpenProjects: () -> Unit,
+    onOpenCode: () -> Unit,
+    onOpenProviders: () -> Unit,
+    onOpenSkills: () -> Unit,
+    onOpenMarketplace: () -> Unit,
+    onOpenConnectors: () -> Unit,
+    onOpenAppFactory: () -> Unit,
+    onOpenProject: (Project) -> Unit,
+    onTogglePin: (Project) -> Unit,
+    onRenameProject: (Project, String) -> Unit,
+    onDeleteProject: (Project) -> Unit,
+    onPushToGitHub: () -> Unit,
+    onOpenGitHubBuild: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val scope = rememberCoroutineScope()
+    fun requestClose() {
+        scope.launch {
+            shown = false
+            delay(190)
+            onClose()
+        }
+    }
+    val offsetX by animateFloatAsState(
+        targetValue = if (shown) 0f else -340f,
+        animationSpec = tween(durationMillis = 300, easing = ShellEase),
+        label = "sidebar_offset",
+    )
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (shown) 0.5f else 0f,
+        animationSpec = tween(durationMillis = 250, easing = ShellEase),
+        label = "sidebar_scrim",
+    )
+    BackHandler(onBack = { requestClose() })
+
+    var menuProject by remember { mutableStateOf<Project?>(null) }
+    var renameProject by remember { mutableStateOf<Project?>(null) }
+    var deleteProject by remember { mutableStateOf<Project?>(null) }
+
+    menuProject?.let { project ->
+        ModalBottomSheet(
+            onDismissRequest = { menuProject = null },
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            dragHandle = null,
+        ) {
+            Column(Modifier.padding(bottom = 26.dp, top = 8.dp)) {
+                Text(
+                    project.name,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                AttachRow(
+                    Icons.Outlined.PushPin,
+                    if (project.id in pinnedIds) "Unpin" else "Pin",
+                    onClick = {
+                        menuProject = null
+                        onTogglePin(project)
+                    },
+                )
+                AttachRow(
+                    Icons.Outlined.Edit,
+                    "Rename",
+                    onClick = {
+                        menuProject = null
+                        renameProject = project
+                    },
+                )
+                AttachRow(
+                    Icons.Outlined.Delete,
+                    "Delete",
+                    onClick = {
+                        menuProject = null
+                        deleteProject = project
+                    },
+                )
+            }
+        }
+    }
+    renameProject?.let { project ->
+        var newName by rememberSaveable(project.id) { mutableStateOf(project.name) }
+        Dialog(onDismissRequest = { renameProject = null }) {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 6.dp) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Rename chat", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { renameProject = null }) { Text("Cancel") }
+                        Button(
+                            onClick = {
+                                if (newName.isNotBlank()) onRenameProject(project, newName.trim())
+                                renameProject = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = KodexClay),
+                        ) { Text("Save", color = Color.White) }
+                    }
+                }
+            }
+        }
+    }
+    deleteProject?.let { project ->
+        Dialog(onDismissRequest = { deleteProject = null }) {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 6.dp) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Delete this chat?", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "\"${project.name}\" and its workspace will be permanently deleted.",
+                        fontSize = 13.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { deleteProject = null }) { Text("Cancel") }
+                        Button(
+                            onClick = {
+                                deleteProject = null
+                                onDeleteProject(project)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) { Text("Delete", color = Color.White) }
+                    }
+                }
+            }
+        }
+    }
+
+    val pinned = remember(projects, pinnedIds) { projects.filter { it.id in pinnedIds } }
+    val recents = remember(projects) { projects.sortedByDescending { it.updatedAtMillis }.take(8) }
+
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = scrimAlpha))
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    onClick = { requestClose() },
+                ),
+        )
+        Surface(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .width(320.dp)
+                .offset { IntOffset(offsetX.toInt(), 0) }
+                .pointerInput(Unit) {
+                    var totalDrag = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { totalDrag = 0f },
+                        onDragEnd = { totalDrag = 0f },
+                        onDragCancel = { totalDrag = 0f },
+                        onHorizontalDrag = { _, dragAmount ->
+                            totalDrag += dragAmount
+                            if (totalDrag < -90f) requestClose()
+                        },
+                    )
+                },
+            shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 8.dp,
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp)
+                        .statusBarsPadding(),
+                ) {
+                    Spacer(Modifier.height(14.dp))
+                    SerifText("Kodex", fontSize = 30, modifier = Modifier.padding(start = 10.dp))
+                    Spacer(Modifier.height(10.dp))
+                    SidebarSectionLabel("Quick actions")
+                    SidebarRow(Icons.Outlined.CloudUpload, "Push to GitHub") {
+                        if (pushEnabled) {
+                            onClose()
+                            onPushToGitHub()
+                        }
+                    }
+                    SidebarRow(Icons.Outlined.CloudUpload, "GitHub Build") {
+                        onClose()
+                        onOpenGitHubBuild()
+                    }
+                    SidebarRow(Icons.Outlined.Terminal, "Terminal") {
+                        onClose()
+                        onOpenTerminal()
+                    }
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                        thickness = 0.7.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                    SidebarRow(Icons.Outlined.ChatBubbleOutline, "Chats") {
+                        onClose()
+                        onOpenChats()
+                    }
+                    SidebarRow(Icons.Outlined.Folder, "Projects") {
+                        onClose()
+                        onOpenProjects()
+                    }
+                    SidebarRow(Icons.Outlined.Code, "Code") {
+                        onClose()
+                        onOpenCode()
+                    }
+                    SidebarRow(Icons.Outlined.SmartToy, "Providers & Agents") {
+                        onClose()
+                        onOpenProviders()
+                    }
+                    SidebarRow(Icons.Outlined.Extension, "Skills") {
+                        onClose()
+                        onOpenSkills()
+                    }
+                    SidebarRow(Icons.Outlined.Storefront, "Marketplace") {
+                        onClose()
+                        onOpenMarketplace()
+                    }
+                    SidebarRow(Icons.Outlined.Hub, "Connectors") {
+                        onClose()
+                        onOpenConnectors()
+                    }
+                    SidebarRow(Icons.Outlined.Factory, "App Factory") {
+                        onClose()
+                        onOpenAppFactory()
+                    }
+                    if (pinned.isNotEmpty()) {
+                        SidebarSectionLabel("Pinned")
+                        pinned.forEach { project ->
+                            SidebarChatRow(
+                                project = project,
+                                active = project.id == activeProjectId,
+                                onClick = {
+                                    onClose()
+                                    onOpenProject(project)
+                                },
+                                onLongClick = { menuProject = project },
+                                onMenu = { menuProject = project },
+                            )
+                        }
+                    }
+                    if (recents.isNotEmpty()) {
+                        SidebarSectionLabel("Recents")
+                        recents.forEach { project ->
+                            SidebarChatRow(
+                                project = project,
+                                active = project.id == activeProjectId,
+                                onClick = {
+                                    onClose()
+                                    onOpenProject(project)
+                                },
+                                onLongClick = { menuProject = project },
+                                onMenu = { menuProject = project },
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                onClose()
+                                onOpenChats()
+                            }
+                            .padding(horizontal = 10.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "All chats",
+                            fontSize = 14.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                }
+                HorizontalDivider(thickness = 0.7.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .background(KodexClay, CircleShape)
+                            .clickable { onOpenSettings() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(userInitial, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        userName,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onOpenSettings() },
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = MaterialTheme.colorScheme.onBackground,
+                        shadowElevation = 3.dp,
+                        modifier = Modifier.clickable {
+                            onClose()
+                            onNewChat()
+                        },
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.background)
+                            Spacer(Modifier.width(5.dp))
+                            Text("New chat", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.background)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SidebarChatRow(
+    project: Project,
+    active: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onMenu: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (active) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Outlined.ChatBubbleOutline,
+            contentDescription = null,
+            modifier = Modifier.size(19.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(11.dp))
+        Text(
+            project.name,
+            fontSize = 14.5.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onMenu, modifier = Modifier.size(30.dp)) {
+            Icon(Icons.Outlined.MoreHoriz, contentDescription = "Chat options", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chats screen — Claude's pattern: centered serif title, search field,
+// chat rows with a right-aligned relative date, a floating "+ New chat"
+// pill, and long-press multi-select with Delete.
+// (In Kodex a top-level "chat" is a project workspace — quick chats and
+// projects are listed together, labelled by kind.)
+// ---------------------------------------------------------------------------
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun ChatsScreen(
+    projects: List<Project>,
+    pinnedIds: Set<String>,
+    onOpenDrawer: () -> Unit,
+    onOpenProject: (Project) -> Unit,
+    onNewChat: () -> Unit,
+    onDeleteProjects: (List<String>) -> Unit,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var filterPinned by rememberSaveable { mutableStateOf(false) }
+    var filterMenuOpen by remember { mutableStateOf(false) }
+    var selection by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val inSelection = selection.isNotEmpty()
+
+    val visible = remember(projects, query, filterPinned, pinnedIds) {
+        projects
+            .filter { !filterPinned || it.id in pinnedIds }
+            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            .sortedByDescending { it.updatedAtMillis }
+    }
+
+    if (confirmDelete) {
+        Dialog(onDismissRequest = { confirmDelete = false }) {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 6.dp) {
+                Column(Modifier.padding(20.dp)) {
+                    Text("Delete ${selection.size} chat${if (selection.size == 1) "" else "s"}?", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "The selected chats and their workspaces will be permanently deleted.",
+                        fontSize = 13.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+                        Button(
+                            onClick = {
+                                val ids = selection.toList()
+                                selection = emptySet()
+                                confirmDelete = false
+                                onDeleteProjects(ids)
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) { Text("Delete", color = Color.White) }
+                    }
+                }
+            }
+        }
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .height(56.dp)
+                    .padding(horizontal = 6.dp),
+            ) {
+                if (inSelection) {
+                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { selection = emptySet() }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Cancel selection", modifier = Modifier.size(21.dp))
+                        }
+                        Text("${selection.size} selected", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.weight(1f))
+                        IconButton(onClick = { confirmDelete = true }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Delete selected", modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else {
+                    IconButton(onClick = onOpenDrawer, modifier = Modifier.align(Alignment.CenterStart)) {
+                        Icon(Icons.Outlined.Menu, contentDescription = "Menu", modifier = Modifier.size(23.dp))
+                    }
+                    SerifText("Chats", fontSize = 21, modifier = Modifier.align(Alignment.Center))
+                    IconButton(onClick = { filterMenuOpen = true }, modifier = Modifier.align(Alignment.CenterEnd)) {
+                        Icon(Icons.Outlined.Tune, contentDescription = "Filter", modifier = Modifier.size(21.dp))
+                    }
+                    ShellPopupMenu(
+                        expanded = filterMenuOpen,
+                        onDismiss = { filterMenuOpen = false },
+                        items = listOf(
+                            "All chats" to { filterPinned = false },
+                            "Pinned" to { filterPinned = true },
+                        ),
+                    )
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(8.dp))
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 14.5.sp),
+                        cursorBrush = SolidColor(KodexClay),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { inner ->
+                            Box {
+                                if (query.isEmpty()) {
+                                    Text("Search", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.5.sp)
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                }
+            }
+            if (visible.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (query.isNotBlank()) "No chats match your search." else "No chats yet. Start a new chat to begin.",
+                        fontSize = 13.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                LazyColumn(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                ) {
+                    items(visible, key = { it.id }) { project ->
+                        val selected = project.id in selection
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+                                .combinedClickable(
+                                    onClick = {
+                                        if (inSelection) {
+                                            selection = if (selected) selection - project.id else selection + project.id
+                                        } else {
+                                            onOpenProject(project)
+                                        }
+                                    },
+                                    onLongClick = {
+                                        selection = selection + project.id
+                                    },
+                                )
+                                .padding(horizontal = 12.dp, vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (inSelection) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(22.dp)
+                                        .background(if (selected) KodexBlue else Color.Transparent, CircleShape)
+                                        .border(1.5.dp, if (selected) KodexBlue else MaterialTheme.colorScheme.outline, CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (selected) {
+                                        Icon(Icons.Outlined.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    }
+                                }
+                                Spacer(Modifier.width(11.dp))
+                            } else {
+                                Icon(
+                                    Icons.Outlined.ChatBubbleOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(11.dp))
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    project.name,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    if (project.id in pinnedIds) "Pinned" else if (project.kind.name == "QUICK_PROJECT") "Chat" else "Project",
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Text(
+                                project.formattedUpdatedAt,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = MaterialTheme.colorScheme.onBackground,
+            shadowElevation = 6.dp,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(18.dp)
+                .clickable(onClick = onNewChat),
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.background)
+                Spacer(Modifier.width(5.dp))
+                Text("New chat", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.background)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Code hub — one clean home for the workspace tools that used to be
+// scattered: terminal, GitHub build/studio, project files & editor, and
+// Team Studio.
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun CodeHubScreen(
+    onBack: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onOpenGitHubBuild: () -> Unit,
+    onOpenGitHubStudio: () -> Unit,
+    onOpenProjects: () -> Unit,
+    onOpenTeamStudio: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            SerifText("Code", fontSize = 21)
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+        ) {
+            ShellCard {
+                ShellRow(Icons.Outlined.Terminal, "Terminal", onClick = onOpenTerminal)
+                ShellCardDivider()
+                ShellRow(Icons.Outlined.CloudUpload, "GitHub Build", onClick = onOpenGitHubBuild)
+                ShellCardDivider()
+                ShellRow(Icons.Outlined.Code, "GitHub Studio", onClick = onOpenGitHubStudio)
+                ShellCardDivider()
+                ShellRow(Icons.Outlined.Folder, "Project files & editor", onClick = onOpenProjects)
+                ShellCardDivider()
+                ShellRow(Icons.Outlined.SmartToy, "Team Studio", onClick = onOpenTeamStudio)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Files, the code editor and the browser preview live inside each project — open a project to use them. The terminal, GitHub Build and GitHub Studio work from here directly.",
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Settings home — Claude's layout: account card, license card in the
+// upgrade-card position, then grouped rows. Every row opens its own page
+// (the full existing settings live under "Developer tools" / the mapped
+// rows, so nothing real is dropped).
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun ClaudeSettingsHome(
+    accountName: String,
+    accountEmail: String?,
+    isGuest: Boolean,
+    colorMode: AppThemeMode,
+    fontStyle: AppFontStyle,
+    hapticsEnabled: Boolean,
+    connectorsValue: String,
+    onBack: () -> Unit,
+    onLogin: () -> Unit,
+    onOpenProfile: () -> Unit,
+    onOpenLicense: () -> Unit,
+    onOpenCapabilities: () -> Unit,
+    onOpenConnectors: () -> Unit,
+    onOpenPermissions: () -> Unit,
+    onColorMode: (AppThemeMode) -> Unit,
+    onFontStyle: (AppFontStyle) -> Unit,
+    onOpenVoice: () -> Unit,
+    onToggleHaptics: (Boolean) -> Unit,
+    onOpenNotifications: () -> Unit,
+    onOpenDeveloperTools: () -> Unit,
+    onOpenPrivacy: () -> Unit,
+    onOpenAbout: () -> Unit,
+    onLogout: () -> Unit,
+) {
+    val context = LocalContext.current
+    var showColorPopup by remember { mutableStateOf(false) }
+    var showFontPopup by remember { mutableStateOf(false) }
+    val licStore = remember { com.vayro.app.license.LicenseStore(context) }
+    val licensed = licStore.token != null
+    val licenseText = when {
+        licStore.token == null -> "Not activated on this phone"
+        licStore.expiresAt > 0 -> "Active · until " +
+            java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()).format(java.util.Date(licStore.expiresAt))
+        else -> "Active · Lifetime · this phone is licensed"
+    }
+    val initial = (accountName.firstOrNull()?.uppercaseChar() ?: 'K').toString()
+
+    if (showColorPopup) {
+        ShellRadioPopup(
+            title = "Color mode",
+            options = listOf(
+                Triple(null, "System", "SYSTEM"),
+                Triple(null, "Light", "LIGHT"),
+                Triple(null, "Dark", "DARK"),
+            ),
+            selectedKey = colorMode.name,
+            onSelect = { key ->
+                showColorPopup = false
+                onColorMode(AppThemeMode.valueOf(key))
+            },
+            onDismiss = { showColorPopup = false },
+        )
+    }
+    if (showFontPopup) {
+        ShellRadioPopup(
+            title = "Font style",
+            options = listOf(
+                Triple(null, "Default", "DEFAULT"),
+                Triple(null, "System", "SYSTEM"),
+            ),
+            selectedKey = fontStyle.name,
+            onSelect = { key ->
+                showFontPopup = false
+                onFontStyle(AppFontStyle.valueOf(key))
+            },
+            onDismiss = { showFontPopup = false },
+        )
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            SerifText("Settings", fontSize = 21, modifier = Modifier.align(Alignment.Center))
+        }
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item {
+                ShellCard {
+                    Row(
+                        Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier.size(44.dp).background(KodexClay, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(initial, color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(accountName, fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                accountEmail ?: if (isGuest) "Guest mode · Local only" else "Signed in",
+                                fontSize = 12.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = Color.Transparent,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        ) {
+                            Text(
+                                if (licensed) "Licensed" else "Free",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                ShellCard {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(20.dp), tint = KodexClay)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Kodex License", fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Spacer(Modifier.height(5.dp))
+                        Text(licenseText, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = onOpenLicense,
+                            colors = ButtonDefaults.buttonColors(containerColor = KodexClay),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Text("Manage", color = Color.White, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+            item {
+                ShellCard {
+                    ShellRow(Icons.Outlined.Person, "Profile", onClick = onOpenProfile)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Lock, "License", value = if (licensed) "Active" else "Not activated", onClick = onOpenLicense)
+                }
+            }
+            item {
+                ShellCard {
+                    ShellRow(Icons.Outlined.Tune, "Capabilities", onClick = onOpenCapabilities)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Hub, "Connectors", value = connectorsValue, onClick = onOpenConnectors)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Lock, "Permissions", onClick = onOpenPermissions)
+                }
+            }
+            item {
+                ShellCard {
+                    ShellRow(
+                        Icons.Outlined.Settings,
+                        "Color mode",
+                        value = when (colorMode) {
+                            AppThemeMode.SYSTEM -> "System"
+                            AppThemeMode.LIGHT -> "Light"
+                            AppThemeMode.DARK -> "Dark"
+                        },
+                        onClick = { showColorPopup = true },
+                    )
+                    ShellCardDivider()
+                    ShellRow(
+                        Icons.Outlined.Edit,
+                        "Font style",
+                        value = if (fontStyle == AppFontStyle.DEFAULT) "Default" else "System",
+                        onClick = { showFontPopup = true },
+                    )
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.RecordVoiceOver, "Voice", onClick = onOpenVoice)
+                    ShellCardDivider()
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Outlined.Notifications, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(13.dp))
+                        Text("Haptic feedback", fontSize = 15.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                        ShellSwitch(checked = hapticsEnabled, onCheckedChange = onToggleHaptics)
+                    }
+                }
+            }
+            item {
+                ShellCard {
+                    ShellRow(Icons.Outlined.Notifications, "Notifications", onClick = onOpenNotifications)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Code, "Developer tools", onClick = onOpenDeveloperTools)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Lock, "Privacy", onClick = onOpenPrivacy)
+                    ShellCardDivider()
+                    ShellRow(Icons.Outlined.Info, "About", value = "v${BuildConfig.VERSION_NAME}", onClick = onOpenAbout)
+                }
+            }
+            item {
+                ShellCard {
+                    ShellRow(
+                        Icons.AutoMirrored.Filled.Logout,
+                        if (isGuest) "Sign in" else "Log out",
+                        labelColor = MaterialTheme.colorScheme.error,
+                        onClick = if (isGuest) onLogin else onLogout,
+                    )
+                }
+            }
+            item { Spacer(Modifier.height(12.dp)) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Capabilities — Claude's toggles page: each switch row carries a one-line
+// description. Only real, working settings live here.
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun CapabilitiesScreen(
+    onBack: () -> Unit,
+    autoUpdateSkills: Boolean,
+    onToggleAutoUpdateSkills: (Boolean) -> Unit,
+    freeMode: Boolean,
+    onToggleFreeMode: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    val componentPrefs = remember {
+        context.getSharedPreferences(com.vayro.app.update.ComponentUpdateNotifier.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    var autoUpdateComponents by remember {
+        mutableStateOf(componentPrefs.getBoolean(com.vayro.app.update.ComponentUpdateNotifier.KEY_AUTO_UPDATE, false))
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            SerifText("Capabilities", fontSize = 21)
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ShellCard {
+                CapabilityToggleRow(
+                    title = "Auto-update skills",
+                    description = "Skills installed from GitHub or the Marketplace check for new versions in the background and update themselves.",
+                    checked = autoUpdateSkills,
+                    onCheckedChange = onToggleAutoUpdateSkills,
+                )
+                ShellCardDivider()
+                CapabilityToggleRow(
+                    title = "Auto-update components",
+                    description = "Runtime components (Python, Android SDK, toolchains) install updates in the background — with backup and automatic restore if anything fails.",
+                    checked = autoUpdateComponents,
+                    onCheckedChange = { enabled ->
+                        autoUpdateComponents = enabled
+                        componentPrefs.edit()
+                            .putBoolean(com.vayro.app.update.ComponentUpdateNotifier.KEY_AUTO_UPDATE, enabled)
+                            .apply()
+                    },
+                )
+                ShellCardDivider()
+                CapabilityToggleRow(
+                    title = "Free Mode",
+                    description = "Show only free agents and free-tier API providers. Paid options stay hidden while Free Mode is on.",
+                    checked = freeMode,
+                    onCheckedChange = onToggleFreeMode,
+                )
+            }
+            Text(
+                "Agents themselves (Claude Code, Antigravity, DeepSeek) update from the Providers & Agents screen, not from here.",
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CapabilityToggleRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(2.dp))
+            Text(description, fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(12.dp))
+        ShellSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Voice settings — Claude's pattern: a carousel of large voice cards
+// (built from the best on-device TTS voices, up to 6, with friendly names),
+// Language + Pace rows below, and the ElevenLabs premium card. This screen
+// configures the same Listen feature: the choice is stored in
+// "kodex_voice_settings" and ReadAloudPlayer applies it on every reply.
+// ---------------------------------------------------------------------------
+
+private val VoiceStyleNames = listOf("Rounded", "Glassy", "Mellow", "Airy", "Buttery", "Clear")
+
+@Composable
+internal fun VoiceSettingsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE) }
+    var allVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
+    var ttsReady by remember { mutableStateOf(false) }
+    val tts = remember {
+        lateinit var engine: TextToSpeech
+        engine = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                allVoices = engine.voices?.toList().orEmpty()
+                ttsReady = true
+            }
+        }
+        engine
+    }
+    DisposableEffect(tts) {
+        onDispose {
+            runCatching { tts.stop() }
+            runCatching { tts.shutdown() }
+        }
+    }
+
+    var selectedVoiceName by remember { mutableStateOf(prefs.getString(VOICE_KEY_NAME, null)) }
+    var pace by remember { mutableStateOf(prefs.getFloat(VOICE_KEY_PACE, 1.0f)) }
+    var showLanguagePopup by remember { mutableStateOf(false) }
+    var showPacePopup by remember { mutableStateOf(false) }
+
+    val cards = remember(allVoices) {
+        val english = allVoices.filter { it.locale?.language == "en" }
+        val pool = if (english.size >= 3) english else allVoices
+        pool.sortedWith(
+            compareByDescending<Voice> { it.quality }
+                .thenByDescending { if (it.isNetworkConnectionRequired) 1 else 0 },
+        ).take(6)
+    }
+    val selectedVoice = remember(cards, allVoices, selectedVoiceName) {
+        allVoices.firstOrNull { it.name == selectedVoiceName } ?: cards.firstOrNull()
+    }
+
+    fun selectVoice(voice: Voice, preview: Boolean) {
+        selectedVoiceName = voice.name
+        prefs.edit().putString(VOICE_KEY_NAME, voice.name).apply()
+        if (preview && ttsReady) {
+            runCatching {
+                tts.voice = voice
+                tts.setSpeechRate(pace)
+                tts.speak("Hi, I'm your Kodex voice. Ask me anything.", TextToSpeech.QUEUE_FLUSH, null, "voice-preview")
+            }
+        }
+    }
+
+    if (showLanguagePopup) {
+        val languages = remember(allVoices) {
+            allVoices.mapNotNull { it.locale }.distinctBy { it.language + it.country }
+        }
+        ShellRadioPopup(
+            title = "Language",
+            options = languages.map { locale ->
+                Triple(null, locale.getDisplayName(java.util.Locale.ENGLISH), locale.language + "|" + locale.country)
+            },
+            selectedKey = (selectedVoice?.locale?.language ?: "") + "|" + (selectedVoice?.locale?.country ?: ""),
+            onSelect = { key ->
+                showLanguagePopup = false
+                val parts = key.split("|")
+                val best = allVoices
+                    .filter { it.locale?.language == parts.getOrNull(0) && it.locale?.country == parts.getOrNull(1) }
+                    .maxByOrNull { it.quality }
+                if (best != null) selectVoice(best, preview = true)
+            },
+            onDismiss = { showLanguagePopup = false },
+        )
+    }
+    if (showPacePopup) {
+        val paceOptions = listOf(Triple("Slow", 0.85f), Triple("Normal", 1.0f), Triple("Fast", 1.18f))
+        ShellRadioPopup(
+            title = "Pace",
+            options = paceOptions.map { (label, rate) -> Triple(null, label, rate.toString()) },
+            selectedKey = paceOptions.minByOrNull { kotlin.math.abs(it.second - pace) }?.second?.toString() ?: "1.0",
+            onSelect = { key ->
+                showPacePopup = false
+                val rate = key.toFloatOrNull() ?: 1.0f
+                pace = rate
+                prefs.edit().putFloat(VOICE_KEY_PACE, rate).apply()
+                selectedVoice?.let { selectVoice(it, preview = true) }
+            },
+            onDismiss = { showPacePopup = false },
+        )
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            SerifText("Voice settings", fontSize = 21)
+        }
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            item {
+                Text(
+                    "Choose the voice Kodex uses for Listen. On-device voices are free, work offline and never run out.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                if (cards.isEmpty()) {
+                    Text(
+                        if (ttsReady) "No text-to-speech voices found on this device." else "Loading voices…",
+                        fontSize = 13.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(cards.withIndex().toList(), key = { it.value.name }) { (index, voice) ->
+                            val isSelected = selectedVoice?.name == voice.name
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(
+                                    if (isSelected) 2.dp else 1.dp,
+                                    if (isSelected) KodexClay else MaterialTheme.colorScheme.outlineVariant,
+                                ),
+                                shadowElevation = if (isSelected) 4.dp else 1.dp,
+                                modifier = Modifier
+                                    .width(132.dp)
+                                    .height(104.dp)
+                                    .clickable { selectVoice(voice, preview = true) },
+                            ) {
+                                Column(Modifier.fillMaxSize().padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            VoiceStyleNames.getOrElse(index) { "Voice" },
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Icon(
+                                            Icons.Outlined.PlayArrow,
+                                            contentDescription = "Preview",
+                                            modifier = Modifier.size(17.dp),
+                                            tint = if (isSelected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    Spacer(Modifier.weight(1f))
+                                    Text(
+                                        voice.locale?.getDisplayName(java.util.Locale.ENGLISH) ?: "Voice",
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        if (voice.quality >= 400) "High quality" else "Standard",
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                ShellCard {
+                    ShellRow(
+                        Icons.Outlined.RecordVoiceOver,
+                        "Language",
+                        value = selectedVoice?.locale?.getDisplayName(java.util.Locale.ENGLISH) ?: "—",
+                        onClick = { if (allVoices.isNotEmpty()) showLanguagePopup = true },
+                    )
+                    ShellCardDivider()
+                    ShellRow(
+                        Icons.Outlined.PlayArrow,
+                        "Pace",
+                        value = when {
+                            pace < 0.93f -> "Slow"
+                            pace > 1.09f -> "Fast"
+                            else -> "Normal"
+                        },
+                        onClick = { showPacePopup = true },
+                    )
+                }
+            }
+            item {
+                ElevenLabsVoiceCard()
+            }
+            item { Spacer(Modifier.height(10.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ElevenLabsVoiceCard() {
+    val context = LocalContext.current
+    val vault = remember { ApiKeyVault(context) }
+    var apiKey by remember { mutableStateOf("") }
+    var voiceId by remember { mutableStateOf(vault.get("elevenlabs_voice") ?: "") }
+    var hasKey by remember { mutableStateOf(vault.get("elevenlabs") != null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    ShellCard {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Premium voice — ElevenLabs", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Optional: paste your own ElevenLabs API key and a Voice ID, and Listen will use that voice instead of the on-device one. Both are stored encrypted on this device only and are never logged or shared.",
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = { Text("ElevenLabs API key") },
+                placeholder = { Text(if (hasKey) "Saved — paste a new key to replace it" else "sk_…") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+            )
+            OutlinedTextField(
+                value = voiceId,
+                onValueChange = { voiceId = it },
+                label = { Text("ElevenLabs Voice ID") },
+                placeholder = { Text("e.g. 21m00Tcm4TlvDq8ikWAM") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        if (apiKey.isNotBlank()) vault.put("elevenlabs", apiKey.trim())
+                        if (voiceId.isNotBlank()) {
+                            vault.put("elevenlabs_voice", voiceId.trim())
+                        } else {
+                            vault.remove("elevenlabs_voice")
+                        }
+                        hasKey = vault.get("elevenlabs") != null
+                        status = if (hasKey && voiceId.isNotBlank()) {
+                            "Saved. Listen will use your ElevenLabs voice."
+                        } else if (hasKey) {
+                            "Key saved. Add a Voice ID to enable the premium voice."
+                        } else {
+                            "Saved. Listen will use the free on-device voice."
+                        }
+                        apiKey = ""
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = KodexClay),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Save", color = Color.White)
+                }
+                if (hasKey) {
+                    OutlinedButton(
+                        onClick = {
+                            vault.remove("elevenlabs")
+                            vault.remove("elevenlabs_voice")
+                            apiKey = ""
+                            voiceId = ""
+                            hasKey = false
+                            status = "Removed. Listen will use the free on-device voice."
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Remove key")
+                    }
+                }
+            }
+            status?.let {
+                Text(it, fontSize = 11.5.sp, color = KodexClay)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Connectors header — sits above the existing MCP surface (SkillsScreen's
+// MCP tab): back, serif title, live server/tool counts, and a "+" menu
+// (Browse connectors / Add custom connector).
+// ---------------------------------------------------------------------------
+
+@Composable
+internal fun ConnectorsHeader(
+    serverCount: Int,
+    toolCount: Int,
+    onBack: () -> Unit,
+    onBrowse: () -> Unit,
+    onAddCustom: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .height(56.dp)
+            .padding(horizontal = 6.dp),
+    ) {
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", modifier = Modifier.size(21.dp))
+            }
+            Column {
+                SerifText("Connectors", fontSize = 20)
+                Text(
+                    "$serverCount servers · $toolCount tools",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { menuOpen = true }) {
+                Icon(Icons.Outlined.Add, contentDescription = "Add connector", modifier = Modifier.size(22.dp))
+            }
+        }
+        ShellPopupMenu(
+            expanded = menuOpen,
+            onDismiss = { menuOpen = false },
+            items = listOf(
+                "Browse connectors" to onBrowse,
+                "Add custom connector" to onAddCustom,
+            ),
+        )
+    }
+}

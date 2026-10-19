@@ -382,37 +382,15 @@ fun SettingsScreen(
             item {
                 SettingsAccordion(
                     title = "Appearance",
-                    subtitle = if (state.colorTheme != AppColorTheme.NONE) {
-                        "${state.colorTheme.displayName} color theme"
-                    } else when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },
+                    subtitle = when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },
                     icon = Icons.Default.Tune,
                     expanded = expanded == SettingsSection.APPEARANCE,
                     onClick = { toggle(SettingsSection.APPEARANCE) },
                 ) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ModernThemeChoice("Dark", Icons.Default.DarkMode, state.colorTheme == AppColorTheme.NONE && state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
-                        ModernThemeChoice("Light", Icons.Default.LightMode, state.colorTheme == AppColorTheme.NONE && state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
-                        ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.colorTheme == AppColorTheme.NONE && state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
-                    }
-                    Text(
-                        "Color theme",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    AppColorTheme.selectable.chunked(4).forEach { rowThemes ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            rowThemes.forEach { theme ->
-                                ModernColorThemeChoice(
-                                    theme = theme,
-                                    icon = colorThemeIcon(theme),
-                                    selected = state.colorTheme == theme,
-                                    onClick = { onSetColorTheme(theme) },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                            repeat(4 - rowThemes.size) { Spacer(Modifier.weight(1f)) }
-                        }
+                        ModernThemeChoice("Dark", Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
+                        ModernThemeChoice("Light", Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
+                        ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
                     }
                 }
             }

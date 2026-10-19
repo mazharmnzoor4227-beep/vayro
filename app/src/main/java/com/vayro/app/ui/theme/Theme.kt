@@ -20,10 +20,27 @@ import androidx.compose.ui.text.font.FontWeight
 import com.vayro.app.R
 import androidx.core.view.WindowCompat
 
-// Raw brand colors. The public Pocket* tokens below resolve through
-// LocalPocketAccents so a selected color theme recolors every call site;
-// these constants are the unthemed (default) values and the building blocks
-// of the base schemes.
+// ---------------------------------------------------------------------------
+// Claude palette (v3.2.32, extraction-verified tokens — see
+// kodex-chat-preview/CLAUDE-DESIGN-TOKENS.md). Warm monochrome grays, one
+// chromatic accent (Clay), hairline borders, almost no shadow. The old
+// 8-theme system is retired: PocketTheme always uses these two schemes.
+// ---------------------------------------------------------------------------
+
+/** Product accent: send button, avatar, highlights. */
+val KodexClay = Color(0xFFD97757)
+
+/** Accent pressed/hover state. */
+val KodexClayPressed = Color(0xFFC9674A)
+
+/** Switch-ON + selected-row blue (Claude Android estimate, ~iOS system blue). */
+val KodexBlue = Color(0xFF0A84FF)
+
+private val ClaudeSuccess = Color(0xFF5DB872)
+private val ClaudeInfo = Color(0xFF0A84FF)
+
+// Legacy brand constants kept for AppColorTheme.kt (now inert) and any
+// remaining references; the live palette comes from the schemes below.
 internal val BrandLime = Color(0xFFA7FE28)
 internal val BrandBlue = Color(0xFF8EA8FF)
 internal val BrandGreen = Color(0xFF69D69E)
@@ -37,53 +54,79 @@ val PocketBlue: Color
 val PocketGreen: Color
     @Composable get() = LocalPocketAccents.current.success
 
-val PocketBackground = Color(0xFF0B0E14)
-val PocketSurface = Color(0xFF131821)
-val PocketSurfaceVariant = Color(0xFF1B222D)
-val PocketOutline = Color(0xFF2A3240)
+val PocketBackground = Color(0xFF262624)
+val PocketSurface = Color(0xFF2E2E2B)
+val PocketSurfaceVariant = Color(0xFF35332F)
+val PocketOutline = Color(0xFF55534C)
 
 private val DarkColors = darkColorScheme(
-    primary = BrandLime,
-    onPrimary = Color(0xFF1A2600),
-    primaryContainer = Color(0xFF2C4210),
-    onPrimaryContainer = Color(0xFFE6FFB8),
-    secondary = BrandBlue,
-    onSecondary = Color(0xFF001F58),
-    tertiary = BrandGreen,
-    onTertiary = Color(0xFF00391E),
-    background = PocketBackground,
-    onBackground = Color(0xFFE6EDF3),
-    surface = PocketSurface,
-    onSurface = Color(0xFFE6EDF3),
-    surfaceVariant = PocketSurfaceVariant,
-    onSurfaceVariant = Color(0xFF9AA0A6),
-    outline = PocketOutline,
-    outlineVariant = Color(0xFF333B4A),
+    primary = KodexClay,
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFF46322A),
+    onPrimaryContainer = Color(0xFFF0C4B2),
+    secondary = KodexBlue,
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFF26384D),
+    onSecondaryContainer = Color(0xFFBCD6FF),
+    tertiary = ClaudeSuccess,
+    onTertiary = Color(0xFF0C2413),
+    tertiaryContainer = Color(0xFF1E3325),
+    onTertiaryContainer = Color(0xFFBCE8C6),
+    background = Color(0xFF262624),
+    onBackground = Color(0xFFF5F4EF),
+    surface = Color(0xFF2E2E2B),
+    onSurface = Color(0xFFF5F4EF),
+    surfaceVariant = Color(0xFF35332F),
+    onSurfaceVariant = Color(0xFFB8B5A9),
+    surfaceContainerLowest = Color(0xFF1F1E1D),
+    surfaceContainerLow = Color(0xFF252523),
+    surfaceContainer = Color(0xFF2A2A28),
+    surfaceContainerHigh = Color(0xFF2E2E2B),
+    surfaceContainerHighest = Color(0xFF35332F),
+    outline = Color(0xFF57554E),
+    outlineVariant = Color(0xFF3E3C37),
+    error = Color(0xFFFF6B80),
+    onError = Color(0xFF3D0A12),
+    errorContainer = Color(0xFF4A1520),
+    onErrorContainer = Color(0xFFFFD9DE),
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF4E8A00),
+    primary = KodexClay,
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFE2F3C2),
-    onPrimaryContainer = Color(0xFF223600),
-    secondary = Color(0xFF3366CC),
+    primaryContainer = Color(0xFFF7E3D8),
+    onPrimaryContainer = Color(0xFF7C3A22),
+    secondary = KodexBlue,
     onSecondary = Color(0xFFFFFFFF),
-    tertiary = Color(0xFF1B8A5A),
+    secondaryContainer = Color(0xFFDCEBFF),
+    onSecondaryContainer = Color(0xFF0A4E9E),
+    tertiary = ClaudeSuccess,
     onTertiary = Color(0xFFFFFFFF),
-    background = Color(0xFFF6F8FA),
-    onBackground = Color(0xFF1F2328),
+    tertiaryContainer = Color(0xFFDDF2E2),
+    onTertiaryContainer = Color(0xFF14532A),
+    background = Color(0xFFFAF9F5),
+    onBackground = Color(0xFF141413),
     surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF1F2328),
-    surfaceVariant = Color(0xFFEAEFF5),
-    onSurfaceVariant = Color(0xFF57606A),
-    outline = Color(0xFFD0D7DE),
-    outlineVariant = Color(0xFFD8DEE4),
+    onSurface = Color(0xFF141413),
+    surfaceVariant = Color(0xFFEFE9DE),
+    onSurfaceVariant = Color(0xFF6C6A64),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFFFFFFF),
+    surfaceContainer = Color(0xFFF5F0E8),
+    surfaceContainerHigh = Color(0xFFEFE9DE),
+    surfaceContainerHighest = Color(0xFFE8E0D2),
+    outline = Color(0xFFCFC9BE),
+    outlineVariant = Color(0xFFE6DFD8),
+    error = Color(0xFFC64545),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFF9DEDC),
+    onErrorContainer = Color(0xFF5F1414),
 )
 
 /**
- * Claude-style reading serif (Source Serif 4, OFL) — the free match for
- * Anthropic Serif used for Claude's response text; applied to agent
- * message prose. UI stays Inter, code stays JetBrains Mono.
+ * Claude-style reading serif (Source Serif 4, OFL) — literally in Claude's
+ * extracted fallback stack; used for display titles, the home greeting and
+ * agent message prose. UI stays Inter, code stays JetBrains Mono.
  */
 val SourceSerifFontFamily = FontFamily(
     Font(R.font.source_serif_regular, FontWeight.Normal),
@@ -124,37 +167,35 @@ val AppTypography = Typography(
 
 enum class AppThemeMode { SYSTEM, DARK, LIGHT }
 
+/** Settings -> Font style: Default = the bundled Claude pairing; System = the device font. */
+enum class AppFontStyle { DEFAULT, SYSTEM }
+
 @Composable
 fun PocketTheme(
     themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     colorTheme: AppColorTheme = AppColorTheme.NONE,
+    fontStyle: AppFontStyle = AppFontStyle.DEFAULT,
     content: @Composable () -> Unit,
 ) {
-    // A selected color theme carries its own full palette and brightness and
-    // wins over the mode row; with no color theme (NONE) the Dark / Light /
-    // System mode drives the base Kodex schemes exactly as before.
+    // The 8 custom color themes are retired (v3.2.32): [colorTheme] is still
+    // accepted so existing call sites compile, but the palette always comes
+    // from the Color mode (System / Light / Dark) over the Claude schemes.
+    @Suppress("UNUSED_VARIABLE")
+    val retiredColorTheme = colorTheme
     val systemDark = isSystemInDarkTheme()
-    val isDark: Boolean
-    val colorScheme: ColorScheme
-    val accents: PocketAccentPalette
-    if (colorTheme != AppColorTheme.NONE) {
-        isDark = colorTheme.isDark
-        colorScheme = colorTheme.colorScheme
-        accents = colorTheme.accents
-    } else {
-        isDark = when (themeMode) {
-            AppThemeMode.DARK -> true
-            AppThemeMode.LIGHT -> false
-            AppThemeMode.SYSTEM -> systemDark
-        }
-        colorScheme = if (isDark) DarkColors else LightColors
-        accents = PocketAccentPalette(accent = BrandLime, success = BrandGreen, info = BrandBlue)
+    val isDark = when (themeMode) {
+        AppThemeMode.DARK -> true
+        AppThemeMode.LIGHT -> false
+        AppThemeMode.SYSTEM -> systemDark
     }
+    val colorScheme: ColorScheme = if (isDark) DarkColors else LightColors
+    val accents = PocketAccentPalette(
+        accent = KodexClay,
+        success = ClaudeSuccess,
+        info = ClaudeInfo,
+    )
 
     // Sync the system status/navigation bar icons with the ACTUAL app theme.
-    // The XML theme is Theme.Material.Light, so without this the system draws
-    // dark icons even when the app renders dark (invisible on dark background).
-    // Light icons in dark theme, dark icons in light theme.
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
@@ -165,8 +206,8 @@ fun PocketTheme(
         }
     }
 
-    // Kodex: text selection follows the app accent (lime), never the
-    // default system blue highlight, in every theme.
+    // Text selection follows the Clay accent — never the default blue
+    // web-style highlight.
     val selectionColors = TextSelectionColors(
         handleColor = accents.accent,
         backgroundColor = accents.accent.copy(alpha = 0.35f),
@@ -177,7 +218,7 @@ fun PocketTheme(
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = AppTypography,
+            typography = if (fontStyle == AppFontStyle.SYSTEM) BaseTypography else AppTypography,
             content = content,
         )
     }

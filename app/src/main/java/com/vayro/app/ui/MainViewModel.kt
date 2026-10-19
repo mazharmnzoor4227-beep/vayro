@@ -248,6 +248,7 @@ data class AppUiState(
     val activeApiKeyName: String? = null,
     val themeMode: com.vayro.app.ui.theme.AppThemeMode = com.vayro.app.ui.theme.AppThemeMode.DARK,
     val colorTheme: com.vayro.app.ui.theme.AppColorTheme = com.vayro.app.ui.theme.AppColorTheme.NONE,
+    val fontStyle: com.vayro.app.ui.theme.AppFontStyle = com.vayro.app.ui.theme.AppFontStyle.DEFAULT,
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val apiPingMessage: String? = null,
     val projects: List<Project> = emptyList(),
@@ -773,6 +774,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .getOrDefault(com.vayro.app.ui.theme.AppThemeMode.DARK),
             colorTheme = runCatching { com.vayro.app.ui.theme.AppColorTheme.valueOf(preferences.colorTheme.uppercase()) }
                 .getOrDefault(com.vayro.app.ui.theme.AppColorTheme.NONE),
+            fontStyle = runCatching { com.vayro.app.ui.theme.AppFontStyle.valueOf(preferences.fontStyle.uppercase()) }
+                .getOrDefault(com.vayro.app.ui.theme.AppFontStyle.DEFAULT),
             projects = initialProjects,
             activeProject = initialActiveProject,
             workspaceVisible = isWarmReady && initialActiveProject != null,
@@ -1314,6 +1317,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setColorTheme(theme: com.vayro.app.ui.theme.AppColorTheme) {
         preferences.colorTheme = theme.name.lowercase()
         _state.update { it.copy(colorTheme = theme) }
+    }
+
+    /** Font style (Settings): Default = bundled Claude pairing, System = device font. */
+    fun setFontStyle(style: com.vayro.app.ui.theme.AppFontStyle) {
+        preferences.fontStyle = style.name.lowercase()
+        _state.update { it.copy(fontStyle = style) }
     }
 
     // ---- Milestone 1: security domain moved to SecurityCoordinator. ----

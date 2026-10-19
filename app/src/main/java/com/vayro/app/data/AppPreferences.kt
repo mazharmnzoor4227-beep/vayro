@@ -138,6 +138,21 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("color_theme", "none") ?: "none"
         set(value) { preferences.edit().putString("color_theme", value).commit() }
 
+    /** Font style (AppFontStyle name); "default" = bundled Claude pairing, "system" = device font. */
+    var fontStyle: String
+        get() = preferences.getString("font_style", "default") ?: "default"
+        set(value) { preferences.edit().putString("font_style", value).commit() }
+
+    /** Settings -> haptic feedback switch for the shell. */
+    var hapticsEnabled: Boolean
+        get() = preferences.getBoolean("haptics_enabled", true)
+        set(value) { preferences.edit().putBoolean("haptics_enabled", value).commit() }
+
+    /** Projects/chats the user pinned in the sidebar or Chats screen. */
+    var pinnedProjectIds: Set<String>
+        get() = preferences.getStringSet("pinned_project_ids", emptySet()) ?: emptySet()
+        set(value) { preferences.edit().putStringSet("pinned_project_ids", value).commit() }
+
     var legacySeededCredentialRemoved: Boolean
         get() = preferences.getBoolean("legacy_seeded_credential_removed", false)
         set(value) { preferences.edit().putBoolean("legacy_seeded_credential_removed", value).commit() }

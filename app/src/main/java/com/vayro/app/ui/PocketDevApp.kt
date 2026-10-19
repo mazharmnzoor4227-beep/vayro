@@ -113,6 +113,7 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Factory
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Hub
@@ -314,11 +315,18 @@ import androidx.documentfile.provider.DocumentFile
 
 // Kodex branding is rendered in the shared setup headers.
 private enum class RootScreen(val label: String, val icon: ImageVector) {
+    CHAT_HOME("Kodex", Icons.AutoMirrored.Filled.Chat),
+    CHATS("Chats", Icons.AutoMirrored.Filled.Chat),
     PROJECTS("Projects", Icons.Default.Folder),
-    AGENT("Agent", Icons.Default.SmartToy),
+    CODE("Code", Icons.Default.Code),
+    AGENT("Providers & Agents", Icons.Default.SmartToy),
     SKILLS("Skills", Icons.Default.Extension),
-    MARKETPLACE("Market", Icons.Default.Storefront),
+    CONNECTORS("Connectors", Icons.Default.Hub),
+    MARKETPLACE("Marketplace", Icons.Default.Storefront),
     SETTINGS("Settings", Icons.Default.Settings),
+    LEGACY_SETTINGS("All settings", Icons.Default.Settings),
+    CAPABILITIES("Capabilities", Icons.Default.Tune),
+    VOICE_SETTINGS("Voice", Icons.Default.Mic),
 }
 private enum class WorkspaceTab(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Default.Home),
@@ -534,6 +542,26 @@ fun PocketDevApp(
         return
     }
 
+    // Chat-home hand-off (v3.2.32): a prompt/attachments sent from the
+    // Claude chat home create the quick project first; once the workspace
+    // is visible they are delivered through the normal send path.
+    var pendingHomePrompt by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingHomeAttachments by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    LaunchedEffect(state.workspaceVisible, state.activeProject?.id) {
+        if (state.workspaceVisible && state.activeProject != null &&
+            state.projects.firstOrNull()?.id == state.activeProject?.id
+        ) {
+            if (pendingHomeAttachments.isNotEmpty()) {
+                viewModel.addChatAttachments(pendingHomeAttachments)
+                pendingHomeAttachments = emptyList()
+            }
+            pendingHomePrompt?.let { homePrompt ->
+                pendingHomePrompt = null
+                viewModel.sendPrompt(homePrompt)
+            }
+        }
+    }
+
     when {
         state.startupStage == StartupStage.CHECKING -> StartupLoadingScreen(
             state = state,
@@ -702,6 +730,14 @@ fun PocketDevApp(
             projectsListState = projectsListState,
             authViewModel = authViewModel,
             onNavigateToAuth = { showAuthModal = true },
+            onHomeSend = { homeText ->
+                pendingHomePrompt = homeText
+                viewModel.createQuickProject()
+            },
+            onHomeAttach = { homeUris ->
+                pendingHomeAttachments = homeUris
+                viewModel.createQuickProject()
+            },
             onOpenAppFactory = { openStudio(OverlayScreen.APP_FACTORY) },
             onOpenTeamStudio = { openStudio(OverlayScreen.TEAM_STUDIO) },
             onOpenCloudHybrid = { openStudio(OverlayScreen.CLOUD_HYBRID) },
@@ -2475,8 +2511,10 @@ private fun RootScreenHost(
     onOpenTeamStudio: () -> Unit = {},
     onOpenCloudHybrid: () -> Unit = {},
     onOpenGitHubStudio: () -> Unit = {},
+    onHomeSend: (String) -> Unit = {},
+    onHomeAttach: (List<Uri>) -> Unit = {},
 ) {
-    var screen by rememberSaveable { mutableStateOf(RootScreen.PROJECTS) }
+    var screen by rememberSaveable { mutableStateOf(RootScreen.CHAT_HOME) }
     // Kodex drawer shell: the side drawer is the single home for every
     // section; Back from a section returns here with the drawer re-opened
     // (inventory rule R1), and Back with the drawer open just closes it.
@@ -2484,12 +2522,37 @@ private fun RootScreenHost(
     var skillsInitialTab by rememberSaveable { mutableIntStateOf(0) }
     var skillsTabEpoch by rememberSaveable { mutableIntStateOf(0) }
     BackHandler(enabled = drawerOpen) { drawerOpen = false }
-    BackHandler(enabled = !drawerOpen && screen != RootScreen.PROJECTS) {
-        screen = RootScreen.PROJECTS
-        drawerOpen = true
+    BackHandler(enabled = !drawerOpen && screen != RootScreen.CHAT_HOME) {
+        when (screen) {
+            RootScreen.CAPABILITIES, RootScreen.VOICE_SETTINGS, RootScreen.LEGACY_SETTINGS ->
+                screen = RootScreen.SETTINGS
+            else -> {
+                screen = RootScreen.CHAT_HOME
+                drawerOpen = true
+            }
+        }
     }
     var showQuickTerminal by rememberSaveable { mutableStateOf(false) }
     var showPrivacyPolicy by rememberSaveable { mutableStateOf(false) }
+    val shellContext = LocalContext.current
+    val appPreferences = remember { AppPreferences(shellContext) }
+    var pinnedProjectIds by remember { mutableStateOf(appPreferences.pinnedProjectIds) }
+    var hapticsEnabled by remember { mutableStateOf(appPreferences.hapticsEnabled) }
+    val togglePin: (Project) -> Unit = { project ->
+        pinnedProjectIds = if (project.id in pinnedProjectIds) {
+            pinnedProjectIds - project.id
+        } else {
+            pinnedProjectIds + project.id
+        }
+        appPreferences.pinnedProjectIds = pinnedProjectIds
+    }
+    val hostAuthState = authViewModel?.authState?.collectAsStateWithLifecycle()?.value
+        ?: AuthState.Unauthenticated
+    val hostUser = when (hostAuthState) {
+        is AuthState.Authenticated -> hostAuthState.user
+        is AuthState.EmailVerificationRequired -> hostAuthState.user
+        else -> null
+    }
     val marketplaceInstalledIds by viewModel.marketplaceInstalledIds.collectAsStateWithLifecycle()
     val marketplaceUpdatesAvailable by viewModel.marketplaceUpdatesAvailable.collectAsStateWithLifecycle()
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -2505,27 +2568,6 @@ private fun RootScreenHost(
     } else {
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Text(
-                            if (screen == RootScreen.PROJECTS) "Kodex" else screen.label,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { drawerOpen = true }) {
-                            Icon(Icons.Default.Menu, contentDescription = "Menu")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { viewModel.createQuickProject() }) {
-                            Icon(Icons.Default.Edit, contentDescription = "New chat")
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
-                )
-            },
     ) { padding ->
         val authState = authViewModel?.authState?.collectAsStateWithLifecycle()?.value ?: AuthState.Unauthenticated
         val authUiState = authViewModel?.uiState?.collectAsStateWithLifecycle()?.value
@@ -2578,6 +2620,37 @@ private fun RootScreenHost(
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
             when (screen) {
+                RootScreen.CHAT_HOME -> ChatHomeScreen(
+                    agentKind = state.agentKind,
+                    freeModeEnabled = state.freeModeEnabled,
+                    appUpdateAvailable = state.appUpdate != null,
+                    onOpenDrawer = { drawerOpen = true },
+                    onOpenUpdate = { screen = RootScreen.PROJECTS },
+                    onSend = onHomeSend,
+                    onAttach = onHomeAttach,
+                    onSelectAgent = viewModel::selectAgent,
+                    onMoreAgents = { screen = RootScreen.AGENT },
+                    onOpenConnectors = { screen = RootScreen.CONNECTORS },
+                )
+                RootScreen.CHATS -> ChatsScreen(
+                    projects = state.projects,
+                    pinnedIds = pinnedProjectIds,
+                    onOpenDrawer = { drawerOpen = true },
+                    onOpenProject = { project -> viewModel.openProject(project) },
+                    onNewChat = { viewModel.createQuickProject() },
+                    onDeleteProjects = { ids -> ids.forEach { viewModel.deleteProject(it) } },
+                )
+                RootScreen.CODE -> CodeHubScreen(
+                    onBack = {
+                        screen = RootScreen.CHAT_HOME
+                        drawerOpen = true
+                    },
+                    onOpenTerminal = { showQuickTerminal = true },
+                    onOpenGitHubBuild = onOpenCloudHybrid,
+                    onOpenGitHubStudio = onOpenGitHubStudio,
+                    onOpenProjects = { screen = RootScreen.PROJECTS },
+                    onOpenTeamStudio = onOpenTeamStudio,
+                )
                 RootScreen.PROJECTS -> ProjectsScreen(
                     state = state,
                     listState = projectsListState,
@@ -2683,8 +2756,112 @@ private fun RootScreenHost(
                     onClearMcpRunResult = viewModel::clearMcpRunResult,
                     initialTab = skillsInitialTab,
                 ) }
+                RootScreen.CONNECTORS -> Column(Modifier.fillMaxSize()) {
+                    ConnectorsHeader(
+                        serverCount = state.mcpServers.size,
+                        toolCount = state.mcpTools.size,
+                        onBack = {
+                            screen = RootScreen.CHAT_HOME
+                            drawerOpen = true
+                        },
+                        onBrowse = { screen = RootScreen.MARKETPLACE },
+                        onAddCustom = {
+                            skillsInitialTab = 1
+                            skillsTabEpoch++
+                            screen = RootScreen.SKILLS
+                        },
+                    )
+                    key(skillsTabEpoch) { SkillsScreen(
+                    installed = state.skills,
+                    results = state.skillSearchResults,
+                    busy = state.skillsBusy,
+                    message = state.skillsMessage,
+                    skillUpdates = state.skillUpdates,
+                    onSearch = viewModel::searchSkills,
+                    onImportGitHub = viewModel::importSkillFromGitHub,
+                    onScanGitHub = viewModel::scanGitHubSkill,
+                    scanReport = state.skillScanReport,
+                    scanBusy = state.skillScanBusy,
+                    onInstallScanned = viewModel::installScannedSkill,
+                    onDismissScan = viewModel::dismissSkillScan,
+                    onImportZip = viewModel::importSkillFromUri,
+                    onImportFolder = viewModel::importSkillFromFolder,
+                    onRemove = viewModel::removeSkill,
+                    onToggleSkill = viewModel::toggleSkill,
+                    onCheckUpdates = viewModel::checkSkillUpdates,
+                    onUpdate = viewModel::updateSkill,
+                    autoUpdateEnabled = state.autoUpdateToolsAndSkills,
+                    onToggleAutoUpdate = viewModel::toggleAutoUpdateToolsAndSkills,
+                    autoUpdateStatus = state.toolsAutoUpdateMessage,
+                    mcpServers = state.mcpServers,
+                    mcpCatalog = state.mcpCatalog,
+                    mcpTools = state.mcpTools,
+                    mcpAuditLogs = state.mcpAuditLogs,
+                    mcpBusy = state.mcpBusy,
+                    mcpMessage = state.mcpMessage,
+                    onInstallMcpTemplate = viewModel::installMcpTemplate,
+                    onInstallCustomMcp = { server, secrets -> viewModel.installMcpServer(server, secrets) },
+                    onToggleMcpServer = viewModel::toggleMcpServer,
+                    onRemoveMcpServer = viewModel::removeMcpServer,
+                    onDiscoverMcpTools = viewModel::discoverMcpTools,
+                    onClearMcpAuditLogs = viewModel::clearMcpAuditLogs,
+                    onCheckMcpToolPermission = viewModel::mcpToolDecision,
+                    onRunMcpTool = viewModel::runMcpTool,
+                    mcpRunResult = state.mcpRunResult,
+                    mcpRunTarget = state.mcpRunTarget,
+                    mcpRunRunning = state.mcpRunRunning,
+                    onClearMcpRunResult = viewModel::clearMcpRunResult,
+                    initialTab = 1,
+                ) }
+                }
+                RootScreen.SETTINGS -> ClaudeSettingsHome(
+                    accountName = hostUser?.displayName?.ifBlank { null }
+                        ?: hostUser?.email
+                        ?: if (hostUser != null) "Signed in" else "Guest mode",
+                    accountEmail = hostUser?.email,
+                    isGuest = hostUser == null,
+                    colorMode = state.themeMode,
+                    fontStyle = state.fontStyle,
+                    hapticsEnabled = hapticsEnabled,
+                    connectorsValue = "${state.mcpServers.size} connected",
+                    onBack = {
+                        screen = RootScreen.CHAT_HOME
+                        drawerOpen = true
+                    },
+                    onLogin = onNavigateToAuth,
+                    onOpenProfile = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenLicense = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenCapabilities = { screen = RootScreen.CAPABILITIES },
+                    onOpenConnectors = { screen = RootScreen.CONNECTORS },
+                    onOpenPermissions = { screen = RootScreen.LEGACY_SETTINGS },
+                    onColorMode = viewModel::setThemeMode,
+                    onFontStyle = viewModel::setFontStyle,
+                    onOpenVoice = { screen = RootScreen.VOICE_SETTINGS },
+                    onToggleHaptics = { enabled ->
+                        hapticsEnabled = enabled
+                        appPreferences.hapticsEnabled = enabled
+                    },
+                    onOpenNotifications = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenDeveloperTools = { screen = RootScreen.LEGACY_SETTINGS },
+                    onOpenPrivacy = { showPrivacyPolicy = true },
+                    onOpenAbout = { screen = RootScreen.LEGACY_SETTINGS },
+                    onLogout = { authViewModel?.signOut() },
+                )
+                RootScreen.CAPABILITIES -> CapabilitiesScreen(
+                    onBack = { screen = RootScreen.SETTINGS },
+                    autoUpdateSkills = state.autoUpdateToolsAndSkills,
+                    onToggleAutoUpdateSkills = viewModel::toggleAutoUpdateToolsAndSkills,
+                    freeMode = state.freeModeEnabled,
+                    onToggleFreeMode = viewModel::setFreeModeEnabled,
+                )
+                RootScreen.VOICE_SETTINGS -> VoiceSettingsScreen(
+                    onBack = { screen = RootScreen.SETTINGS },
+                )
                 RootScreen.MARKETPLACE -> MarketplaceScreen(
-                    onBack = { screen = RootScreen.PROJECTS },
+                    onBack = {
+                        screen = RootScreen.CHAT_HOME
+                        drawerOpen = true
+                    },
                     onInstallItem = { item -> viewModel.installMarketplaceItem(item) },
                     onUninstallItem = { item -> viewModel.uninstallMarketplaceItem(item) },
                     onPublishItem = { item -> viewModel.publishMarketplaceItem(item) },
@@ -2693,7 +2870,7 @@ private fun RootScreenHost(
                     onUpdateItem = { item -> viewModel.updateMarketplaceItem(item) },
                     onScreenOpened = { viewModel.checkMarketplaceUpdates() },
                 )
-                RootScreen.SETTINGS -> SettingsScreen(
+                RootScreen.LEGACY_SETTINGS -> SettingsScreen(
                     state = state,
                     onSaveProvider = { profile, key ->
                         viewModel.updateProvider(profile, key)
@@ -2749,53 +2926,45 @@ private fun RootScreenHost(
     }
 }
     if (drawerOpen) {
-        KodexDrawerOverlay(
-            state = state,
-            currentScreen = screen,
+        KodexSidebar(
+            userInitial = (hostUser?.displayName?.firstOrNull() ?: hostUser?.email?.firstOrNull() ?: 'K')
+                .uppercaseChar().toString(),
+            userName = hostUser?.displayName?.ifBlank { null } ?: hostUser?.email ?: "Guest",
+            projects = state.projects,
+            pinnedIds = pinnedProjectIds,
+            activeProjectId = state.activeProject?.id,
+            pushEnabled = state.activeProject != null,
             onClose = { drawerOpen = false },
             onNewChat = {
                 drawerOpen = false
                 viewModel.createQuickProject()
             },
-            onOpenProject = { project ->
-                drawerOpen = false
-                viewModel.openProject(project)
-            },
-            onSelectScreen = { target ->
-                screen = target
-                drawerOpen = false
-            },
+            onOpenChats = { screen = RootScreen.CHATS },
+            onOpenProjects = { screen = RootScreen.PROJECTS },
+            onOpenCode = { screen = RootScreen.CODE },
+            onOpenProviders = { screen = RootScreen.AGENT },
             onOpenSkills = {
                 skillsInitialTab = 0
                 skillsTabEpoch++
                 screen = RootScreen.SKILLS
-                drawerOpen = false
             },
-            onOpenSkillsMcp = {
-                skillsInitialTab = 1
-                skillsTabEpoch++
-                screen = RootScreen.SKILLS
-                drawerOpen = false
+            onOpenMarketplace = { screen = RootScreen.MARKETPLACE },
+            onOpenConnectors = { screen = RootScreen.CONNECTORS },
+            onOpenAppFactory = onOpenAppFactory,
+            onOpenProject = { project -> viewModel.openProject(project) },
+            onTogglePin = togglePin,
+            onRenameProject = { project, newName -> viewModel.renameProject(project.id, newName) },
+            onDeleteProject = { project -> viewModel.deleteProject(project.id) },
+            onPushToGitHub = {
+                viewModel.gitPush { ok, message ->
+                    Toast.makeText(shellContext, message, Toast.LENGTH_LONG).show()
+                }
             },
-            onOpenAppFactory = {
+            onOpenGitHubBuild = onOpenCloudHybrid,
+            onOpenTerminal = { showQuickTerminal = true },
+            onOpenSettings = {
                 drawerOpen = false
-                onOpenAppFactory()
-            },
-            onOpenTeamStudio = {
-                drawerOpen = false
-                onOpenTeamStudio()
-            },
-            onOpenGitHubBuild = {
-                drawerOpen = false
-                onOpenCloudHybrid()
-            },
-            onOpenGitHubStudio = {
-                drawerOpen = false
-                onOpenGitHubStudio()
-            },
-            onOpenTerminal = {
-                drawerOpen = false
-                showQuickTerminal = true
+                screen = RootScreen.SETTINGS
             },
         )
     }
@@ -5279,7 +5448,8 @@ private fun WorkspaceScreen(
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 "IDE",
-                                fontWeight = FontWeight.Bold,
+                                fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
+                                fontWeight = FontWeight.SemiBold,
                                 fontSize = 17.sp,
                                 maxLines = 1,
                             )
@@ -5513,6 +5683,17 @@ private fun WorkspaceScreen(
                     emergencyKillSwitchActive = state.emergencyKillSwitchActive,
                     onResetEmergencyKillSwitch = onResetEmergencyKillSwitch,
                     onApprovalWithLevel = onApprovalWithLevel,
+                    onAttachUris = onAddAttachments,
+                    onSelectAgent = { kind -> viewModel?.selectAgent(kind) },
+                    freeModeEnabled = state.freeModeEnabled,
+                    projectName = state.activeProject?.name.orEmpty(),
+                    onPushToGitHub = {
+                        viewModel?.gitPush { _, message ->
+                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onOpenGitHubBuild = onOpenCloudHybrid,
+                    onOpenAppFactory = onOpenAppFactory,
                 )
                 WorkspaceTab.FILES -> FilesTab(
                     files = state.workspaceFiles,
@@ -6277,6 +6458,13 @@ private fun ChatTab(
     emergencyKillSwitchActive: Boolean = false,
     onResetEmergencyKillSwitch: () -> Unit = {},
     onApprovalWithLevel: (com.vayro.app.security.PermissionLevel, Boolean) -> Unit = { _, _ -> },
+    onAttachUris: (List<Uri>) -> Unit = {},
+    onSelectAgent: (AgentKind) -> Unit = {},
+    freeModeEnabled: Boolean = false,
+    projectName: String = "",
+    onPushToGitHub: () -> Unit = {},
+    onOpenGitHubBuild: () -> Unit = {},
+    onOpenAppFactory: () -> Unit = {},
 ) {
     val view = LocalView.current
     // Keep the screen on while the selected agent is working in this chat. Released automatically
@@ -6303,6 +6491,15 @@ private fun ChatTab(
     var showTikTokDialog by rememberSaveable { mutableStateOf(false) }
     var showWebLinkDialog by rememberSaveable { mutableStateOf(false) }
     var showGitHubDialog by rememberSaveable { mutableStateOf(false) }
+    var showAgentSheet by rememberSaveable { mutableStateOf(false) }
+    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture(),
+    ) { success ->
+        val uri = cameraPhotoUri
+        cameraPhotoUri = null
+        if (success && uri != null) onAttachUris(listOf(uri))
+    }
     var mentionQuery by remember { mutableStateOf<String?>(null) }
     var activeCommentTarget by remember { mutableStateOf<Triple<String, String?, String>?>(null) }
     val chatScope = rememberCoroutineScope()
@@ -6729,139 +6926,74 @@ private fun ChatTab(
                 }
 
                 if (toolsOpen) {
-                    Popup(
-                        alignment = Alignment.TopStart,
-                        offset = IntOffset(
-                            with(density) { 14.dp.roundToPx() },
-                            -toolsMenuHeightPx - with(density) { 8.dp.roundToPx() },
-                        ),
-                        onDismissRequest = { toolsOpen = false },
-                        properties = PopupProperties(focusable = true),
-                    ) {
-                    Surface(
-                        modifier = Modifier.onGloballyPositioned { toolsMenuHeightPx = it.size.height },
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        shadowElevation = 8.dp,
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .width(IntrinsicSize.Max)
-                                .padding(vertical = 4.dp),
-                        ) {
-                            val attachEnabled = pendingAttachments.size < 5
-                            AttachMenuRow(
-                                icon = Icons.Default.Image,
-                                title = "Image",
-                                subtitle = "Photo or screenshot — the agent can look at it",
-                                enabled = attachEnabled,
-                            ) {
-                                toolsOpen = false
-                                onAttach(arrayOf("image/*"))
-                            }
-                            AttachMenuRow(
-                                icon = Icons.Default.VideoFile,
-                                title = "Video",
-                                subtitle = "Clip or screen recording",
-                                enabled = attachEnabled,
-                            ) {
-                                toolsOpen = false
-                                onAttach(arrayOf("video/*"))
-                            }
-                            AttachMenuRow(
-                                icon = Icons.Default.AttachFile,
-                                title = "File",
-                                subtitle = "Any file, including ZIP",
-                                enabled = attachEnabled,
-                            ) {
-                                toolsOpen = false
-                                onAttach(arrayOf("*/*"))
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .clickable {
-                                        toolsOpen = false
-                                        showWorkspaceControls = !showWorkspaceControls
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Tune,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = if (showWorkspaceControls) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    if (scratchpadItems.isNotEmpty() && !showWorkspaceControls) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(6.dp)
-                                                .align(Alignment.TopEnd)
-                                                .background(PocketOrange, CircleShape),
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = "Customize",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .clickable {
-                                        toolsOpen = false
-                                        showYouTubeDialog = true
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.SmartDisplay,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = YouTubeBrandRed,
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text(
-                                    text = "YouTube",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                            }
-                            AttachMenuRow(
-                                icon = Icons.Default.MusicNote,
-                                title = "TikTok",
-                                subtitle = "Public video details from a link",
-                                enabled = true,
-                            ) {
-                                toolsOpen = false
-                                showTikTokDialog = true
-                            }
-                            AttachMenuRow(
-                                icon = Icons.Default.Link,
-                                title = "Web link",
-                                subtitle = "Fetch a page as agent context",
-                                enabled = true,
-                            ) {
-                                toolsOpen = false
-                                showWebLinkDialog = true
-                            }
-                            AttachMenuRow(
-                                icon = Icons.Default.Code,
-                                title = "GitHub repo",
-                                subtitle = "Clone and inspect a repository",
-                                enabled = true,
-                            ) {
-                                toolsOpen = false
-                                showGitHubDialog = true
-                            }
-                        }
-                    }
-                    }
+                    AddToChatSheet(
+                        onDismiss = { toolsOpen = false },
+                        currentProjectName = projectName,
+                        showWorkActions = true,
+                        workActionsEnabled = true,
+                        showConnectors = false,
+                        showCustomize = true,
+                        customizeActive = showWorkspaceControls,
+                        onCamera = {
+                            toolsOpen = false
+                            val uri = createCameraImageUri(context)
+                            cameraPhotoUri = uri
+                            cameraLauncher.launch(uri)
+                        },
+                        onPhotos = {
+                            toolsOpen = false
+                            onAttach(arrayOf("image/*", "video/*"))
+                        },
+                        onFiles = {
+                            toolsOpen = false
+                            onAttach(arrayOf("*/*"))
+                        },
+                        onYouTube = {
+                            toolsOpen = false
+                            showYouTubeDialog = true
+                        },
+                        onTikTok = {
+                            toolsOpen = false
+                            showTikTokDialog = true
+                        },
+                        onWebLink = {
+                            toolsOpen = false
+                            showWebLinkDialog = true
+                        },
+                        onGitHub = {
+                            toolsOpen = false
+                            showGitHubDialog = true
+                        },
+                        onPushToGitHub = {
+                            toolsOpen = false
+                            onPushToGitHub()
+                        },
+                        onGitHubBuild = {
+                            toolsOpen = false
+                            onOpenGitHubBuild()
+                        },
+                        onOpenFactory = {
+                            toolsOpen = false
+                            onOpenAppFactory()
+                        },
+                        onOpenConnectors = {},
+                        onCustomize = {
+                            toolsOpen = false
+                            showWorkspaceControls = !showWorkspaceControls
+                        },
+                    )
+                }
+                if (showAgentSheet) {
+                    SelectAgentSheet(
+                        selected = agentKind,
+                        freeModeEnabled = freeModeEnabled,
+                        onSelect = { kind ->
+                            showAgentSheet = false
+                            onSelectAgent(kind)
+                        },
+                        onMoreAgents = null,
+                        onDismiss = { showAgentSheet = false },
+                    )
                 }
 
                 if (voiceInputActive) {
@@ -6917,6 +7049,31 @@ private fun ChatTab(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .clickable { showAgentSheet = true }
+                                .align(if (inputLineCount > 1) Alignment.Bottom else Alignment.CenterVertically),
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    agentKind.title.removeSuffix(" CLI").removeSuffix(" Harness"),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                )
+                                Icon(
+                                    Icons.Default.KeyboardArrowDown,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                         BasicTextField(
                             value = prompt,
                             onValueChange = {
@@ -6941,7 +7098,7 @@ private fun ChatTab(
                                 Box(contentAlignment = Alignment.CenterStart) {
                                     if (prompt.isEmpty()) {
                                         Text(
-                                            text = "${executionMode.title} with ${agentKind.title}…",
+                                            text = "Message Kodex…",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 15.sp,
                                             maxLines = 1,
@@ -6994,12 +7151,14 @@ private fun ChatTab(
                                 modifier = Modifier
                                     .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                                     .clickable(
-                                        enabled = canSend,
+                                        enabled = true,
                                         onClick = {
                                             if (canSend) {
                                                 onSend(prompt)
                                                 prompt = ""
                                                 mentionQuery = null
+                                            } else {
+                                                onStartVoiceInput()
                                             }
                                         },
                                     )
@@ -7010,15 +7169,15 @@ private fun ChatTab(
                                     modifier = Modifier
                                         .size(36.dp)
                                         .background(
-                                            color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                            color = MaterialTheme.colorScheme.primary,
                                             shape = CircleShape,
                                         ),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.ArrowUpward,
-                                        contentDescription = "Send",
-                                        tint = if (canSend) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        imageVector = if (canSend) Icons.Default.ArrowUpward else Icons.Default.GraphicEq,
+                                        contentDescription = if (canSend) "Send" else "Voice mode",
+                                        tint = MaterialTheme.colorScheme.onPrimary,
                                         modifier = Modifier.size(19.dp),
                                     )
                                 }
@@ -7912,267 +8071,8 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
 
 
 // ---------------------------------------------------------------------------
-// Kodex side drawer (v3.2.31): ChatGPT/Claude-style menu that holds every
-// section in one place. Home stays chat-first; the drawer is an overlay, so
-// opening a section and pressing Back returns to Home with this drawer
-// re-opened at the same place (RootScreenHost owns that Back behaviour).
+// Kodex side drawer: replaced in v3.2.32 by KodexSidebar (ClaudeShell.kt).
 // ---------------------------------------------------------------------------
-
-@Composable
-private fun KodexDrawerOverlay(
-    state: AppUiState,
-    currentScreen: RootScreen,
-    onClose: () -> Unit,
-    onNewChat: () -> Unit,
-    onOpenProject: (Project) -> Unit,
-    onSelectScreen: (RootScreen) -> Unit,
-    onOpenSkills: () -> Unit,
-    onOpenSkillsMcp: () -> Unit,
-    onOpenAppFactory: () -> Unit,
-    onOpenTeamStudio: () -> Unit,
-    onOpenGitHubBuild: () -> Unit,
-    onOpenGitHubStudio: () -> Unit,
-    onOpenTerminal: () -> Unit,
-) {
-    var query by rememberSaveable { mutableStateOf("") }
-    BackHandler(onBack = onClose)
-    Box(Modifier.fillMaxSize()) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.5f))
-                .clickable(
-                    indication = null,
-                    interactionSource = remember { MutableInteractionSource() },
-                    onClick = onClose,
-                ),
-        )
-        Surface(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .fillMaxHeight()
-                .width(308.dp)
-                .pointerInput(onClose) {
-                    var totalDrag = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { totalDrag = 0f },
-                        onDragEnd = { totalDrag = 0f },
-                        onDragCancel = { totalDrag = 0f },
-                        onHorizontalDrag = { _, dragAmount ->
-                            totalDrag += dragAmount
-                            if (totalDrag < -90f) onClose()
-                        },
-                    )
-                },
-            shape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 8.dp,
-            shadowElevation = 24.dp,
-        ) {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                ) {
-                    BrandMark(compact = true)
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text("Kodex", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        Text(
-                            "Local AI coding workspace",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp,
-                        )
-                    }
-                }
-                Spacer(Modifier.height(10.dp))
-                KodexDrawerItem(
-                    icon = Icons.Default.Edit,
-                    label = "New Chat",
-                    selected = false,
-                    onClick = onNewChat,
-                )
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    placeholder = { Text("Search projects") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                )
-                val history = remember(state.projects, query) {
-                    state.projects
-                        .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
-                        .sortedByDescending { it.updatedAtMillis }
-                        .take(8)
-                }
-                if (history.isNotEmpty()) {
-                    KodexDrawerSectionLabel("History")
-                    history.forEach { project ->
-                        KodexDrawerItem(
-                            icon = Icons.Default.History,
-                            label = project.name,
-                            selected = false,
-                            badge = project.formattedUpdatedAt,
-                            onClick = { onOpenProject(project) },
-                        )
-                    }
-                }
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                )
-                KodexDrawerSectionLabel("Workspace")
-                KodexDrawerItem(
-                    icon = Icons.Default.SmartToy,
-                    label = "Providers & Agents",
-                    selected = currentScreen == RootScreen.AGENT,
-                    onClick = { onSelectScreen(RootScreen.AGENT) },
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Extension,
-                    label = "Skills",
-                    selected = false,
-                    onClick = onOpenSkills,
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Storefront,
-                    label = "Marketplace",
-                    selected = currentScreen == RootScreen.MARKETPLACE,
-                    onClick = { onSelectScreen(RootScreen.MARKETPLACE) },
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Hub,
-                    label = "Connectors · MCP",
-                    selected = false,
-                    onClick = onOpenSkillsMcp,
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Folder,
-                    label = "Projects / Files",
-                    selected = currentScreen == RootScreen.PROJECTS,
-                    onClick = { onSelectScreen(RootScreen.PROJECTS) },
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Factory,
-                    label = "App Factory",
-                    selected = false,
-                    onClick = onOpenAppFactory,
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Groups,
-                    label = "Team Studio",
-                    selected = false,
-                    onClick = onOpenTeamStudio,
-                )
-                KodexDrawerSectionLabel("Tools")
-                KodexDrawerItem(
-                    icon = Icons.Default.Terminal,
-                    label = "Terminal",
-                    selected = false,
-                    onClick = onOpenTerminal,
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.CloudQueue,
-                    label = "GitHub Build",
-                    selected = false,
-                    onClick = onOpenGitHubBuild,
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Code,
-                    label = "GitHub Studio",
-                    selected = false,
-                    onClick = onOpenGitHubStudio,
-                )
-                HorizontalDivider(
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                )
-                KodexDrawerItem(
-                    icon = Icons.Default.Settings,
-                    label = "Settings",
-                    selected = currentScreen == RootScreen.SETTINGS,
-                    onClick = { onSelectScreen(RootScreen.SETTINGS) },
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun KodexDrawerSectionLabel(text: String) {
-    Text(
-        text,
-        modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 4.dp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.SemiBold,
-    )
-}
-
-@Composable
-private fun KodexDrawerItem(
-    icon: ImageVector,
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    badge: String? = null,
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
-        color = if (selected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-        } else {
-            Color.Transparent
-        },
-        shape = RoundedCornerShape(12.dp),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                icon,
-                contentDescription = label,
-                modifier = Modifier.size(20.dp),
-                tint = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-            )
-            Spacer(Modifier.width(12.dp))
-            Text(
-                label,
-                fontSize = 14.sp,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (badge != null) {
-                Text(
-                    badge,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
 
 // ---------------------------------------------------------------------------
 // Kodex Delivered card (v3.2.31): shown under an agent message that reports
