@@ -40,7 +40,7 @@ class LiveCallProtocolTest {
         )
         val instruction = setup.getJSONObject("systemInstruction")
             .getJSONArray("parts").getJSONObject(0).getString("text")
-        assertTrue(instruction.contains("voice conversation"))
+        assertTrue(instruction.contains("voice assistant"))
     }
 
     @Test

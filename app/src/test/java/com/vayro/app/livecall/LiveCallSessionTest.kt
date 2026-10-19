@@ -44,6 +44,7 @@ class LiveCallSessionTest {
 
     private class Recorder : LiveCallSession.Listener {
         val readyLatch = CountDownLatch(1)
+        val readyCount = java.util.concurrent.atomic.AtomicInteger(0)
         val terminalLatch = CountDownLatch(1)
         val interruptedLatch = CountDownLatch(1)
         @Volatile var terminalMessage: String? = null
@@ -54,7 +55,10 @@ class LiveCallSessionTest {
         val switchExhausted = CopyOnWriteArrayList<String>()
         val switchActivated = CopyOnWriteArrayList<String>()
 
-        override fun onReady() = readyLatch.countDown()
+        override fun onReady() {
+            readyCount.incrementAndGet()
+            readyLatch.countDown()
+        }
         override fun onAudio(bytes: ByteArray) {
             audioChunks += bytes
         }
@@ -207,6 +211,10 @@ class LiveCallSessionTest {
         val setup = JSONObject(second.sent[0]).getJSONObject("setup")
         assertEquals("h-123", setup.getJSONObject("sessionResumption").getString("handle"))
         second.serverSend("""{"setupComplete":{}}""")
+        // Wait until the session has actually processed setupComplete
+        // (onReady fires after the ready flag is set) — sending earlier
+        // would race the event thread and the frame would be gated.
+        awaitTrue { rig.recorder.readyCount.get() == 2 }
         // Mic frames flow again on the resumed session.
         rig.session.sendAudio(byteArrayOf(9, 9))
         awaitTrue { second.sent.size == 2 }
