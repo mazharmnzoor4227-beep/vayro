@@ -308,7 +308,13 @@ class AgentProviderPresetTest {
         assertTrue(ProviderKind.COHERE in DEEPSEEK_HARNESS_PROVIDERS)
         assertTrue(ProviderKind.XAI in DEEPSEEK_HARNESS_PROVIDERS)
         assertFalse(ProviderKind.OPENAI in DEEPSEEK_HARNESS_PROVIDERS)
-        assertEquals(13, DEEPSEEK_HARNESS_PROVIDERS.size)
+        // v3.2.38 (Part L3): the five new catalog kinds joined the set.
+        assertTrue(ProviderKind.Z_AI in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.REQUESTY in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.OLLAMA_CLOUD in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.HUGGING_FACE in DEEPSEEK_HARNESS_PROVIDERS)
+        assertTrue(ProviderKind.LLM7 in DEEPSEEK_HARNESS_PROVIDERS)
+        assertEquals(18, DEEPSEEK_HARNESS_PROVIDERS.size)
     }
 
     @Test

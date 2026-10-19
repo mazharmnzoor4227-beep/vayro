@@ -50,7 +50,11 @@ class McpPlatformTest {
         // Retrieve from registry
         val retrieved = registry.getServer("sqlite")
         assertNotNull(retrieved)
-        assertEquals("npx -y @modelcontextprotocol/server-sqlite", retrieved?.command)
+        // v3.2.38 (Part Q): the official SQLite server is the Python
+        // mcp-server-sqlite run via uvx — the old npm name was not the
+        // official server and could never start.
+        assertEquals("uvx", retrieved?.command)
+        assertEquals(listOf("mcp-server-sqlite", "--db-path", "workspace.db"), retrieved?.args)
 
         // Reload from disk to verify persistence
         val reloadedRegistry = McpRegistry(baseDir)
