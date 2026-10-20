@@ -375,7 +375,7 @@ private fun PullRequestCard(
                     text = "${pr.baseBranch} ← ${pr.headBranch}",
                     modifier = Modifier.weight(1f),
                     fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

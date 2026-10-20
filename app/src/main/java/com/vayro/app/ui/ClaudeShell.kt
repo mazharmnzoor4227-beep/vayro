@@ -1091,6 +1091,7 @@ private fun HomeMessageRow(
                     Spacer(Modifier.height(6.dp))
                     Text(
                         message.taskText,
+                        fontFamily = SourceSerifFontFamily,
                         fontSize = 13.5.sp,
                         lineHeight = 19.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2157,6 +2158,7 @@ internal fun ChatHomeScreen(
                                 maxLines = COMPOSER_MAX_LINES,
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
+                                fontFamily = SourceSerifFontFamily,
                                 fontSize = 15.5.sp,
                                 lineHeight = 21.sp,
                             ),
@@ -2167,6 +2169,7 @@ internal fun ChatHomeScreen(
                                         Text(
                                             "Message Kodex…",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontFamily = SourceSerifFontFamily,
                                             fontSize = 15.5.sp,
                                         )
                                     }

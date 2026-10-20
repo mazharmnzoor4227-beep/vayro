@@ -437,7 +437,7 @@ fun GlobalSearchDialog(
                                     Text(
                                         text = ":${match.lineNumber}",
                                         fontSize = 11.sp,
-                                        fontFamily = FontFamily.Monospace,
+                                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -445,7 +445,7 @@ fun GlobalSearchDialog(
                                 Text(
                                     text = match.lineContent,
                                     fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 2,
                                 )

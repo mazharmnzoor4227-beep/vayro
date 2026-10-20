@@ -220,7 +220,7 @@ private fun FileDiffCard(
                                 Text(
                                     text = hunk.header,
                                     fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                 )
@@ -272,14 +272,14 @@ private fun DiffLineRow(line: GitDiffLine) {
         Text(
             text = (line.oldLineNumber?.toString() ?: "").padStart(4),
             fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             modifier = Modifier.width(36.dp)
         )
         Text(
             text = (line.newLineNumber?.toString() ?: "").padStart(4),
             fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             modifier = Modifier.width(36.dp)
         )
@@ -288,7 +288,7 @@ private fun DiffLineRow(line: GitDiffLine) {
             text = symbol,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
             color = textColor,
             modifier = Modifier.width(16.dp)
         )
@@ -296,7 +296,7 @@ private fun DiffLineRow(line: GitDiffLine) {
         Text(
             text = line.text,
             fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
             color = textColor,
             softWrap = false
         )

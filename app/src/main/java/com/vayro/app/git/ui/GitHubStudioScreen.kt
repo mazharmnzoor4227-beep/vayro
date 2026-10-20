@@ -640,7 +640,7 @@ private fun CommitsTab(
                                 Text(
                                     commit.shortHash,
                                     fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
@@ -818,7 +818,7 @@ private fun PullRequestsSection(
                             Text(pr.state.uppercase(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
                         }
                     }
-                    Text("${pr.headBranch} → ${pr.baseBranch}", fontSize = 11.5.sp, fontFamily = FontFamily.Monospace)
+                    Text("${pr.headBranch} → ${pr.baseBranch}", fontSize = 11.5.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
 
                     if (pr.state == "open") {
                         Button(
@@ -997,7 +997,7 @@ private fun AutonomousWorkflowTab(
                 ) {
                     Column(Modifier.padding(14.dp)) {
                         Text("🎉 Autonomous Workflow Completed!", fontWeight = FontWeight.Bold, color = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFFA5D6A7) else Color(0xFF2E7D32))
-                        Text("Pull Request: ${workflowState.prUrl}", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Pull Request: ${workflowState.prUrl}", fontSize = 12.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }

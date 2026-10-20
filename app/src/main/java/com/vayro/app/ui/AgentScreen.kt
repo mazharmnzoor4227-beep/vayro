@@ -483,7 +483,7 @@ fun AgentScreen(
                                         Text(
                                             modelId,
                                             fontSize = 11.sp,
-                                            fontFamily = FontFamily.Monospace,
+                                            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
@@ -693,7 +693,7 @@ fun AgentScreen(
                                             Text(
                                                 opt.id,
                                                 fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace,
+                                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
@@ -784,7 +784,7 @@ fun AgentScreen(
                                             Text(
                                                 option.id,
                                                 fontSize = 11.sp,
-                                                fontFamily = FontFamily.Monospace,
+                                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
@@ -1758,7 +1758,7 @@ private fun AgentAntigravityCard(
                                 Text(
                                     currentModel,
                                     fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -2230,7 +2230,7 @@ private fun AgentProviderCard(
                                                 Modifier.fillMaxWidth().clickable { onDshApi(option) }.padding(horizontal = 12.dp, vertical = 9.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                             ) {
-                                                Text(option, Modifier.weight(1f), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                                                Text(option, Modifier.weight(1f), fontSize = 12.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
                                                 AgentSelectionDot(dshApi == option)
                                             }
                                         }

@@ -94,7 +94,7 @@ object HomeTurnClassifier {
 
     private val CREATION_VERBS = Regex(
         "\\b(build|create|make|generate|write|design|develop|code|add|fix|update|delete|remove|" +
-            "install|deploy|push|refactor|convert|upload|download|banao|bana|likho|likh)\\b",
+            "install|deploy|push|refactor|convert|upload|download|export|zip|banao|bana|likho|likh)\\b",
     )
 
     private val SCRIPT_VERBS = listOf(
@@ -107,15 +107,37 @@ object HomeTurnClassifier {
         "page", "pages", "file", "files", "project", "projects", "game", "games",
         "screen", "screens", "feature", "features", "tool", "tools",
         "script", "scripts", "bot", "form", "forms", "code", "function", "github",
+        // v3.2.43 (P3c): file-FORMAT artifacts — "give me this as a PDF"
+        // is a file-production job for Work, in every script the user
+        // writes. (Bare "document"/"letter"/"guide" stay OUT: those are
+        // written in home chat as documents, per P3b.)
+        "pdf", "zip", "archive", "पीडीएफ", "ज़िप", "پی ڈی ایف",
         "ऐप", "एप", "वेबसाइट", "फाइल", "फ़ाइल", "प्रोजेक्ट", "गेम", "पेज", "स्क्रीन", "कोड",
         "ایپ", "ویب سائٹ", "فائل", "پروجیکٹ", "گیم", "پیج",
     )
 
-    private val FILE_EXTENSIONS = Regex("\\.(kt|apk|html|json|xml|java|py|js|ts|md|csv)\\b")
+    private val FILE_EXTENSIONS = Regex("\\.(kt|apk|html|json|xml|java|py|js|ts|md|csv|pdf|zip|txt)\\b")
+
+    // v3.2.43 (P3c): the give/export form of a file-delivery request —
+    // "give me this as a PDF", "is ki PDF de do", "اس کی پی ڈی ایف دے دو"
+    // — carries no classic creation verb, but a named file FORMAT plus
+    // a give/export verb is still an unmistakable file-production
+    // command. Question forms stay conversation: rule 2 runs first.
+    private val FILE_FORMAT_WORDS = listOf("pdf", "zip", "archive", "पीडीएफ", "ज़िप", "پی ڈی ایف")
+    private val FILE_DELIVERY_VERBS = Regex("\\b(give|export|send|share)\\b")
+    private val FILE_DELIVERY_PHRASES = listOf("de do", "dedo", "bhej do", "دے دو")
+
+    private fun hasFileFormat(lower: String): Boolean =
+        FILE_FORMAT_WORDS.any { word ->
+            if (word.all { it.code < 128 }) {
+                Regex("\\b${Regex.escape(word)}\\b").containsMatchIn(lower)
+            } else {
+                lower.contains(word)
+            }
+        } || Regex("\\.(pdf|zip)\\b").containsMatchIn(lower)
 
     private fun isCreationCommand(lower: String): Boolean {
         val hasVerb = CREATION_VERBS.containsMatchIn(lower) || SCRIPT_VERBS.any { lower.contains(it) }
-        if (!hasVerb) return false
         val hasArtifact = ARTIFACTS.any { artifact ->
             if (artifact.all { it.code < 128 }) {
                 Regex("\\b${Regex.escape(artifact)}\\b").containsMatchIn(lower)
@@ -123,7 +145,12 @@ object HomeTurnClassifier {
                 lower.contains(artifact)
             }
         }
-        return hasArtifact || FILE_EXTENSIONS.containsMatchIn(lower)
+        if (hasVerb && (hasArtifact || FILE_EXTENSIONS.containsMatchIn(lower))) return true
+        if (!hasVerb && hasFileFormat(lower)) {
+            return FILE_DELIVERY_VERBS.containsMatchIn(lower) ||
+                FILE_DELIVERY_PHRASES.any { lower.contains(it) }
+        }
+        return false
     }
 
     private val LONG_BRIEF_VERBS = listOf(

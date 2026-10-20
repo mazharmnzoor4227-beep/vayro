@@ -69,6 +69,34 @@ class HomeTurnClassifierTest {
     }
 
     @Test
+    fun pdfZipDeliveryRequestsAreTasks() {
+        // v3.2.43 (P3c): file-production asks — verb + format, and the
+        // give-form (format + give verb) — in every script the user
+        // writes. These must reach Work so real files get produced.
+        task("Give me this as a PDF")
+        task("give me the master prompt as a zip")
+        task("convert this into a PDF file")
+        task("export this chat as a pdf")
+        task("is master prompt ki PDF bana do")
+        task("master prompt ko zip kar do")
+        task("yeh wali guide PDF mein de do")
+        task("मास्टर प्रॉम्प्ट की पीडीएफ बना दो")
+        task("اس کی پی ڈی ایف بنا دو")
+        task("create a file named master-prompt.pdf")
+    }
+
+    @Test
+    fun pdfZipQuestionsStayConversation() {
+        // Rule 2 still wins: asking ABOUT the formats is chat, and the
+        // polite question form stays in home (standing classifier law).
+        chat("what is a PDF file?")
+        chat("PDF kya hota hai")
+        chat("kya tum pdf bana sakte ho?")
+        chat("zip file kaise khulti hai")
+        chat("can you explain what a zip archive is")
+    }
+
+    @Test
     fun attachmentsAndPathsAreTasks() {
         assertFalse(
             HomeTurnClassifier.isConversational("hello", hasAttachments = true),

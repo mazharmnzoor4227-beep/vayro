@@ -657,14 +657,14 @@ fun SettingsScreen(
                                                                 "${formatTransferMb(downloaded)} of ${formatTransferMb(total)}",
                                                                 fontSize = 12.sp,
                                                                 fontWeight = FontWeight.SemiBold,
-                                                                fontFamily = FontFamily.Monospace,
+                                                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                                             )
                                                             state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
                                                                 Text(
                                                                     "${formatTransferSpeed(speed)} · ${formatTransferEta(downloaded, total, speed)} left",
                                                                     fontSize = 11.sp,
                                                                     color = PocketOrange,
-                                                                    fontFamily = FontFamily.Monospace,
+                                                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                                                 )
                                                             }
                                                         }
@@ -1414,7 +1414,7 @@ fun SettingsScreen(
                                                 Text(
                                                     entry.category.name,
                                                     fontSize = 9.5.sp,
-                                                    fontFamily = FontFamily.Monospace,
+                                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                                     fontWeight = FontWeight.Bold,
                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                                                     color = MaterialTheme.colorScheme.primary,
@@ -1435,7 +1435,7 @@ fun SettingsScreen(
                                     }
                                     if (entry.target.isNotBlank()) {
                                         Spacer(Modifier.height(3.dp))
-                                        Text("Target: " + entry.target, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                                        Text("Target: " + entry.target, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 11.sp)
                                     }
                                     if (entry.reason.isNotBlank()) {
                                         Spacer(Modifier.height(2.dp))
@@ -2097,7 +2097,7 @@ private fun ContributorCard(info: ContributorInfo) {
                 Column(Modifier.weight(1f)) {
                     Text(info.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Text(info.role, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(info.handle, fontSize = 11.sp, color = PocketOrange, fontFamily = FontFamily.Monospace)
+                    Text(info.handle, fontSize = 11.sp, color = PocketOrange, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

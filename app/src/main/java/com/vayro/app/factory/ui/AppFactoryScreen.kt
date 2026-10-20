@@ -658,7 +658,7 @@ private fun BuildAutomationTab(
                         if (buildResult.outputFile != null) {
                             Spacer(Modifier.height(8.dp))
                             Text("Output: ${buildResult.outputFile.name}", fontWeight = FontWeight.Medium, fontSize = 12.5.sp)
-                            Text("Path: ${buildResult.outputFile.absolutePath}", fontSize = 10.5.sp, fontFamily = FontFamily.Monospace)
+                            Text("Path: ${buildResult.outputFile.absolutePath}", fontSize = 10.5.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
 
                             Spacer(Modifier.height(12.dp))
                             Button(
@@ -692,7 +692,7 @@ private fun BuildAutomationTab(
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         buildLogs.takeLast(25).forEach { line ->
-                            Text(line, color = Color.Green, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                            Text(line, color = Color.Green, fontSize = 10.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
                         }
                     }
                 }
@@ -910,7 +910,7 @@ private fun PlayStoreTab(
                 ) {
                     Column(Modifier.padding(16.dp)) {
                         Text("Exported Bundle", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                        Text("Location: ${storeBundle.listingDir.absolutePath}", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("Location: ${storeBundle.listingDir.absolutePath}", fontSize = 11.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Spacer(Modifier.height(8.dp))
                         Text("• ${storeBundle.titleFile.name}", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text("• ${storeBundle.shortDescFile.name}", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)

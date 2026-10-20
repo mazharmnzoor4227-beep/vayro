@@ -50,6 +50,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -59,7 +60,9 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.vayro.app.ui.theme.JetBrainsMonoFontFamily
 import com.vayro.app.ui.theme.PocketGreen
+import com.vayro.app.ui.theme.SourceSerifFontFamily
 import com.vayro.app.ui.theme.PocketOrange
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -81,6 +84,50 @@ private const val MAX_RENDER_BLOCKS = 400
 private const val MAX_TABLE_COLUMNS = 12
 private const val MAX_TABLE_ROWS = 200
 private const val MAX_CODE_DISPLAY_CHARS = 40_000
+
+/**
+ * v3.2.43 (Parts 2+3a — Claude typography map): THE reading style for
+ * message content. Source Serif 4 (Kodex's legal stand-in for Claude's
+ * Tiempos/Anthropic Serif — Claude's own CSS names Source Serif 4 as
+ * its first serif fallback), 17sp regular, line height 27sp (~1.59;
+ * Claude's response body measures ~1.63, the map's Kodex target band
+ * is 1.55-1.6). Every content block in a message — paragraphs, list
+ * items, quotes, table values, the streaming preview and the plain
+ * fallback — renders in this one style, so a reply can never mix
+ * families or sizes mid-message. A caller may pass another family,
+ * but null now means the serif reading default: MarkdownText renders
+ * CONTENT, never UI chrome, so the platform/Inter fallback is gone.
+ */
+internal fun contentBodyStyle(fontFamily: FontFamily? = null): TextStyle = TextStyle(
+    fontFamily = fontFamily ?: SourceSerifFontFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 17.sp,
+    lineHeight = 27.sp,
+)
+
+/** Heading ladder inside answers (map row g: serif, bold, h2 ~20sp). */
+internal data class MarkdownHeadingSpec(
+    val fontSizeSp: Float,
+    val lineHeightSp: Float,
+    val topPaddingDp: Float,
+)
+
+internal fun markdownHeadingSpec(level: Int): MarkdownHeadingSpec = when {
+    level <= 1 -> MarkdownHeadingSpec(fontSizeSp = 24f, lineHeightSp = 31f, topPaddingDp = 12f)
+    level == 2 -> MarkdownHeadingSpec(fontSizeSp = 20f, lineHeightSp = 27f, topPaddingDp = 10f)
+    level == 3 -> MarkdownHeadingSpec(fontSizeSp = 18f, lineHeightSp = 24f, topPaddingDp = 8f)
+    else -> MarkdownHeadingSpec(fontSizeSp = 17f, lineHeightSp = 23f, topPaddingDp = 8f)
+}
+
+internal fun markdownHeadingStyle(level: Int): TextStyle {
+    val spec = markdownHeadingSpec(level)
+    return TextStyle(
+        fontFamily = SourceSerifFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = spec.fontSizeSp.sp,
+        lineHeight = spec.lineHeightSp.sp,
+    )
+}
 
 /**
  * v3.2.42: process-level cache of parsed markdown, keyed by the
@@ -167,11 +214,7 @@ fun MarkdownText(
         Text(
             text = fallbackText,
             modifier = modifier,
-            style = if (fontFamily != null) {
-                MaterialTheme.typography.bodyMedium.copy(fontFamily = fontFamily, lineHeight = 24.sp)
-            } else {
-                MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp)
-            },
+            style = contentBodyStyle(fontFamily),
             color = color,
         )
     } else Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -181,9 +224,9 @@ fun MarkdownText(
             when (block) {
                 is MarkdownBlock.Header -> HeaderBlock(block, effectiveOpenUri)
                 is MarkdownBlock.CodeBlock -> CodeSnippetBlock(block, onRunCode)
-                is MarkdownBlock.BulletItem -> BulletBlock(block, color, effectiveOpenUri)
-                is MarkdownBlock.NumberedItem -> NumberedBlock(block, color, effectiveOpenUri)
-                is MarkdownBlock.BlockQuote -> QuoteBlock(block, effectiveOpenUri)
+                is MarkdownBlock.BulletItem -> BulletBlock(block, color, fontFamily, effectiveOpenUri)
+                is MarkdownBlock.NumberedItem -> NumberedBlock(block, color, fontFamily, effectiveOpenUri)
+                is MarkdownBlock.BlockQuote -> QuoteBlock(block, fontFamily, effectiveOpenUri)
                 is MarkdownBlock.HorizontalRule -> HorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     modifier = Modifier.padding(vertical = 4.dp),
@@ -191,15 +234,11 @@ fun MarkdownText(
                 is MarkdownBlock.Paragraph -> {
                     Text(
                         text = formatInlineMarkdown(block.text, effectiveOpenUri),
-                        style = if (fontFamily != null) {
-                            MaterialTheme.typography.bodyMedium.copy(fontFamily = fontFamily, lineHeight = 24.sp)
-                        } else {
-                            MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp)
-                        },
+                        style = contentBodyStyle(fontFamily),
                         color = color,
                     )
                 }
-                is MarkdownBlock.Table -> TableBlock(block, color, effectiveOpenUri)
+                is MarkdownBlock.Table -> TableBlock(block, color, fontFamily, effectiveOpenUri)
             }
         }
         if (hiddenBlocks > 0) {
@@ -214,21 +253,21 @@ fun MarkdownText(
 
 @Composable
 private fun HeaderBlock(header: MarkdownBlock.Header, onOpenUri: ((String) -> Unit)? = null) {
-    val style = when (header.level) {
-        1 -> MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, fontSize = 20.sp)
-        2 -> MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, fontSize = 17.sp)
-        else -> MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-    }
+    // v3.2.43 (P3a): headings used to come from the Inter Material
+    // typography at 20/17/15sp — nearly flat against the old 14sp body
+    // and INVISIBLE against the 17sp reading body. They now render in
+    // the serif reading family, bold, on the markdownHeadingSpec
+    // ladder (24 / 20 / 18 / 17) with level-scaled air above.
     Text(
         text = formatInlineMarkdown(header.text, onOpenUri),
-        style = style,
+        style = markdownHeadingStyle(header.level),
         color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.padding(top = 4.dp),
+        modifier = Modifier.padding(top = markdownHeadingSpec(header.level).topPaddingDp.dp),
     )
 }
 
 @Composable
-private fun BulletBlock(item: MarkdownBlock.BulletItem, color: Color, onOpenUri: ((String) -> Unit)? = null) {
+private fun BulletBlock(item: MarkdownBlock.BulletItem, color: Color, fontFamily: FontFamily?, onOpenUri: ((String) -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -243,7 +282,7 @@ private fun BulletBlock(item: MarkdownBlock.BulletItem, color: Color, onOpenUri:
         )
         Text(
             text = formatInlineMarkdown(item.text, onOpenUri),
-            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+            style = contentBodyStyle(fontFamily),
             color = color,
             modifier = Modifier.weight(1f),
         )
@@ -251,19 +290,19 @@ private fun BulletBlock(item: MarkdownBlock.BulletItem, color: Color, onOpenUri:
 }
 
 @Composable
-private fun NumberedBlock(item: MarkdownBlock.NumberedItem, color: Color, onOpenUri: ((String) -> Unit)? = null) {
+private fun NumberedBlock(item: MarkdownBlock.NumberedItem, color: Color, fontFamily: FontFamily?, onOpenUri: ((String) -> Unit)? = null) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top,
     ) {
         Text(
             text = item.number,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, color = PocketOrange),
+            style = contentBodyStyle(fontFamily).copy(fontWeight = FontWeight.Bold, color = PocketOrange),
             modifier = Modifier.padding(end = 6.dp),
         )
         Text(
             text = formatInlineMarkdown(item.text, onOpenUri),
-            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+            style = contentBodyStyle(fontFamily),
             color = color,
             modifier = Modifier.weight(1f),
         )
@@ -271,7 +310,7 @@ private fun NumberedBlock(item: MarkdownBlock.NumberedItem, color: Color, onOpen
 }
 
 @Composable
-private fun QuoteBlock(quote: MarkdownBlock.BlockQuote, onOpenUri: ((String) -> Unit)? = null) {
+private fun QuoteBlock(quote: MarkdownBlock.BlockQuote, fontFamily: FontFamily?, onOpenUri: ((String) -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -289,10 +328,8 @@ private fun QuoteBlock(quote: MarkdownBlock.BlockQuote, onOpenUri: ((String) -> 
         Spacer(Modifier.width(10.dp))
         Text(
             text = formatInlineMarkdown(quote.text, onOpenUri),
-            style = MaterialTheme.typography.bodyMedium.copy(
-                fontStyle = FontStyle.Italic,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            ),
+            style = contentBodyStyle(fontFamily),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
@@ -301,6 +338,7 @@ private fun QuoteBlock(quote: MarkdownBlock.BlockQuote, onOpenUri: ((String) -> 
 private fun TableBlock(
     table: MarkdownBlock.Table,
     color: Color,
+    fontFamily: FontFamily?,
     onOpenUri: ((String) -> Unit)?,
 ) {
     // Kodex: on phone-width screens a real multi-column table crushes its
@@ -335,7 +373,7 @@ private fun TableBlock(
                             )
                             Text(
                                 text = formatInlineMarkdown(row.getOrNull(colIndex).orEmpty(), onOpenUri),
-                                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 21.sp),
+                                style = contentBodyStyle(fontFamily),
                                 color = color,
                             )
                         }
@@ -461,8 +499,8 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                 Text(
                     text = shownCode,
                     fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
+                    fontSize = 14.sp,
+                    lineHeight = 22.4.sp,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -541,7 +579,7 @@ internal fun buildMarkdownAnnotatedString(
                     if (end != -1) {
                         withStyle(
                             SpanStyle(
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = JetBrainsMonoFontFamily,
                                 background = codeBg,
                                 color = codeColor,
                                 fontSize = 13.sp,

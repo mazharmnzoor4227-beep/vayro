@@ -131,7 +131,7 @@ private fun ToolbarButton(
             Text(
                 text = label,
                 fontSize = if (label.length > 2) 11.sp else 13.sp,
-                fontFamily = FontFamily.Monospace,
+                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                 fontWeight = FontWeight.Medium,
                 color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
             )

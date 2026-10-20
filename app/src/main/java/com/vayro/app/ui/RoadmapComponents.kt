@@ -694,7 +694,7 @@ private fun RoadmapStepRow(
                                 text = path.substringAfterLast('/'),
                                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
                                 fontSize = 9.sp,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }

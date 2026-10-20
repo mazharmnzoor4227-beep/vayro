@@ -847,7 +847,7 @@ fun CodeEditorScreen(
                                             symbol.kind.lowercase(),
                                             Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                             fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace,
+                                            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                         )
                                     }
                                 }
@@ -991,7 +991,7 @@ fun CodeEditorScreen(
                                 Text(
                                     text = "• ${plan.filePath} (${plan.matchCount})",
                                     fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -1166,7 +1166,7 @@ fun CodeEditorScreen(
                 ) {
                     Text(
                         text = hoverContent,
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(12.dp),
                     )
@@ -1930,7 +1930,7 @@ fun CodeEditorScreen(
                                     Text(
                                         text = item.label,
                                         fontSize = 12.sp,
-                                        fontFamily = FontFamily.Monospace,
+                                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.primary,
                                     )
@@ -1969,7 +1969,7 @@ fun CodeEditorScreen(
                 ) {
                     Text(
                         (if (splitScreenOpen) "[Split] " else "") + statusText(value, dirty, bracketPair) + (if (splitScreenOpen) " | Pane 2: " + secondaryFilePath.substringAfterLast('/') else ""),
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
@@ -1998,7 +1998,7 @@ fun CodeEditorScreen(
                             Text(
                                 if (errorCount > 0) "$errorCount err" else if (warnCount > 0) "$warnCount warn" else "0 err",
                                 fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                 color = if (errorCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
@@ -2037,7 +2037,7 @@ private fun EditorPane(
             Text(
                 lineNumbers,
                 Modifier.padding(top = 8.dp, end = 6.dp),
-                fontFamily = FontFamily.Monospace,
+                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                 fontSize = 13.sp,
                 lineHeight = EDITOR_LINE_HEIGHT,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
@@ -2074,7 +2074,7 @@ private fun EditorPane(
                 enabled = !readOnly,
                 textStyle = TextStyle(
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                     fontSize = 13.sp,
                     lineHeight = EDITOR_LINE_HEIGHT,
                 ),

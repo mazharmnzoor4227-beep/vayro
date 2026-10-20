@@ -277,7 +277,7 @@ fun RenameEntryDialog(
                 Text(
                     text = "Path: ${entry.path}",
                     fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedTextField(
@@ -330,7 +330,7 @@ fun DeleteEntryDialog(
                 Text(
                     text = entry.path,
                     fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (entry.isDirectory) {
@@ -375,7 +375,7 @@ fun MoveEntryDialog(
                 Text(
                     text = "Current path: ${entry.path}",
                     fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 OutlinedTextField(
@@ -478,7 +478,7 @@ fun GitOperationsDialog(
                             }
                             Text(
                                 text = line,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                 fontSize = 10.5.sp,
                                 color = color,
                                 modifier = Modifier

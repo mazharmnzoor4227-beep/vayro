@@ -738,7 +738,7 @@ private fun AgentDetailSheet(
                 ) {
                     Text(
                         text = outputText,
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                         fontSize = 11.sp,
                         lineHeight = 15.sp,
                         color = MaterialTheme.colorScheme.onSurface,
@@ -1091,7 +1091,7 @@ private fun TaskDagCard(
                 ) {
                     task.affectedFiles.forEach { file ->
                         Surface(shape = RoundedCornerShape(4.dp), color = contentColor.copy(alpha = 0.15f)) {
-                            Text(file, fontSize = 9.sp, fontFamily = FontFamily.Monospace, color = contentColor, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                            Text(file, fontSize = 9.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, color = contentColor, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
                         }
                     }
                 }
@@ -1368,7 +1368,7 @@ private fun TeamBlackboardTab(orchestrator: AgentTeamOrchestrator) {
                             Text(
                                 text = artifact.content,
                                 fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.padding(8.dp)
                             )

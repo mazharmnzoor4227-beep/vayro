@@ -324,7 +324,7 @@ fun CommandPalette(
                                         action.category.name.lowercase(),
                                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                         fontSize = 9.sp,
-                                        fontFamily = FontFamily.Monospace,
+                                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }

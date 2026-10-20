@@ -143,7 +143,7 @@ fun PastedContentChip(
             )
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("TXT", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                Text("TXT", fontSize = 11.sp, fontWeight = FontWeight.Bold, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
                 Text(
                     "Pasted content",
                     fontSize = 11.sp,
@@ -272,7 +272,7 @@ fun PastedContentCard(
             )
             Spacer(Modifier.width(9.dp))
             Column {
-                Text("TXT", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                Text("TXT", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
                 Text(
                     "Pasted content",
                     fontSize = 11.5.sp,
@@ -336,8 +336,7 @@ fun PastedContentViewerDialog(
                 SelectionContainer {
                     Text(
                         text,
-                        fontSize = 14.sp,
-                        lineHeight = 21.sp,
+                        style = contentBodyStyle(),
                         modifier = Modifier
                             .fillMaxSize()
                             .verticalScroll(rememberScrollState())

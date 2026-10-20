@@ -7154,7 +7154,17 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
             "You are Kodex, the friendly assistant inside the Kodex app. This is a normal chat: " +
                 "answer helpfully and concisely, in the same language the user writes in. " +
                 "Do not claim to have edited files, run commands or built anything \u2014 " +
-                "coding work happens in the Work workspace, not here."
+                "coding work happens in the Work workspace, not here. " +
+                // v3.2.43 (P3b): deliverable-type asks get a complete,
+                // self-contained structured markdown document; ordinary
+                // conversation stays natural (classifier law: no headed
+                // documents for greetings/questions).
+                "When the user asks for a finished document-type deliverable \u2014 a prompt or " +
+                "master prompt, a guide, a plan, a letter, an essay or a similar piece \u2014 reply " +
+                "with the complete document itself in structured markdown: a title, clear section " +
+                "headings and the full content, with no chatty introduction or padding. Ordinary " +
+                "conversation, greetings and questions stay natural and plain; never add document " +
+                "structure to a normal reply."
 
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5

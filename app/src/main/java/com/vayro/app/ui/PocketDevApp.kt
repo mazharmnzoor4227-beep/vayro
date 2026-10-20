@@ -2359,7 +2359,7 @@ private fun SetupLogPanel(logs: List<String>) {
                 Text(
                     text = if (expanded) "Live setup terminal" else logs.lastOrNull().orEmpty(),
                     modifier = Modifier.weight(1f),
-                    fontFamily = FontFamily.Monospace,
+                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
@@ -2387,7 +2387,7 @@ private fun SetupLogPanel(logs: List<String>) {
                     logs.forEach { line ->
                         Text(
                             text = line,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                             fontSize = 11.sp,
                             lineHeight = 16.sp,
                             color = MaterialTheme.colorScheme.onSurface,
@@ -2395,7 +2395,7 @@ private fun SetupLogPanel(logs: List<String>) {
                     }
                     Text(
                         text = "▌",
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -4192,7 +4192,7 @@ private fun ClaudeSubscriptionCredentialsStep(
                         Text(
                             "claude setup-token",
                             modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                             color = PocketOrange,
                         )
                     }
@@ -4889,7 +4889,7 @@ private fun ProjectsScreen(
                 if (name.isNotBlank() || selectedFolderName != null) {
                     Text(
                         "Terminal folder: /workspace/${projectSlug(name.ifBlank { selectedFolderName.orEmpty() })}",
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -5006,7 +5006,7 @@ private fun ProjectsScreen(
                                 state.githubUserCode.orEmpty(),
                                 modifier = Modifier.padding(16.dp),
                                 textAlign = TextAlign.Center,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 22.sp,
                                 letterSpacing = 2.sp,
@@ -5326,7 +5326,7 @@ private fun ProjectCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text("/workspace/${project.slug}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                Text("/workspace/${project.slug}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
                 Text("${project.language} · ${project.formattedUpdatedAt}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
             }
             Box {
@@ -5886,7 +5886,7 @@ private fun WorkspaceScreen(
                         Text(
                             command,
                             Modifier.fillMaxWidth().padding(10.dp),
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     }
@@ -7881,6 +7881,7 @@ private fun ChatTab(
                                 maxLines = COMPOSER_MAX_LINES,
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
+                                fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                                 fontSize = 15.sp,
                                 lineHeight = 20.sp,
                             ),
@@ -7892,6 +7893,7 @@ private fun ChatTab(
                                         Text(
                                             text = "Message Kodex…",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                                             fontSize = 15.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -8368,6 +8370,7 @@ private fun VoiceCallScreen(
                         VoiceCallPhase.THINKING -> sentText
                         VoiceCallPhase.SPEAKING -> replyText
                     },
+                    fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                     fontSize = 13.5.sp,
                     lineHeight = 19.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -9450,7 +9453,7 @@ private fun ActivityExpandedDetail(item: ActivityItem?, detail: String) {
             fontSize = 12.sp,
             lineHeight = 17.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
         )
     } else {
         MarkdownText(
@@ -9595,7 +9598,7 @@ private fun MessageBubble(
                         Text(
                             text = streamDisplayText,
                             modifier = Modifier.padding(start = 14.dp, end = 44.dp),
-                            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 22.sp),
+                            style = contentBodyStyle(),
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                     } else {
@@ -9849,7 +9852,7 @@ private fun ApprovalCard(
                     )
                 }
             }
-            Text(request.explanation, fontSize = 13.5.sp)
+            Text(request.explanation, fontSize = 13.5.sp, fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily)
             val preview = request.commandPreview
             if (!preview.isNullOrBlank()) {
                 Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
@@ -10120,7 +10123,7 @@ private fun EmptyState(icon: ImageVector, title: String, body: String) {
             Icon(icon, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(12.dp))
             Text(title, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily)
         }
     }
 }
@@ -10219,6 +10222,7 @@ private fun DeliveredApkCard(
                     // instead.
                     Text(
                         "Kodex couldn't find this APK in the project files. It may have been moved or the build may not have finished.",
+                        fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -10262,6 +10266,7 @@ private fun DeliveredApkCard(
                         data?.sizeLabel?.let { DeliveredMetaRow("Size", it) }
                         Text(
                             "Full APK details couldn't be read, but the file is here and ready.",
+                            fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

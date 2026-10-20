@@ -602,7 +602,7 @@ fun SkillsScreen(
                                 }
                                 if (entry.argumentsJson != "{}") {
                                     Spacer(Modifier.height(2.dp))
-                                    Text("Args: ${entry.argumentsJson}", fontSize = 10.5.sp, fontFamily = FontFamily.Monospace, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text("Args: ${entry.argumentsJson}", fontSize = 10.5.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 }
                                 if (entry.resultPreview.isNotBlank()) {
                                     Spacer(Modifier.height(2.dp))
@@ -680,7 +680,7 @@ fun SkillsScreen(
                                 Text(
                                     result.content.ifBlank { "Done." },
                                     fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily
                                 )
                             } else {
                                 Text(
@@ -761,7 +761,7 @@ private fun McpServerCard(
                 )
             }
 
-            Text("Command: ${server.command} ${server.args.joinToString(" ")}", fontSize = 10.5.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Command: ${server.command} ${server.args.joinToString(" ")}", fontSize = 10.5.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             // v3.2.38 (Part Q): honest state lines — lazy start, key
             // requirements, and the last discovery error WITH its reason.
@@ -840,7 +840,7 @@ private fun McpServerCard(
                         Text("Available Tools (${tools.size})", fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
                         tools.forEach { tool ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("• ${tool.name}", fontFamily = FontFamily.Monospace, fontSize = 10.5.sp, fontWeight = FontWeight.Medium)
+                                Text("• ${tool.name}", fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 10.5.sp, fontWeight = FontWeight.Medium)
                                 if (tool.description.isNotBlank()) {
                                     Text(" — ${tool.description}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                                 } else {
@@ -909,7 +909,7 @@ private fun McpRunToolDialog(
                     Text(
                         argsText,
                         fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
+                        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
@@ -922,7 +922,7 @@ private fun McpRunToolDialog(
                         label = { Text("Arguments (JSON)") },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp),
                         shape = RoundedCornerShape(10.dp),
-                        textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                        textStyle = LocalTextStyle.current.copy(fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 12.sp)
                     )
                 }
                 if (permissionError != null) {
@@ -980,7 +980,7 @@ private fun McpCatalogCard(
                     }
                 }
                 Text(template.description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
-                Text(template.defaultCommand, fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+                Text(template.defaultCommand, fontSize = 10.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
             }
             Spacer(Modifier.width(8.dp))
             if (isInstalled) {

@@ -1794,7 +1794,7 @@ fun PreviewTab(
                             .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
                             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
                             .padding(8.dp),
-                        textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface),
+                        textStyle = TextStyle(fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface),
                     )
 
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -1812,7 +1812,7 @@ fun PreviewTab(
                     }
 
                     if (scriptOutputText != null) {
-                        Text("Output: $scriptOutputText", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = PocketGreen)
+                        Text("Output: $scriptOutputText", fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 11.sp, color = PocketGreen)
                     }
                 }
             },
@@ -1918,7 +1918,7 @@ fun PreviewTab(
                         ) {
                             Column(Modifier.padding(6.dp)) {
                                 Text("Selected: ${inspectedDomElement.displayName}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = PocketGreen)
-                                Text("Selector: ${inspectedDomElement.selector}", fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                Text("Selector: ${inspectedDomElement.selector}", fontSize = 10.sp, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily)
                             }
                         }
                     }

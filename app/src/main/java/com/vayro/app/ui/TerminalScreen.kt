@@ -366,7 +366,7 @@ fun TerminalScreen(
                             textStyle = androidx.compose.ui.text.TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                             ),
                             decorationBox = { innerTextField ->
                                 if (searchQuery.isEmpty()) {
@@ -414,7 +414,7 @@ fun TerminalScreen(
                             label = {
                                 Text(
                                     cmd,
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     fontSize = 11.sp,
                                 )
                             },
@@ -458,7 +458,7 @@ fun TerminalScreen(
                                 Text(
                                     if (searchQuery.isNotEmpty()) "No matching terminal output found."
                                     else "Kodex Terminal ready.\nType a bash command below or tap a quick command chip above.",
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     fontSize = 12.sp,
                                     color = emptyStateColor,
                                 )
@@ -470,7 +470,7 @@ fun TerminalScreen(
                                     if (item.output.isNotEmpty()) {
                                         Text(
                                             text = sanitizeTerminalOutput(item.output),
-                                            fontFamily = FontFamily.Monospace,
+                                            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                             fontSize = 12.sp,
                                             lineHeight = 18.sp,
                                             color = if (item.exitCode != 0) MaterialTheme.colorScheme.error else outputTextColor,
@@ -487,7 +487,7 @@ fun TerminalScreen(
                             if (liveOutput.isNotBlank()) {
                                 Text(
                                     sanitizeTerminalOutput(liveOutput),
-                                    fontFamily = FontFamily.Monospace,
+                                    fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                     fontSize = 12.sp,
                                     lineHeight = 18.sp,
                                     color = outputTextColor,
@@ -560,7 +560,7 @@ fun TerminalScreen(
                             visualTransformation = prefixVisualTransformation,
                             cursorBrush = SolidColor(promptGreen),
                             textStyle = androidx.compose.ui.text.TextStyle(
-                                fontFamily = FontFamily.Monospace,
+                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                 fontSize = 12.sp,
                                 lineHeight = 18.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -680,7 +680,7 @@ private fun TerminalKeyButton(
     ) {
         Text(
             if (active) "$label ✓" else label,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
             fontSize = 12.sp,
             maxLines = 1,
         )
@@ -711,7 +711,7 @@ private fun TerminalCommandPrompt(promptPath: String, command: String, isDark: B
     Text(
         text = promptText,
         modifier = Modifier.fillMaxWidth(),
-        fontFamily = FontFamily.Monospace,
+        fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
         fontSize = 12.sp,
         lineHeight = 18.sp,
         softWrap = true,

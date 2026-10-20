@@ -225,7 +225,7 @@ fun VisualDevToolsSheet(
                                             }
                                             Text(
                                                 log.message,
-                                                fontFamily = FontFamily.Monospace,
+                                                fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                                 fontSize = 11.sp,
                                                 color = MaterialTheme.colorScheme.onSurface,
                                             )
@@ -290,7 +290,7 @@ fun VisualDevToolsSheet(
                                         Spacer(Modifier.height(4.dp))
                                         Text(
                                             net.url,
-                                            fontFamily = FontFamily.Monospace,
+                                            fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily,
                                             fontSize = 11.sp,
                                             maxLines = 2,
                                         )
@@ -376,7 +376,7 @@ fun VisualDevToolsSheet(
                                                     Icon(Icons.Default.ContentCopy, contentDescription = "Copy selector", Modifier.size(14.dp))
                                                 }
                                             }
-                                            Text("Selector: ${inspectedElement.selector}", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                                            Text("Selector: ${inspectedElement.selector}", fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 11.sp)
                                             if (inspectedElement.innerText.isNotBlank()) {
                                                 Spacer(Modifier.height(4.dp))
                                                 Text("Text: \"${inspectedElement.innerText}\"", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -407,7 +407,7 @@ fun VisualDevToolsSheet(
                                                             horizontalArrangement = Arrangement.SpaceBetween,
                                                         ) {
                                                             Text(k, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                            Text(v, fontFamily = FontFamily.Monospace, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                            Text(v, fontFamily = com.vayro.app.ui.theme.JetBrainsMonoFontFamily, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                                         }
                                                     }
                                                 }
