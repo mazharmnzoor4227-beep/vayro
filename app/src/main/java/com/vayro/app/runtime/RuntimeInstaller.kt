@@ -2516,6 +2516,14 @@ class RuntimeInstaller(private val context: Context) {
         ) { "Invalid project workspace path" }
         workspace.mkdirs()
         File(rootfs, guestWorkspacePath.removePrefix("/")).mkdirs()
+        // v3.2.50 (Item 3): refresh the guest resolver from the CURRENTLY
+        // active network on every spawn. writeResolver() otherwise runs
+        // only at install/maintenance time, so the guest kept the DNS of
+        // whatever network was active back then (e.g. the home Wi-Fi
+        // router's LAN resolver); after the phone switched to mobile
+        // data that resolver was unreachable and every guest connection
+        // stalled — the "works only on Wi-Fi" failure.
+        runCatching { writeResolver(rootfs) }
         // Self-heal devices whose Android tools were installed by an older app
         // version before the global AAPT2 override was persisted.
         writeAndroidGradleConfiguration(rootfs)
@@ -2689,11 +2697,11 @@ printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",
         put("Grep")
     }
 
-    private fun writeResolver() {
+    private fun writeResolver(target: File? = null) {
         val manager = context.getSystemService(ConnectivityManager::class.java)
         val dns = manager.getLinkProperties(manager.activeNetwork)?.dnsServers.orEmpty()
         val servers = dns.mapNotNull { it.hostAddress }.ifEmpty { listOf("8.8.8.8", "1.1.1.1") }
-        File(rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
+        File(target ?: rootfs, "etc/resolv.conf").writeText(servers.joinToString("\n") { "nameserver $it" } + "\n")
     }
 
     private fun checkArchiveSize(archive: File) {

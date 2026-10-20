@@ -2118,7 +2118,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Sends a tiny hello to the agy CLI to prove it actually answers. Silent timeout inside. */
+    /**
+     * Sends a tiny hello to the agy CLI to prove it actually answers.
+     *
+     * v3.2.50 (Items 1+2): the test now tells the truth and rotates.
+     * Staged progress comes from the probe itself; an eligibility
+     * refusal marks the account ineligible and tries the next connected
+     * Google account (when round-robin is on), naming the switch in the
+     * result area; a no-answer timeout gets exactly one retry, matching
+     * the provider Test & Connect pattern; and every other failure
+     * surfaces the engine's real reason (see helloFailureMessage).
+     */
     fun testAntigravityConnection() {
         if (_state.value.agentKind != AgentKind.ANTIGRAVITY) return
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
@@ -2128,18 +2138,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = "Testing Gemini API…")
             }
             viewModelScope.launch {
-                runCatching {
-                    com.vayro.app.runtime.GeminiApiClient().probe(apiConfig.apiKey, apiConfig.model)
-                }.onSuccess {
-                    _state.update {
-                        it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = "Gemini API is working!")
-                    }
-                }.onFailure { error ->
-                    _state.update {
-                        it.copy(
-                            apiPingStatus = ApiPingStatus.FAILED,
-                            apiPingMessage = error.message.orEmpty().ifBlank { "Gemini API test failed." },
-                        )
+                var timeoutRetried = false
+                var testing = true
+                while (testing) {
+                    try {
+                        com.vayro.app.runtime.GeminiApiClient().probe(apiConfig.apiKey, apiConfig.model)
+                        _state.update {
+                            it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = "Gemini API is working!")
+                        }
+                        testing = false
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (error: Throwable) {
+                        if (!timeoutRetried && error is java.net.SocketTimeoutException) {
+                            timeoutRetried = true
+                            _state.update {
+                                it.copy(apiPingMessage = "Gemini API did not answer — trying once more…")
+                            }
+                        } else {
+                            _state.update {
+                                it.copy(
+                                    apiPingStatus = ApiPingStatus.FAILED,
+                                    apiPingMessage = error.message.orEmpty().ifBlank { "Gemini API test failed." },
+                                )
+                            }
+                            testing = false
+                        }
                     }
                 }
             }
@@ -2154,19 +2178,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = "Saying hello to Antigravity…") }
+        _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = "Starting Antigravity…") }
         viewModelScope.launch {
-            val result = runCatching { antigravityRuntime.hello() }
-            result.onSuccess {
-                _state.update {
-                    it.copy(
-                        apiPingStatus = ApiPingStatus.OK,
-                        apiPingMessage = "Antigravity is Working!",
-                    )
-                }
-            }.onFailure { error ->
-                _state.update {
-                    it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = helloFailureMessage(error.message.orEmpty()))
+            var switchedFrom: String? = null
+            var timeoutRetried = false
+            var testing = true
+            while (testing) {
+                try {
+                    antigravityRuntime.hello { stage ->
+                        _state.update { it.copy(apiPingMessage = stage) }
+                    }
+                    _state.update {
+                        it.copy(
+                            apiPingStatus = ApiPingStatus.OK,
+                            apiPingMessage = switchedFrom?.let { from ->
+                                "Account $from is not eligible for Antigravity. Switched to " +
+                                    "${antigravityAuthController.state.value.accountEmail.orEmpty()} — Antigravity is Working!"
+                            } ?: "Antigravity is Working!",
+                        )
+                    }
+                    testing = false
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (error: Throwable) {
+                    val raw = error.message.orEmpty()
+                    // Item 2: eligibility rotates to the next connected
+                    // account, in the test exactly as in a real turn.
+                    // switchToNextAccount() skips ineligible accounts,
+                    // so the loop ends when none are left; the failure
+                    // below then carries the provider's verbatim text.
+                    val nextEmail = if (
+                        com.vayro.app.runtime.AntigravityFailover.isEligibilityFailure(raw) &&
+                        antigravityAuthController.isAutoRoundRobin()
+                    ) {
+                        val fromEmail = antigravityAuthController.state.value.accountEmail.orEmpty()
+                        antigravityAuthController.markCurrentAccountIneligible()
+                        antigravityAuthController.switchToNextAccount()?.also { switchedFrom = fromEmail }
+                    } else {
+                        null
+                    }
+                    when {
+                        nextEmail != null -> _state.update {
+                            it.copy(
+                                apiPingMessage = "Account ${switchedFrom.orEmpty()} is not eligible " +
+                                    "for Antigravity. Trying $nextEmail…",
+                            )
+                        }
+                        !timeoutRetried && (
+                            raw.contains("did not answer", true) ||
+                                com.vayro.app.runtime.RuntimeFailureClassifier.isTransientNetworkFailure(raw)
+                            ) -> {
+                            timeoutRetried = true
+                            _state.update {
+                                it.copy(apiPingMessage = "Antigravity did not answer — trying once more…")
+                            }
+                        }
+                        else -> {
+                            _state.update {
+                                it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = helloFailureMessage(raw))
+                            }
+                            testing = false
+                        }
+                    }
                 }
             }
         }
@@ -2175,12 +2248,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun helloFailureMessage(raw: String): String {
         val value = raw.replace(Regex("\\s+"), " ").trim()
         return when {
+            // v3.2.50: the provider's eligibility words — including
+            // their remedy — reach the user verbatim, never collapsed
+            // to a generic line and never truncated mid-sentence.
+            com.vayro.app.runtime.AntigravityFailover.isEligibilityFailure(value) -> value.take(500)
             value.contains("not installed", true) -> "Antigravity CLI is not installed. Install it from the Coding agent section."
             value.contains("sign-in", true) || value.contains("not signed in", true) ||
                 value.contains("authentication", true) -> "Antigravity needs Google sign-in. Reconnect from the Google connection section."
-            value.contains("did not answer", true) -> "Antigravity did not answer. Try again."
             value.isBlank() -> "Antigravity did not answer. Try again."
-            else -> value.take(200)
+            // Any other substantive reason is the engine's own words:
+            // surface it as-is (v3.2.49's surfacing decision) instead of
+            // the old 200-char cut or the "did not answer" collapse.
+            else -> com.vayro.app.runtime.FailureReasonSurfacing.messageToSurface(value, emptyList())
+                ?: "Antigravity did not answer. Try again."
         }
     }
 
@@ -6643,67 +6723,21 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
         }
     }
 
-    private fun isAntigravityAuthFailure(reason: String): Boolean {
-        val value = reason.lowercase()
-        return "unauthenticated" in value ||
-            "401" in value ||
-            "invalid authentication credentials" in value ||
-            "oauth 2 access token" in value ||
-            "login cookie" in value ||
-            "authentication required" in value ||
-            "authentication failed" in value ||
-            "auth expired" in value ||
-            "sign-in" in value ||
-            "not signed in" in value ||
-            "token expired" in value
-    }
+    // v3.2.50: the token lists live in the pure, unit-tested
+    // AntigravityFailover now (they were private copies here); these
+    // stay as the call-site facade. Eligibility joined quota/auth as a
+    // rotation trigger (Item 2).
+    private fun isAntigravityAuthFailure(reason: String): Boolean =
+        com.vayro.app.runtime.AntigravityFailover.isAuthFailure(reason)
 
-    private fun isAntigravityQuotaFailure(reason: String): Boolean {
-        val value = reason.lowercase()
-        return "quota" in value ||
-            "rate limit" in value ||
-            "ratelimit" in value ||
-            "resource_exhausted" in value ||
-            "resource exhausted" in value ||
-            "429" in value ||
-            "out of credits" in value ||
-            "credits" in value ||
-            "limit exceeded" in value ||
-            "exhausted" in value ||
-            "too many requests" in value ||
-            "60 minute" in value ||
-            "minute limit" in value ||
-            "hourly limit" in value ||
-            "hour limit" in value ||
-            "daily limit" in value ||
-            "day limit" in value ||
-            "weekly limit" in value ||
-            "week limit" in value ||
-            "usage limit" in value ||
-            "plan limit" in value ||
-            "account limit" in value ||
-            "capacity" in value ||
-            "overloaded" in value ||
-            "quota_exceeded" in value ||
-            "rate_limit_exceeded" in value ||
-            "reached your limit" in value ||
-            "hit your limit" in value ||
-            "exceeded your limit" in value ||
-            "exceeded your current quota" in value ||
-            "insufficient quota" in value ||
-            "free tier limit" in value ||
-            "tokens per minute" in value ||
-            "requests per minute" in value ||
-            "requests per day" in value ||
-            "requests per week" in value ||
-            "billing" in value ||
-            "credit balance" in value ||
-            "quota limit" in value
-    }
+    private fun isAntigravityQuotaFailure(reason: String): Boolean =
+        com.vayro.app.runtime.AntigravityFailover.isQuotaFailure(reason)
 
-    private fun isAntigravityFailoverEligible(reason: String): Boolean {
-        return isAntigravityQuotaFailure(reason) || isAntigravityAuthFailure(reason)
-    }
+    private fun isAntigravityEligibilityFailure(reason: String): Boolean =
+        com.vayro.app.runtime.AntigravityFailover.isEligibilityFailure(reason)
+
+    private fun isAntigravityFailoverEligible(reason: String): Boolean =
+        com.vayro.app.runtime.AntigravityFailover.isFailoverEligible(reason)
 
     private fun retryAntigravityWithNextAccount(projectId: String, event: RuntimeEvent.SessionFailed): Boolean {
         val scoped = sessionScopeFor(projectId)
@@ -6715,10 +6749,14 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
 
         val currentEmail = antigravityAuthController.state.value.accountEmail.orEmpty()
         val isAuthError = isAntigravityAuthFailure(event.reason)
-        if (isAuthError) {
-            antigravityAuthController.markCurrentAccountAuthExpired()
-        } else {
-            antigravityAuthController.markCurrentAccountQuotaExhausted()
+        // v3.2.50 (Item 2): an eligibility refusal marks the account
+        // ineligible (Google refused the account itself; retrying it is
+        // pointless) and rotates like quota/auth do.
+        val isEligibilityError = isAntigravityEligibilityFailure(event.reason)
+        when {
+            isEligibilityError -> antigravityAuthController.markCurrentAccountIneligible()
+            isAuthError -> antigravityAuthController.markCurrentAccountAuthExpired()
+            else -> antigravityAuthController.markCurrentAccountQuotaExhausted()
         }
         val nextEmail = antigravityAuthController.switchToNextAccount() ?: return false
 
@@ -6729,15 +6767,39 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
             } else msgs
         }
 
-        val reasonLabel = if (isAuthError) "session expired" else "usage limit reached"
-        val failoverLabel = if (isAuthError) "auth expired failover" else "quota limit failover"
+        val reasonLabel = when {
+            isEligibilityError -> "not eligible for Antigravity"
+            isAuthError -> "session expired"
+            else -> "usage limit reached"
+        }
+        val failoverLabel = when {
+            isEligibilityError -> "account not eligible failover"
+            isAuthError -> "auth expired failover"
+            else -> "quota limit failover"
+        }
+        // v3.2.50 (Item 2): the eligibility switch also leaves a visible
+        // chat line naming the switch and its reason, like the home
+        // chat's auto-switch lines; quota/auth keep their existing
+        // toast + Activity line only.
+        val messagesWithSwitchNote = if (isEligibilityError) {
+            cleanedMessages + ChatMessage(
+                fromUser = false,
+                text = if (currentEmail.isNotBlank()) {
+                    "Account $currentEmail is not eligible for Antigravity. Switched to $nextEmail — continuing your task."
+                } else {
+                    "The connected Google account is not eligible for Antigravity. Switched to $nextEmail — continuing your task."
+                },
+            )
+        } else {
+            cleanedMessages
+        }
         updateSessionScoped(projectId) {
             it.copy(
                 activeSessionId = null,
                 runtimeRecoveryStatus = null,
                 runtimeRecoveryAttempt = 0,
                 runtimeRecoveryCanResume = false,
-                messages = cleanedMessages,
+                messages = messagesWithSwitchNote,
                 toastMessage = if (currentEmail.isNotBlank()) "Account $currentEmail $reasonLabel. Smartly switched to $nextEmail." else "Smartly switched to account $nextEmail.",
                 liveProcess = it.liveProcess + ActivityItem("Google account switched", "Auto round-robin to $nextEmail ($failoverLabel)", true),
             )

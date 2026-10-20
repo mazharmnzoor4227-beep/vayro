@@ -121,6 +121,12 @@ class GeminiApiClient {
 
     suspend fun probe(apiKey: String, model: String): String = withContext(Dispatchers.IO) {
         val connection = openConnection(model, apiKey, streaming = false)
+        // Probe-only bounds (v3.2.50): openConnection's 30 s connect /
+        // 120 s read timeouts serve the streaming agent loop; a
+        // connection test must answer or fail fast, not hang for two
+        // minutes on a dead network.
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 45_000
         try {
             val body = JSONObject()
                 .put(

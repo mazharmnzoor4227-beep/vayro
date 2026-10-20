@@ -153,6 +153,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -1047,6 +1049,116 @@ internal fun MessageListenRow(
 }
 
 /**
+ * v3.2.50 (Item 4): thin-stroke line icons drawn to the measurements
+ * taken from the owner's Claude reference recordings (720×1600,
+ * dp = px ÷ 2): glyph ≈ 13–15 dp on a ~32 dp centre pitch, stroke
+ * ≈ 1 dp, quiet warm-gray tone. 24-unit viewport, 1.5-unit stroke
+ * with round caps/joins, rendered at 16 dp — the Material outlined
+ * set reads noticeably heavier than Claude's hand-drawn strokes, so
+ * these are bespoke vectors in Claude's manner: two overlapping
+ * squares for Copy, an arrow rising out of a tray for Share, a play
+ * triangle (pause bars while playing) for Listen, an open arc with
+ * an arrowhead for Regenerate, and a plain check for the copied
+ * state (Claude confirms a copy with a green check — same here).
+ */
+private fun claudeStrokeIcon(
+    name: String,
+    strokeWidth: Float = 1.5f,
+    draw: androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit,
+): ImageVector = ImageVector.Builder(
+    name = name,
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    path(
+        fill = null,
+        stroke = SolidColor(Color.Black),
+        strokeLineWidth = strokeWidth,
+        strokeLineCap = StrokeCap.Round,
+        strokeLineJoin = StrokeJoin.Round,
+        pathFillType = androidx.compose.ui.graphics.PathFillType.NonZero,
+        pathBuilder = draw,
+    )
+}.build()
+
+private val ClaudeCopyIcon: ImageVector by lazy {
+    claudeStrokeIcon("ClaudeCopy") {
+        // Back square (top-right).
+        moveTo(9f, 5.5f)
+        lineTo(16.8f, 5.5f)
+        arcTo(2.2f, 2.2f, 0f, false, true, 19f, 7.7f)
+        lineTo(19f, 15.5f)
+        // Front square (bottom-left).
+        moveTo(16.5f, 10.5f)
+        lineTo(16.5f, 16.8f)
+        arcTo(2.2f, 2.2f, 0f, false, true, 14.3f, 19f)
+        lineTo(7.2f, 19f)
+        arcTo(2.2f, 2.2f, 0f, false, true, 5f, 16.8f)
+        lineTo(5f, 9.7f)
+        arcTo(2.2f, 2.2f, 0f, false, true, 7.2f, 7.5f)
+        lineTo(13.5f, 7.5f)
+    }
+}
+
+private val ClaudeShareIcon: ImageVector by lazy {
+    claudeStrokeIcon("ClaudeShare") {
+        // Arrow rising out of the tray.
+        moveTo(12f, 15f)
+        lineTo(12f, 4.2f)
+        moveTo(6.7f, 9.2f)
+        lineTo(12f, 3.9f)
+        lineTo(17.3f, 9.2f)
+        // Tray.
+        moveTo(5f, 13.5f)
+        lineTo(5f, 17.8f)
+        arcTo(1.7f, 1.7f, 0f, false, true, 6.7f, 19.5f)
+        lineTo(17.3f, 19.5f)
+        arcTo(1.7f, 1.7f, 0f, false, true, 19f, 17.8f)
+        lineTo(19f, 13.5f)
+    }
+}
+
+private val ClaudePlayIcon: ImageVector by lazy {
+    claudeStrokeIcon("ClaudePlay") {
+        moveTo(8.5f, 5.6f)
+        lineTo(18.2f, 12f)
+        lineTo(8.5f, 18.4f)
+        close()
+    }
+}
+
+private val ClaudePauseIcon: ImageVector by lazy {
+    claudeStrokeIcon("ClaudePause", strokeWidth = 2.4f) {
+        moveTo(8f, 5.5f)
+        lineTo(8f, 18.5f)
+        moveTo(16f, 5.5f)
+        lineTo(16f, 18.5f)
+    }
+}
+
+private val ClaudeRegenerateIcon: ImageVector by lazy {
+    claudeStrokeIcon("ClaudeRegenerate") {
+        // Open arc, ~300°, ending at the top (Lucide rotate-cw manner).
+        moveTo(20f, 12f)
+        arcToRelative(8f, 8f, 0f, true, true, -8f, -8f)
+        // Arrowhead corner at the top-right.
+        moveTo(20.4f, 3.6f)
+        lineTo(20.4f, 8.2f)
+        lineTo(15.8f, 8.2f)
+    }
+}
+
+private val ClaudeCheckIcon: ImageVector by lazy {
+    claudeStrokeIcon("ClaudeCheck", strokeWidth = 1.8f) {
+        moveTo(5f, 12.6f)
+        lineTo(10f, 17.4f)
+        lineTo(19f, 6.8f)
+    }
+}
+
+/**
  * v3.2.45 (Item 3): THE message action row — one muted row of
  * thin-stroke icon buttons under a completed assistant reply, in
  * Claude's order: Copy, Share, Listen, Regenerate. Shared by the
@@ -1056,6 +1168,12 @@ internal fun MessageListenRow(
  * selected voice speaks); Share carries the reply's text through
  * the Android share sheet; Regenerate is supplied by the host
  * (null hides the button — e.g. while a reply is streaming).
+ *
+ * v3.2.50 (Item 4): restyled to the owner's Claude recordings —
+ * bespoke thin-stroke glyphs (see above), 16 dp icons in 32 dp hit
+ * boxes on the measured ~32 dp pitch, quiet onSurface tone instead
+ * of filled Material icons in big 40 dp circles. Actions, order and
+ * behavior unchanged.
  */
 @Composable
 internal fun MessageActionRow(
@@ -1068,10 +1186,10 @@ internal fun MessageActionRow(
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
     val listeningThis = com.vayro.app.voice.ReadAloudPlayer.playingMessageId == messageId
-    val tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    val tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+    Row(modifier = modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
+            modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
                 clipboardManager.setText(AnnotatedString(text))
                 copied = true
                 Toast.makeText(context, "Response copied to clipboard", Toast.LENGTH_SHORT).show()
@@ -1079,14 +1197,14 @@ internal fun MessageActionRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                imageVector = if (copied) ClaudeCheckIcon else ClaudeCopyIcon,
                 contentDescription = "Copy response",
                 tint = if (copied) com.vayro.app.ui.theme.PocketGreen else tint,
-                modifier = Modifier.size(17.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
         Box(
-            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
+            modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, text)
@@ -1096,35 +1214,35 @@ internal fun MessageActionRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Icons.Outlined.Share,
+                imageVector = ClaudeShareIcon,
                 contentDescription = "Share response",
                 tint = tint,
-                modifier = Modifier.size(17.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
         Box(
-            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
+            modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
                 com.vayro.app.voice.ReadAloudPlayer.toggle(context, messageId, text)
             },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = if (listeningThis) Icons.Default.Stop else Icons.Outlined.VolumeUp,
+                imageVector = if (listeningThis) ClaudePauseIcon else ClaudePlayIcon,
                 contentDescription = if (listeningThis) "Stop listening" else "Listen to response",
-                tint = if (listeningThis) MaterialTheme.colorScheme.primary else tint,
-                modifier = Modifier.size(18.dp),
+                tint = tint,
+                modifier = Modifier.size(16.dp),
             )
         }
         if (onRegenerate != null) {
             Box(
-                modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onRegenerate),
+                modifier = Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onRegenerate),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.Replay,
+                    imageVector = ClaudeRegenerateIcon,
                     contentDescription = "Regenerate response",
                     tint = tint,
-                    modifier = Modifier.size(17.dp),
+                    modifier = Modifier.size(16.dp),
                 )
             }
         }

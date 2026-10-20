@@ -78,6 +78,8 @@ class AntigravityAuthController(
                     lastUsedAt = obj.optLong("lastUsedAt", 0L),
                     isAuthExpired = obj.optBoolean("isAuthExpired", false),
                     authExpiredAt = obj.optLong("authExpiredAt", 0L),
+                    isIneligible = obj.optBoolean("isIneligible", false),
+                    ineligibleAt = obj.optLong("ineligibleAt", 0L),
                 )
             }
         }.getOrDefault(emptyList())
@@ -94,6 +96,8 @@ class AntigravityAuthController(
                 .put("lastUsedAt", acc.lastUsedAt)
                 .put("isAuthExpired", acc.isAuthExpired)
                 .put("authExpiredAt", acc.authExpiredAt)
+                .put("isIneligible", acc.isIneligible)
+                .put("ineligibleAt", acc.ineligibleAt)
             array.put(obj)
         }
         prefs.edit().putString("accounts_json", array.toString()).apply()
@@ -181,18 +185,19 @@ class AntigravityAuthController(
             accounts[index]
         }
 
-        // 1. Prioritize account not marked exhausted or auth-expired with valid tested credentials
+        // 1. Prioritize account not marked exhausted, auth-expired or
+        // ineligible with valid tested credentials
         for (candidate in candidatesInOrder) {
             val credFile = accountCredentialFile(candidate.email)
-            if (!candidate.isQuotaExhausted && !candidate.isAuthExpired && isCredentialValid(credFile)) {
+            if (!candidate.isQuotaExhausted && !candidate.isAuthExpired && !candidate.isIneligible && isCredentialValid(credFile)) {
                 if (activateAccount(candidate.email)) return candidate.email
             }
         }
 
-        // 2. Prioritize account whose limit was hit >= 60 minutes ago (and not auth expired)
+        // 2. Prioritize account whose limit was hit >= 60 minutes ago (and not auth expired or ineligible)
         for (candidate in candidatesInOrder) {
             val credFile = accountCredentialFile(candidate.email)
-            if (!candidate.isAuthExpired && candidate.isQuotaExhausted && candidate.quotaExhaustedAt > 0 &&
+            if (!candidate.isAuthExpired && !candidate.isIneligible && candidate.isQuotaExhausted && candidate.quotaExhaustedAt > 0 &&
                 (now - candidate.quotaExhaustedAt >= HOURLY_LIMIT_COOLDOWN_MS) &&
                 isCredentialValid(credFile)
             ) {
@@ -200,9 +205,9 @@ class AntigravityAuthController(
             }
         }
 
-        // 3. If all non-expired accounts hit quota, try candidate with oldest exhaustion time (not auth expired)
+        // 3. If all non-expired accounts hit quota, try candidate with oldest exhaustion time (not auth expired or ineligible)
         val candidatesByCooldown = candidatesInOrder
-            .filter { !it.isAuthExpired && isCredentialValid(accountCredentialFile(it.email)) }
+            .filter { !it.isAuthExpired && !it.isIneligible && isCredentialValid(accountCredentialFile(it.email)) }
             .sortedBy { it.quotaExhaustedAt }
 
         for (candidate in candidatesByCooldown) {
@@ -229,6 +234,18 @@ class AntigravityAuthController(
         val updated = accounts.map {
             if (it.email.equals(current, ignoreCase = true)) {
                 it.copy(isAuthExpired = true, authExpiredAt = System.currentTimeMillis())
+            } else it
+        }
+        saveAccounts(updated)
+    }
+
+    /** v3.2.50: Google refused the active account itself (eligibility). */
+    fun markCurrentAccountIneligible() {
+        val current = mutableState.value.accountEmail ?: return
+        val accounts = getSavedAccounts()
+        val updated = accounts.map {
+            if (it.email.equals(current, ignoreCase = true)) {
+                it.copy(isIneligible = true, ineligibleAt = System.currentTimeMillis())
             } else it
         }
         saveAccounts(updated)

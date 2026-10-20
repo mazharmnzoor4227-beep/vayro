@@ -33,6 +33,11 @@ data class AntigravityAccount(
     val lastUsedAt: Long = 0L,
     val isAuthExpired: Boolean = false,
     val authExpiredAt: Long = 0L,
+    // v3.2.50: Google refused this account itself ("not eligible for
+    // Antigravity"). Permanent until the user signs in again, so the
+    // round-robin rotation skips it in every tier.
+    val isIneligible: Boolean = false,
+    val ineligibleAt: Long = 0L,
 )
 
 data class AntigravityAuthState(
@@ -146,7 +151,7 @@ private fun redactToolDetail(value: String): String = value
     .take(500)
 
 /** Official Antigravity CLI bridge. OAuth and credentials remain owned by agy. */
-private const val HELLO_TIMEOUT_MILLIS = 90_000L
+private const val HELLO_TIMEOUT_MILLIS = 60_000L
 class AntigravityRuntimeBridge(
     private val context: Context,
     private val model: () -> String,
@@ -176,12 +181,30 @@ class AntigravityRuntimeBridge(
     /**
      * Lightweight connectivity probe: sends a tiny hello to agy and returns its
      * reply text. No foreground service, no checkpoints, no saved conversation.
-     * The timeout is intentionally internal — callers only see success/failure.
+     *
+     * v3.2.50 (Item 1): the probe stays a real end-to-end hello (there is no
+     * cheaper agy check that proves sign-in — a version probe would prove the
+     * install only), but it no longer fails silently or generically:
+     * - [onStage] reports legible stages (starting / signing in / saying
+     *   hello) so a long test is not a silent spinner.
+     * - Plain (non-JSON) CLI output is kept as the last diagnostic instead
+     *   of being dropped, and a terminal eligibility refusal in ANY output
+     *   line ends the probe immediately with the provider's own words —
+     *   the CLI gives up on an ineligible account only after long internal
+     *   retries, which is why the old probe burned its whole timeout and
+     *   then reported a content-free "did not answer".
+     * - A timeout carries the last diagnostic when there is one; the bare
+     *   "did not answer" text is reserved for a probe that truly heard
+     *   nothing at all.
      */
-    suspend fun hello(timeoutMillis: Long = HELLO_TIMEOUT_MILLIS): String = withContext(Dispatchers.IO) {
+    suspend fun hello(
+        timeoutMillis: Long = HELLO_TIMEOUT_MILLIS,
+        onStage: (String) -> Unit = {},
+    ): String = withContext(Dispatchers.IO) {
         if (!installer.isAgentInstalled(com.vayro.app.model.AgentKind.ANTIGRAVITY)) {
             throw IllegalStateException("Antigravity CLI is not installed.")
         }
+        var lastDiagnostic = ""
         try {
             withTimeout(timeoutMillis) {
                 val installed = installer.installedRuntime()
@@ -195,6 +218,7 @@ class AntigravityRuntimeBridge(
                     add("--new-project")
                 }
                 val outputFile = File(context.cacheDir, "agy-hello-${System.nanoTime()}.log")
+                onStage("Starting Antigravity…")
                 val process = installer.process(
                     installed.proot,
                     installed.rootfs,
@@ -207,6 +231,7 @@ class AntigravityRuntimeBridge(
                     extraBinds = installer.antigravityCredentialBinds(),
                 )
                 try {
+                    onStage("Signing in…")
                     val request = JSONObject()
                         .put("event", "user")
                         .put("message", JSONObject().put("content", "Reply with exactly: ok"))
@@ -217,7 +242,19 @@ class AntigravityRuntimeBridge(
                     var offset = 0L
                     val pending = StringBuilder()
                     var reply: String? = null
+                    var helloStageSent = false
                     fun handleLine(line: String): Boolean {
+                        // Terminal provider refusals end the probe at
+                        // once, in the provider's own words: plain output
+                        // lines are diagnostics (startSession keeps them
+                        // the same way), and a Result error is checked
+                        // before friendlyError can paraphrase it.
+                        if (!line.startsWith("{") && line.isNotBlank()) {
+                            lastDiagnostic = line.trim().take(500)
+                            if (AntigravityFailover.isEligibilityFailure(line)) {
+                                throw AntigravitySessionException(line.trim().take(500))
+                            }
+                        }
                         when (val event = AntigravityEventParser.parse(line)) {
                             is AntigravityParsedEvent.Text -> if (reply == null && event.value.isNotBlank()) reply = event.value
                             is AntigravityParsedEvent.Result -> {
@@ -225,9 +262,18 @@ class AntigravityRuntimeBridge(
                                     if (reply == null && !event.response.isNullOrBlank()) reply = event.response
                                     return true
                                 }
-                                throw AntigravitySessionException(friendlyError(event.error ?: event.status))
+                                val errorText = event.error ?: event.status
+                                if (AntigravityFailover.isEligibilityFailure(errorText)) {
+                                    throw AntigravitySessionException(errorText.trim().take(500))
+                                }
+                                throw AntigravitySessionException(friendlyError(errorText))
                             }
+                            null -> Unit
                             else -> Unit
+                        }
+                        if (!helloStageSent) {
+                            helloStageSent = true
+                            onStage("Saying hello to Antigravity…")
                         }
                         return false
                     }
@@ -262,7 +308,13 @@ class AntigravityRuntimeBridge(
                     withContext(NonCancellable) {
                         runCatching { process.waitFor() }
                     }
-                    check(done) { friendlyError(pending.toString().takeLast(500).ifBlank { "Antigravity exited without answering" }) }
+                    check(done) {
+                        friendlyError(
+                            lastDiagnostic.ifBlank {
+                                pending.toString().takeLast(500)
+                            }.ifBlank { "Antigravity exited without answering" },
+                        )
+                    }
                     reply?.trim().takeUnless { it.isNullOrEmpty() } ?: "ok"
                 } finally {
                     runCatching { process.destroy() }
@@ -274,7 +326,12 @@ class AntigravityRuntimeBridge(
                 }
             }
         } catch (e: TimeoutCancellationException) {
-            throw AntigravitySessionException("Antigravity did not answer. Try again.")
+            // v3.2.50: a timeout surfaces whatever the CLI actually said
+            // (e.g. a network or eligibility diagnostic); the generic
+            // line is only for a probe that heard nothing at all.
+            throw AntigravitySessionException(
+                lastDiagnostic.takeIf { it.isNotBlank() } ?: "Antigravity did not answer. Try again.",
+            )
         }
     }
 
