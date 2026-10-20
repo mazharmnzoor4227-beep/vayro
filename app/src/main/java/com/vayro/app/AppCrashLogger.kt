@@ -175,12 +175,17 @@ object AppCrashLogger {
     }
 
     private fun write(text: String) {
+        // Audit L2: the file log (internal + the external mirror) gets the
+        // same secret redaction the Crashlytics path already applies, so a
+        // bearer token or key=value secret inside a message or stack trace
+        // is never persisted to disk in clear text.
+        val safeText = redactSecrets(text)
         synchronized(lock) {
             val target = internalFile ?: return
             runCatching {
                 target.parentFile?.mkdirs()
                 FileOutputStream(target, true).use { output ->
-                    output.write(text.toByteArray(StandardCharsets.UTF_8))
+                    output.write(safeText.toByteArray(StandardCharsets.UTF_8))
                     output.fd.sync()
                 }
                 trimIfNeeded(target)
@@ -191,7 +196,7 @@ object AppCrashLogger {
                 val mirror = externalFile ?: return@runCatching
                 mirror.parentFile?.mkdirs()
                 FileOutputStream(mirror, true).use { output ->
-                    output.write(text.toByteArray(StandardCharsets.UTF_8))
+                    output.write(safeText.toByteArray(StandardCharsets.UTF_8))
                     output.fd.sync()
                 }
                 trimIfNeeded(mirror)

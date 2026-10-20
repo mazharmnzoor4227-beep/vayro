@@ -159,44 +159,83 @@ private const val SETTLE_MS = 3L * 60 * 1000
 
 private suspend fun computeGateUi(store: LicenseStore, device: String): GateUi {
     val freshMode = LicenseClient.fetchMode()
-    if (freshMode != null) store.lastMode = freshMode
-    val mode = freshMode ?: store.lastMode
-    if (mode != "on") return GateUi.Open
+    if (freshMode != null) {
+        store.lastMode = freshMode
+        // A successful contact resolved the server's mode: from now on
+        // the stored mode is evidence, not just the factory default.
+        store.modeConfirmed = true
+    }
+    return when (
+        LicenseGateLogic.step(freshMode, store.lastMode, store.modeConfirmed, store.token != null)
+    ) {
+        LicenseGateLogic.Step.OPEN_FREE -> GateUi.Open
+        LicenseGateLogic.Step.NEEDS_SERVER_CONTACT -> GateUi.Locked(
+            // Never-confirmed install + unreachable server (audit H1b):
+            // the mode is unknown, so the app stays on the gate surface
+            // instead of opening on the never-confirmed default "off".
+            "Check your connection",
+            "Connect this phone to the internet so Kodex can finish setting up, then tap Try again."
+        )
+        LicenseGateLogic.Step.NEEDS_ACTIVATION -> GateUi.NeedsActivation()
+        LicenseGateLogic.Step.VERIFY_LICENSE -> verifyStoredLicense(store, device)
+    }
+}
+
+private suspend fun verifyStoredLicense(store: LicenseStore, device: String): GateUi {
     val token = store.token ?: return GateUi.NeedsActivation()
     val res = LicenseClient.check(device, token)
     val now = System.currentTimeMillis()
-    return when {
-        res == null -> {
-            // Server unreachable: ride the grace window if we ever confirmed.
-            if (store.lastOkAt > 0 && now - store.lastOkAt <= LicenseStore.GRACE_MS) GateUi.Open
-            else GateUi.Locked(
-                "Check your connection",
-                "Connect this phone to the internet so your license can be checked, then tap Try again."
-            )
-        }
-        res.ok && res.status == "active" -> {
+    // Grace is judged by both clocks; the smaller remaining window wins
+    // (audit M2), so a set-back phone clock cannot stretch the license.
+    val graceOpen = LicenseGateLogic.graceRemainingMs(
+        lastOkWallMs = store.lastOkAt,
+        lastOkMonoMs = store.lastOkElapsed,
+        nowWallMs = now,
+        nowMonoMs = android.os.SystemClock.elapsedRealtime(),
+        graceMs = LicenseStore.GRACE_MS,
+    ) >= 0
+    return when (
+        LicenseGateLogic.postCheck(
+            reachable = res != null,
+            ok = res?.ok == true,
+            status = res?.status,
+            graceOpen = graceOpen,
+            withinSettle = now - store.activatedAt < SETTLE_MS,
+        )
+    ) {
+        LicenseGateLogic.PostCheck.OPEN_ACTIVE -> {
+            val active = res!!
             store.lastOkAt = now
-            store.expiresAt = res.expiresAt
-            store.licenseType = res.type
-            if (res.mode.isNotBlank()) store.lastMode = res.mode
+            store.lastOkElapsed = android.os.SystemClock.elapsedRealtime()
+            store.expiresAt = active.expiresAt
+            store.licenseType = active.type
+            if (active.mode.isNotBlank()) {
+                store.lastMode = active.mode
+                store.modeConfirmed = true
+            }
             GateUi.Open
         }
-        res.status == "expired" -> GateUi.Locked(
+        // Server unreachable, but the grace window still covers us.
+        LicenseGateLogic.PostCheck.OPEN_GRACE -> GateUi.Open
+        LicenseGateLogic.PostCheck.LOCKED_OFFLINE -> GateUi.Locked(
+            "Check your connection",
+            "Connect this phone to the internet so your license can be checked, then tap Try again."
+        )
+        LicenseGateLogic.PostCheck.LOCKED_EXPIRED -> GateUi.Locked(
             "License expired",
             "Your license time is over. Contact your seller to renew it."
         )
-        else -> {
-            // "revoked" or any other non-active answer: the license is gone on
-            // the server (switched off, deleted, or the phone was reset).
-            // No grace for this — grace is only for an unreachable server.
-            if (now - store.activatedAt < SETTLE_MS) GateUi.Locked(
-                "Almost there",
-                "Your license was just activated and is still being set up. Wait a few seconds, then tap Try again."
-            ) else GateUi.Locked(
-                "License switched off",
-                "This license has been switched off or removed by the seller. Contact your seller for help."
-            )
-        }
+        // "revoked" or any other non-active answer: the license is gone on
+        // the server (switched off, deleted, or the phone was reset).
+        // No grace for this — grace is only for an unreachable server.
+        LicenseGateLogic.PostCheck.LOCKED_SETTLE -> GateUi.Locked(
+            "Almost there",
+            "Your license was just activated and is still being set up. Wait a few seconds, then tap Try again."
+        )
+        LicenseGateLogic.PostCheck.LOCKED_REVOKED -> GateUi.Locked(
+            "License switched off",
+            "This license has been switched off or removed by the seller. Contact your seller for help."
+        )
     }
 }
 
@@ -322,6 +361,10 @@ private fun ActivationScreen(
                     store.expiresAt = res.expiresAt
                     store.activatedAt = System.currentTimeMillis()
                     store.lastOkAt = System.currentTimeMillis()
+                    store.lastOkElapsed = android.os.SystemClock.elapsedRealtime()
+                    // Activation is a successful server contact: the mode
+                    // it resolved is confirmed evidence from here on.
+                    store.modeConfirmed = true
                     if (res.mode.isNotBlank()) store.lastMode = res.mode
                     onActivated()
                 }

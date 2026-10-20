@@ -27,7 +27,7 @@ val hasUploadSigning = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { !it.isNullOrBlank() }
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.45"
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.46"
 val runtimeReleaseBaseUrl =
     "https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v$appVersionName"
 val appUpdateManifestUrl =
@@ -86,7 +86,7 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 83
+        versionCode = 84
         versionName = appVersionName
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
 
@@ -135,7 +135,11 @@ android {
             )
         }
         release {
-            isMinifyEnabled = false
+            // v3.2.46 (audit H2): R8 obfuscation + resource shrinking ON.
+            // Keep rules live in proguard-rules.pro; the owner's device
+            // regression pass is the runtime net (unit tests run debug).
+            isMinifyEnabled = true
+            isShrinkResources = true
             if (hasUploadSigning) {
                 signingConfig = signingConfigs.getByName("upload")
             }

@@ -52,7 +52,14 @@ object ApiIntegrationGenerator {
                         .readTimeout(30, TimeUnit.SECONDS)
                         .writeTimeout(30, TimeUnit.SECONDS)
                         .addInterceptor(HttpLoggingInterceptor().apply {
-                            level = HttpLoggingInterceptor.Level.BODY
+                            // Audit L4: request/response bodies can carry
+                            // user credentials, so BODY logging ships in
+                            // DEBUG builds of the generated app only.
+                            level = if (${blueprint.packageName}.BuildConfig.DEBUG) {
+                                HttpLoggingInterceptor.Level.BODY
+                            } else {
+                                HttpLoggingInterceptor.Level.NONE
+                            }
                         })
                         .build()
                 }

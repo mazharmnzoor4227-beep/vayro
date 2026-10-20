@@ -3,12 +3,20 @@
     <cloud-backup disableIfNoEncryptionCapabilities="true">
         <exclude domain="sharedpref" path="pocket_secrets.xml" />
         <exclude domain="sharedpref" path="antigravity_auth_store.xml" />
+        <!-- v3.2.46 (audit L3): the license bookkeeping file and the
+             Keystore-encrypted license token store never leave the phone
+             (the token is device-bound, so a transferred copy is useless
+             weight — and the plaintext-era file must not travel either). -->
+        <exclude domain="sharedpref" path="kodex_license.xml" />
+        <exclude domain="sharedpref" path="kodex_license_secure.xml" />
         <exclude domain="file" path="mcp/" />
         <exclude domain="file" path="runtime/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="pocket_secrets.xml" />
         <exclude domain="sharedpref" path="antigravity_auth_store.xml" />
+        <exclude domain="sharedpref" path="kodex_license.xml" />
+        <exclude domain="sharedpref" path="kodex_license_secure.xml" />
         <exclude domain="file" path="mcp/" />
         <exclude domain="file" path="runtime/" />
     </device-transfer>
