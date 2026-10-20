@@ -15,13 +15,6 @@ import com.vayro.app.workspace.GitDomainController
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-data class ContextReference(
-    val path: String,
-    val language: String,
-    val symbols: List<String>,
-    val imports: List<String>,
-    val reason: String,
-)
 
 /**
  * Result of the measurable context pipeline: the assembled context plus the

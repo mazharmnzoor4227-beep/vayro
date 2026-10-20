@@ -159,18 +159,6 @@ class McpPermissionManager(
         persist()
     }
 
-    fun getGlobalServerPolicy(serverId: String): McpPermissionPolicy? = globalServerPolicies[serverId]
-
-    fun getProjectServerPolicy(projectId: String, serverId: String): McpPermissionPolicy? =
-        projectServerPolicies[projectId]?.get(serverId)
-
-    fun clearAll() {
-        globalServerPolicies.clear()
-        globalToolPolicies.clear()
-        projectServerPolicies.clear()
-        projectToolPolicies.clear()
-        persist()
-    }
 
     private fun toDecision(policy: McpPermissionPolicy, source: String): McpPermissionDecision {
         return when (policy) {

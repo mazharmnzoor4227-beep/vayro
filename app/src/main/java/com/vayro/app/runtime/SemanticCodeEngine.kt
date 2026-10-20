@@ -38,7 +38,6 @@ data class CodeSymbol(
     val isAsync: Boolean = false,
     val superTypes: List<String> = emptyList(),
     val docComment: String? = null,
-    val isExported: Boolean = true,
 )
 
 data class SymbolReference(
@@ -53,7 +52,6 @@ data class FileSemanticSummary(
     val language: String,
     val symbols: List<CodeSymbol>,
     val rawImports: List<String>,
-    val resolvedImports: List<String> = emptyList(),
     val calls: List<String> = emptyList(),
     val contentHash: String = "",
 )
@@ -265,23 +263,6 @@ object SemanticCodeEngine {
         return results
     }
 
-    /**
-     * Renames a symbol across matching files in a workspace, returning count of modified files.
-     */
-    fun renameSymbolAcrossFiles(
-        workspaceDir: File,
-        oldName: String,
-        newName: String,
-    ): Int {
-        if (oldName.isBlank() || newName.isBlank() || !workspaceDir.isDirectory) return 0
-        return com.vayro.app.workspace.GlobalSearchEngine.replaceAll(
-            workspaceDir = workspaceDir,
-            query = oldName,
-            replacement = newName,
-            wholeWord = true,
-            matchCase = true,
-        )
-    }
 
     // --- Language Parsers ---
 

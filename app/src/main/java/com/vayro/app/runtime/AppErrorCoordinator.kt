@@ -85,10 +85,6 @@ class AppErrorCoordinator(
         }
     }
 
-    fun clearAllErrors() {
-        _recentErrors.value = emptyList()
-        _activeCriticalError.value = null
-    }
 
     fun diagnoseThrowable(throwable: Throwable): AppErrorCategory {
         val msg = (throwable.message ?: "").lowercase()

@@ -389,14 +389,6 @@ class RuntimeInstaller(private val context: Context) {
 
     val dshVersion: String get() = dshMarker.readTextOrNull().orEmpty()
 
-    val claudeVersion: String get() {
-        migrateLegacyClaudeMarker()
-        return claudeMarker.readTextOrNull().orEmpty()
-    }
-
-    val agyVersion: String get() = agyMarker.readTextOrNull().orEmpty()
-
-    val githubCliVersion: String get() = githubCliMarker.readTextOrNull().orEmpty()
 
     fun isGitHubCliInstalled(): Boolean = isInstalled() &&
         File(rootfs, GITHUB_CLI_GUEST_PATH.removePrefix("/")).canExecute() &&
@@ -1924,31 +1916,6 @@ class RuntimeInstaller(private val context: Context) {
         return destination
     }
 
-    private suspend fun installZipAsset(
-        url: String,
-        checksum: String,
-        archiveName: String,
-        destination: File,
-        message: String,
-        from: Float,
-        to: Float,
-        onProgress: suspend (RuntimeInstallProgress) -> Unit,
-    ) {
-        downloads.mkdirs()
-        val archive = File(downloads, archiveName)
-        downloadVerified(url, archive, checksum) { downloaded, total ->
-            val ratio = if (total > 0) downloaded.toFloat() / total else 0f
-            onProgress(RuntimeInstallProgress(message, from + ratio * (to - from), downloaded, total.takeIf { it > 0 }))
-        }
-        onProgress(RuntimeInstallProgress("Installing ${archiveName.removeSuffix(".zip")}", to, indeterminate = true))
-        val staging = File(destination.parentFile, "${destination.name}.installing")
-        staging.deleteRecursively()
-        staging.mkdirs()
-        withTimeout(EXTRACTION_TIMEOUT_MS) { extractZipArchive(archive, staging) }
-        destination.deleteRecursively()
-        check(staging.renameTo(destination)) { "Could not activate ${destination.name}" }
-        archive.delete()
-    }
 
     private fun extractZipArchive(archive: File, destination: File) {
         checkArchiveSize(archive)
@@ -2739,49 +2706,6 @@ printf '%s\n' "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",
         check(available >= required) { "Not enough free space to extract the runtime archive" }
     }
 
-    private fun extractRootfs(archive: File, destination: File) {
-        checkArchiveSize(archive)
-        checkDiskSpaceForExtraction(destination, archive)
-        val budget = RuntimeExtractionBudget()
-        val deferredLinks = mutableListOf<Pair<File, File>>()
-        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(archive.inputStream()))).use { tar ->
-            var entry: TarArchiveEntry? = tar.nextEntry
-            while (entry != null) {
-                budget.checkEntry()
-                val cleanName = entry.name.removePrefix("./")
-                val target = safeChild(destination, cleanName)
-                when {
-                    entry.isDirectory -> target.mkdirs()
-                    entry.isSymbolicLink -> {
-                        target.parentFile?.mkdirs()
-                        if (target.exists() || java.nio.file.Files.isSymbolicLink(target.toPath())) target.delete()
-                        Os.symlink(entry.linkName, target.absolutePath)
-                    }
-                    entry.isLink -> {
-                        target.parentFile?.mkdirs()
-                        val linkTarget = safeChild(destination, entry.linkName.removePrefix("./"))
-                        if (linkTarget.exists()) {
-                            linkTarget.inputStream().use { input -> FileOutputStream(target).use { budget.copyBounded(input, it) } }
-                        } else {
-                            deferredLinks += target to linkTarget
-                        }
-                    }
-                    entry.isFile -> {
-                        target.parentFile?.mkdirs()
-                        FileOutputStream(target).use { output -> budget.copyBounded(tar, output) }
-                        runCatching { Os.chmod(target.absolutePath, entry.mode and 0b111111111) }
-                    }
-                }
-                entry = tar.nextEntry
-            }
-        }
-        deferredLinks.forEach { (target, linkTarget) ->
-            require(linkTarget.isFile) { "Archive hard-link target is missing" }
-            target.parentFile?.mkdirs()
-            linkTarget.inputStream().use { input -> FileOutputStream(target).use { budget.copyBounded(input, it) } }
-            runCatching { Os.chmod(target.absolutePath, android.system.Os.stat(linkTarget.absolutePath).st_mode) }
-        }
-    }
 
     private fun extractZstdTar(archive: File, destination: File) {
         checkArchiveSize(archive)

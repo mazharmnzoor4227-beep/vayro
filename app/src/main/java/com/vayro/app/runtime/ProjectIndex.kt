@@ -205,30 +205,6 @@ class ProjectIndex(private val filesDir: File) {
     private fun looksBinary(text: String): Boolean =
         text.any { it.code == 0 || (it.code in 0..8 && it != '\n' && it != '\r' && it != '\t') }
 
-    private fun languageFor(path: String): String {
-        return when (path.substringAfterLast('.', "").lowercase()) {
-            "kt", "kts" -> "Kotlin"
-            "java" -> "Java"
-            "js", "mjs", "cjs" -> "JavaScript"
-            "ts", "tsx" -> "TypeScript"
-            "jsx" -> "JSX"
-            "py" -> "Python"
-            "rs" -> "Rust"
-            "go" -> "Go"
-            "c", "h" -> "C"
-            "cc", "cpp", "cxx", "hpp" -> "C++"
-            "swift" -> "Swift"
-            "dart" -> "Dart"
-            "json" -> "JSON"
-            "xml" -> "XML"
-            "yaml", "yml" -> "YAML"
-            "md", "markdown" -> "Markdown"
-            "html", "htm" -> "HTML"
-            "css", "scss" -> "CSS"
-            "sh", "bash", "zsh" -> "Shell"
-            else -> "Text"
-        }
-    }
 
     private fun extractSymbols(text: String): List<String> {
         val patterns = listOf(

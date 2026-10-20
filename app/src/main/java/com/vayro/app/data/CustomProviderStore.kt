@@ -26,10 +26,6 @@ class CustomProviderStore(context: Context) {
 
     fun getAll(): List<CustomProviderConfig> = mutableConfigs.value
 
-    fun getById(id: String): CustomProviderConfig? = mutableConfigs.value.firstOrNull { it.id == id }
-
-    fun getActive(): CustomProviderConfig? =
-        mutableConfigs.value.firstOrNull { it.isActive } ?: mutableConfigs.value.firstOrNull()
 
     fun save(config: CustomProviderConfig) {
         val current = mutableConfigs.value.toMutableList()
@@ -38,12 +34,6 @@ class CustomProviderStore(context: Context) {
         persist(current)
     }
 
-    fun setActive(id: String): Boolean {
-        val current = mutableConfigs.value
-        if (current.none { it.id == id }) return false
-        persist(current.map { it.copy(isActive = it.id == id) })
-        return true
-    }
 
     fun remove(vault: ApiKeyVault, id: String) {
         vault.remove(vaultIdFor(id))
@@ -55,24 +45,6 @@ class CustomProviderStore(context: Context) {
         persist(fixed)
     }
 
-    /** Records auto-detected capabilities on a config. */
-    fun saveDetection(
-        id: String,
-        supportsVision: Boolean,
-        contextLimit: Int,
-        note: String,
-    ) {
-        val current = mutableConfigs.value.toMutableList()
-        val index = current.indexOfFirst { it.id == id }
-        if (index < 0) return
-        current[index] = current[index].copy(
-            detectedSupportsVision = supportsVision,
-            detectedContextLimit = contextLimit,
-            detectedAtMillis = System.currentTimeMillis(),
-            detectionNote = note,
-        )
-        persist(current)
-    }
 
     private fun loadAll(): List<CustomProviderConfig> {
         val raw = prefs.getString("configs_json", "[]") ?: "[]"
@@ -91,23 +63,4 @@ class CustomProviderStore(context: Context) {
         mutableConfigs.value = configs
     }
 
-    companion object {
-        /** Resolves the effective wire protocol for a custom config. */
-        fun protocolFor(config: CustomProviderConfig): com.vayro.app.model.ProviderProtocol =
-            when (config.apiType) {
-                com.vayro.app.model.CustomApiType.OPENAI_COMPATIBLE ->
-                    com.vayro.app.model.ProviderProtocol.OPENAI_CHAT
-                com.vayro.app.model.CustomApiType.CLAUDE_COMPATIBLE ->
-                    com.vayro.app.model.ProviderProtocol.ANTHROPIC_GATEWAY
-            }
-
-        /** Converts a custom config into a ProviderProfile for the runtime bridges. */
-        fun toProviderProfile(config: CustomProviderConfig): com.vayro.app.model.ProviderProfile =
-            com.vayro.app.model.ProviderProfile(
-                kind = com.vayro.app.model.ProviderKind.CUSTOM,
-                baseUrl = config.baseUrl.trim().trimEnd('/'),
-                model = config.modelId,
-                hasSecret = true,
-            )
-    }
 }

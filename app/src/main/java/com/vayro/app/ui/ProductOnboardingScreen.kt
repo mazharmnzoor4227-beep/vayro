@@ -299,7 +299,6 @@ fun ProductOnboardingScreen(
                 // Action Buttons: bottom-anchored primary action per Linear pattern.
                 // Slide 1 gets a prominent "Try it now" that finishes the tour.
                 val isFirstPage = pagerState.currentPage == 0
-                val isLastPage = pagerState.currentPage == slides.lastIndex
                 if (isFirstPage) {
                     OutlinedButton(
                         onClick = onTryNow,

@@ -131,9 +131,6 @@ class TeamReviewGatekeeper {
         return true
     }
 
-    fun getReviewsForTask(taskId: String): List<ReviewRecord> {
-        return reviews.filter { it.taskId == taskId }
-    }
 
     fun getAllReviews(): List<ReviewRecord> = reviews.toList()
 

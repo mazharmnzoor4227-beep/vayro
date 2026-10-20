@@ -36,23 +36,3 @@ class ApproximateTokenizer : ModelTokenizer {
     }
 }
 
-/**
- * Registry for model-specific tokenizers. Providers register their tokenizer
- * when one is available (e.g. a bundled tiktoken-compatible implementation);
- * otherwise the approximate tokenizer is used and reported as such.
- */
-object TokenizerRegistry {
-    private val tokenizers = mutableMapOf<String, ModelTokenizer>()
-    private val approximate = ApproximateTokenizer()
-
-    fun register(modelId: String, tokenizer: ModelTokenizer) {
-        tokenizers[modelId.lowercase()] = tokenizer
-    }
-
-    fun forModel(modelId: String?): ModelTokenizer {
-        if (modelId.isNullOrBlank()) return approximate
-        return tokenizers[modelId.lowercase()] ?: approximate
-    }
-
-    fun approximate(): ModelTokenizer = approximate
-}

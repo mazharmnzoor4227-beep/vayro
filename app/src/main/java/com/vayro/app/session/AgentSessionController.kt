@@ -65,20 +65,6 @@ class AgentSessionController(
         }
     }
 
-    fun updateProgress(sessionId: String, roadmap: ActiveRoadmap?, summary: String? = null) {
-        sessionManager.updateSessionProgress(sessionId, roadmap, summary)
-        _state.update {
-            val current = it.activeSessions[sessionId]
-            it.copy(
-                sessionRoadmaps = it.sessionRoadmaps + (sessionId to (roadmap ?: it.sessionRoadmaps[sessionId])),
-                activeSessions = if (current == null) it.activeSessions else it.activeSessions + (sessionId to current.copy(
-                    updatedAt = System.currentTimeMillis(),
-                    activeRoadmap = roadmap ?: current.activeRoadmap,
-                    summary = summary ?: current.summary,
-                )),
-            )
-        }
-    }
 
     fun completeSession(sessionId: String, summary: String? = null) {
         sessionManager.recordSessionCompleted(sessionId, summary)
@@ -113,16 +99,6 @@ class AgentSessionController(
         }
     }
 
-    fun timeoutSession(sessionId: String, timeoutMs: Long) {
-        sessionManager.recordSessionTimeout(sessionId, timeoutMs)
-        _state.update {
-            it.copy(
-                activeSessions = it.activeSessions - sessionId,
-                sessionRoadmaps = it.sessionRoadmaps - sessionId,
-                lastError = "Session timed out",
-            )
-        }
-    }
 
     fun dismissInterruptedSession(sessionId: String) {
         sessionManager.clearActiveSession(sessionId)
@@ -133,7 +109,6 @@ class AgentSessionController(
         _state.value.activeSessions[sessionId]?.projectId
             ?: _state.value.interruptedSessions.firstOrNull { it.sessionId == sessionId }?.projectId
 
-    fun listHistory(): List<PersistedAgentSession> = sessionManager.listSessionHistory()
 
     fun cleanupOldSessions(days: Int = 14): Int = sessionManager.cleanupOldSessions(days)
 }

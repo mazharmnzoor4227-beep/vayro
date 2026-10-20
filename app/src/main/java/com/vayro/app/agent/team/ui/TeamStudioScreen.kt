@@ -558,6 +558,7 @@ private fun TeamRosterTab(orchestrator: AgentTeamOrchestrator) {
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
+            SheetWindowImeGuard()
             AgentDetailSheet(
                 role = role,
                 live = live,

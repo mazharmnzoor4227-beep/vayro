@@ -84,6 +84,7 @@ fun MultiAgentTeamBottomSheet(
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
+        SheetWindowImeGuard()
         if (fullStudioMode) {
             com.vayro.app.agent.team.ui.TeamStudioScreen(
                 orchestrator = orchestrator,

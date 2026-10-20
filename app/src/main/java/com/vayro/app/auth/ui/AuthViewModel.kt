@@ -37,16 +37,6 @@ class AuthViewModel @JvmOverloads constructor(
     private val repository: AuthRepository = AuthRepositoryProvider.get(application),
 ) : AndroidViewModel(application) {
 
-    companion object {
-        fun provideFactory(application: Application): ViewModelProvider.Factory =
-            object : ViewModelProvider.Factory {
-                @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return AuthViewModel(application) as T
-                }
-            }
-    }
-
     val authState: StateFlow<AuthState> = repository.authState
         .stateIn(viewModelScope, SharingStarted.Eagerly, AuthState.Loading)
 
@@ -56,9 +46,6 @@ class AuthViewModel @JvmOverloads constructor(
     private val _uiState = MutableStateFlow(AuthUiState())
     val uiState: StateFlow<AuthUiState> = _uiState.asStateFlow()
 
-    fun toggleAuthMode() {
-        _uiState.update { it.copy(isSignUpMode = !it.isSignUpMode, errorMessage = null, successMessage = null) }
-    }
 
     fun setSignUpMode(signUp: Boolean) {
         _uiState.update { it.copy(isSignUpMode = signUp, errorMessage = null, successMessage = null) }
@@ -177,9 +164,6 @@ class AuthViewModel @JvmOverloads constructor(
         }
     }
 
-    fun setGitHubLoading(loading: Boolean) {
-        _uiState.update { it.copy(isGitHubLoading = loading) }
-    }
 
     fun sendPasswordReset(email: String) {
         val trimmed = email.trim()

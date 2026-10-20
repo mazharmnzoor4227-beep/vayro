@@ -453,23 +453,6 @@ class EditorCoordinator(
         return session
     }
 
-    /** Drops all in-memory buffers (project switch/close). */
-    fun clearBuffers() {
-        sessionPersistJob?.cancel()
-        bufferManager.clear()
-        host.updateState {
-            it.copy(
-                editorViewStates = emptyMap(),
-                editorSplitState = EditorSplitState(),
-                editorDirtyPaths = emptySet(),
-            )
-        }
-    }
-
-    /** Deletes the persisted session (project deletion). */
-    fun deleteEditorSession(projectId: String) {
-        sessionStore.clearSession(projectId)
-    }
 
     private fun scheduleSessionPersist(
         projectId: String,

@@ -1989,6 +1989,7 @@ private fun AgentSwitchSheet(
 ) {
     val pickerAgents = remember(freeModeEnabled) { agentsForPicker(freeModeEnabled) }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+        SheetWindowImeGuard()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3913,6 +3914,7 @@ private fun ProviderCredentialsStep(
             sheetState = modelSheetState,
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
+            SheetWindowImeGuard()
             Column(
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f).padding(horizontal = 20.dp),
             ) {
@@ -5281,7 +5283,6 @@ private fun ApiStatusChip(state: AppUiState, onSettings: () -> Unit, onPing: () 
 }
 
 
-
 @Composable
 private fun ProjectCard(
     project: Project,
@@ -6299,6 +6300,7 @@ private fun WorkspaceCommandPalette(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+        SheetWindowImeGuard()
         Column(
             Modifier
                 .fillMaxWidth()
@@ -9070,6 +9072,7 @@ private fun ActivitySheet(
         containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
+        SheetWindowImeGuard()
         Column(
             Modifier.fillMaxWidth()
                 .animateContentSize(
@@ -9495,20 +9498,6 @@ private fun activityName(item: ActivityItem): String = item.title
     .removeSuffix(" completed")
     .replaceFirstChar { it.uppercase() }
 
-private fun completedProcessSummary(
-    processItems: List<ActivityItem>,
-    startedAtMillis: Long?,
-    finishedAtMillis: Long?,
-): String {
-    val stopped = processItems.lastOrNull()?.title?.startsWith("Task stopped") == true
-    val outcome = if (stopped) "Task stopped" else "Task completed"
-    val steps = "${processItems.size} step${if (processItems.size == 1) "" else "s"}"
-    val duration = startedAtMillis?.let { start ->
-        val end = finishedAtMillis ?: System.currentTimeMillis()
-        formatDuration(((end - start) / 1000L).coerceAtLeast(0))
-    }
-    return if (duration != null) "$outcome · $duration · $steps" else "$outcome · $steps"
-}
 
 @Composable
 private fun rememberLiveElapsedSeconds(startedAtMillis: Long): Int {
@@ -10339,6 +10328,7 @@ private fun DeliveredApkCard(
             containerColor = MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         ) {
+            SheetWindowImeGuard()
             Column(Modifier.padding(bottom = 26.dp)) {
                 Box(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                     Text(

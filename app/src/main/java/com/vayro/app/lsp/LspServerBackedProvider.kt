@@ -51,24 +51,6 @@ class LspServerBackedProvider(
         return emptyList()
     }
 
-    fun referencesAt(
-        filePath: String,
-        line: Int,
-        character: Int,
-    ): List<SymbolLocation> {
-        val client = client() ?: return emptyList()
-        return runCatching {
-            client.references(filePath, line, character).map { loc ->
-                SymbolLocation(
-                    filePath = LspProtocolClient.uriToPath(loc.uri),
-                    line = loc.range.start.line + 1,
-                    character = loc.range.start.character,
-                    symbolName = "",
-                    kind = "reference",
-                )
-            }
-        }.getOrDefault(emptyList())
-    }
 
     override fun diagnostics(
         filePath: String,

@@ -18,7 +18,6 @@ data class CompletionItem(
     val insertText: String = label,
     val kind: CompletionItemKind,
     val detail: String? = null,
-    val autoImport: String? = null,
 )
 
 /**

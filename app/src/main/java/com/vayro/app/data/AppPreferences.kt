@@ -84,9 +84,6 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getBoolean("agent_antigravity_auto_round_robin", true)
         set(value) { preferences.edit().putBoolean("agent_antigravity_auto_round_robin", value).commit() }
 
-    var antigravityAccountsJson: String
-        get() = preferences.getString("agent_antigravity_accounts_json", "[]") ?: "[]"
-        set(value) { preferences.edit().putString("agent_antigravity_accounts_json", value).commit() }
 
     var githubLogin: String
         get() = preferences.getString("github_login", "") ?: ""

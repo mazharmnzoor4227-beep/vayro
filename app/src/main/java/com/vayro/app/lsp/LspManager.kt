@@ -174,10 +174,6 @@ class LspManager(
         else -> language.lowercase()
     }
 
-    fun restartServer(language: String, rootPath: String): Boolean {
-        stopServer(language)
-        return startServer(language, rootPath)
-    }
 
     // --- LSP Query Surface with Built-In Fallback Provider ---
 
@@ -228,81 +224,6 @@ class LspManager(
         return LspHover(contents = "`$word` ($language identifier)")
     }
 
-    /**
-     * Resolves Go to Definition targets.
-     *
-     * Milestone 3: when a real language server is running for [language], the
-     * query goes through the LSP protocol; otherwise the built-in fallback
-     * intelligence answers (honestly labelled by callers via ProviderRegistry).
-     */
-    fun requestDefinition(
-        language: String,
-        filePath: String,
-        line: Int,
-        character: Int,
-        content: String,
-    ): List<LspLocation> {
-        // Real server path.
-        val client = protocolClients[language]
-        if (client != null && client.isInitialized) {
-            runCatching {
-                client.didOpen(filePath, lspLanguageId(language), content)
-                return client.definition(filePath, line, character)
-            }
-        }
-        // Built-in fallback path.
-        val word = getWordAt(content, line, character)
-        if (word.isBlank()) return emptyList()
-
-        val summaries = semanticIndex.getSummaries().values
-        val defs = SemanticCodeEngine.findDefinitions(word, summaries, exactMatch = true)
-
-        return defs.map { (path, sym) ->
-            LspLocation(
-                uri = path,
-                range = LspRange(
-                    start = LspPosition(sym.line - 1, sym.characterOffset),
-                    end = LspPosition(sym.line - 1, sym.characterOffset + sym.name.length),
-                ),
-            )
-        }
-    }
-
-    /**
-     * Resolves Find References usages.
-     *
-     * Milestone 3: routes through a real server when one is running.
-     */
-    fun requestReferences(
-        language: String,
-        filePath: String,
-        line: Int,
-        character: Int,
-        content: String,
-    ): List<LspLocation> {
-        val client = protocolClients[language]
-        if (client != null && client.isInitialized) {
-            runCatching {
-                client.didOpen(filePath, lspLanguageId(language), content)
-                return client.references(filePath, line, character)
-            }
-        }
-        val word = getWordAt(content, line, character)
-        if (word.isBlank()) return emptyList()
-
-        val summaries = semanticIndex.getSummaries().values
-        val refs = SemanticCodeEngine.findReferences(word, summaries)
-
-        return refs.map { ref ->
-            LspLocation(
-                uri = ref.sourceFilePath,
-                range = LspRange(
-                    start = LspPosition(ref.line - 1, 0),
-                    end = LspPosition(ref.line - 1, word.length),
-                ),
-            )
-        }
-    }
 
     /**
      * Computes completions at cursor position.

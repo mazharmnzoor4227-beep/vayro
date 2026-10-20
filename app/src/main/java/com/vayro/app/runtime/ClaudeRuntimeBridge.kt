@@ -1000,14 +1000,6 @@ class ClaudeRuntimeBridge(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun classifyRisk(tool: String, command: String?): RiskLevel {
-        val preview = "${tool.lowercase()} ${command.orEmpty().lowercase()}"
-        return when {
-            listOf("rm -rf", "git push", "git reset", "sudo", "curl ").any(preview::contains) -> RiskLevel.HIGH
-            tool in listOf("Write", "Edit", "NotebookEdit", "Bash") -> RiskLevel.REVIEW
-            else -> RiskLevel.SAFE
-        }
-    }
 
     private fun friendlyError(error: Throwable): String {
         val message = error.message.orEmpty()

@@ -163,20 +163,6 @@ class McpRegistry(
         return removeServer(id)
     }
 
-    /**
-     * Versioned update: records a new installed version. Downgrades are refused
-     * unless [force] is true; the comparison is a best-effort numeric semver check.
-     */
-    fun updateServerVersion(id: String, newVersion: String, force: Boolean = false): Boolean {
-        val existing = servers[id] ?: return false
-        require(newVersion.isNotBlank()) { "Version cannot be blank" }
-        if (!force && compareVersions(newVersion, existing.version) < 0) {
-            return false
-        }
-        servers[id] = existing.copy(version = newVersion)
-        persist()
-        return true
-    }
 
     companion object {
         /**

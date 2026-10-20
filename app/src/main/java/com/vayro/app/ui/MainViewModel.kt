@@ -599,7 +599,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             outputFile.delete()
         }
     }
-    val appErrorCoordinator = com.vayro.app.runtime.AppErrorCoordinator()
     val projectWorkspaceController = com.vayro.app.workspace.ProjectWorkspaceController(application)
     val fileOperationsController = com.vayro.app.workspace.FileOperationsController()
     val projectMemoryStore = com.vayro.app.runtime.ProjectMemoryStore(application.filesDir)
@@ -1245,17 +1244,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val terminalLiveOutput: StateFlow<String> = terminalCoordinator.terminalLiveOutput
     val terminalCurrentCommand: StateFlow<String?> = terminalCoordinator.terminalCurrentCommand
 
-    /**
-     * Milestone 1: checks a project's workspace against the supported resource
-     * budgets (file count, total size). Returns SUCCESS when within budget,
-     * FAILED with an actionable message naming the exceeded budget otherwise.
-     */
-    fun checkProjectResources(projectRoot: File): com.vayro.app.core.result.OperationResult {
-        return com.vayro.app.core.resources.ResourceGate().checkProject(
-            projectRoot,
-            com.vayro.app.core.resources.AndroidResourceProbe(getApplication()),
-        )
-    }
 
     // ---- Milestone 1: terminal domain moved to TerminalCoordinator. ----
     fun runTerminalCommand(cmd: String) =
@@ -1311,7 +1299,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadProjectTerminal(project: Project) =
         terminalCoordinator.loadProjectTerminal(project)
-    fun activeProjectWorkspaceRoot(): File? = _state.value.activeProject?.let { projectWorkspaceRoot(it) }
 
     fun projectWorkspaceRoot(project: Project): File {
         val base = File(getApplication<Application>().filesDir, "workspaces/${project.id}")
@@ -1606,8 +1593,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun backToSetup() =
         runtimeCoordinator.backToSetup()
-
-
 
 
     fun checkForAppUpdate(force: Boolean = false) =
@@ -3401,8 +3386,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun onEditorViewStateChanged(path: String, viewState: com.vayro.app.editor.EditorViewState) =
         editorCoordinator.onBufferViewStateChanged(path, viewState)
 
-    fun onEditorSplitStateChanged(splitState: com.vayro.app.editor.EditorSplitState) =
-        editorCoordinator.onSplitStateChanged(splitState)
 
     suspend fun planRenameSymbol(oldName: String, newName: String): com.vayro.app.workspace.ReplacePreview? =
         editorCoordinator.planRenameSymbol(oldName, newName)
@@ -4186,9 +4169,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun keepWorkingInBackground(): Boolean = preferences.keepWorkingInBackground
 
-    fun setKeepWorkingInBackground(enabled: Boolean) {
-        preferences.keepWorkingInBackground = enabled
-    }
 
     fun sendHomeMessage(text: String, pastedText: String? = null) {
         val trimmed = text.trim()
@@ -4254,10 +4234,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         homeChatJob = viewModelScope.launch { runHomeChat(thread.id) }
     }
 
-    fun stopHomeChat() {
-        homeChatJob?.cancel()
-        _state.update { it.copy(homeSending = false) }
-    }
 
     /**
      * v3.2.45 (Item 3): Regenerate on a home reply — drop the last
@@ -5800,16 +5776,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             ),
                             finishedAt,
                         )
-                        // A harness-repair failure carries its full plain
-                        // explanation as the reason: show it as a chat
-                        // message too, so the turn never ends on a bare
-                        // "Task stopped" whose cause hides in Activity.
-                        val stoppedWithReason = if (
-                            event.reason.startsWith(com.vayro.app.runtime.DshCompatibility.REPAIR_FAILED_PREFIX)
-                        ) {
+                        // v3.2.49: generalize the v3.2.47 DeepSeek-only
+                        // surfacing to EVERY bridge — when a session ends
+                        // in failure with a substantive reason, the chat
+                        // gains ONE plain assistant message carrying the
+                        // provider's own words, so a turn never ends on a
+                        // bare "Task stopped" whose cause hides only in
+                        // the Activity sheet. The decision (blank /
+                        // user-stop / already-shown) is the pure,
+                        // unit-tested FailureReasonSurfacing; the DSH
+                        // repair-failure text still surfaces through it.
+                        val lastUserIdxStopped = stoppedState.messages.indexOfLast { it.fromUser }
+                        val surfaceText = com.vayro.app.runtime.FailureReasonSurfacing.messageToSurface(
+                            reason = event.reason,
+                            shownAssistantTexts = stoppedState.messages
+                                .drop(lastUserIdxStopped + 1)
+                                .filter { !it.fromUser }
+                                .map { it.text },
+                        )
+                        val stoppedWithReason = if (surfaceText != null) {
                             stoppedState.copy(
                                 messages = trimMessages(
-                                    stoppedState.messages + ChatMessage(fromUser = false, text = event.reason),
+                                    stoppedState.messages + ChatMessage(fromUser = false, text = surfaceText),
                                 ),
                             )
                         } else {

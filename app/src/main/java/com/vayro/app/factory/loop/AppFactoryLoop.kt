@@ -392,11 +392,5 @@ class AppFactoryLoop(
             return ApkSignatureVerifier.verifyApk(artifact)
         }
 
-        /** Exposes the real clean-state verifier for callers that want it. */
-        fun defaultCleanBuild(
-            projectDir: File,
-            tasks: List<String>,
-            commandRunner: CommandRunner = ProcessBuilderCommandRunner(),
-        ) = CleanBuildVerifier.verify(projectDir, projectDir.name, tasks, commandRunner)
     }
 }

@@ -150,18 +150,6 @@ class WorkspaceCheckpointManager(private val filesDir: File) {
         }
     }
 
-    /**
-     * Removes an old checkpoint from disk and index.
-     */
-    fun deleteCheckpoint(projectId: String, checkpointId: String): Boolean {
-        return runCatching {
-            val dir = File(checkpointsBaseDir(projectId), checkpointId)
-            dir.deleteRecursively()
-            val remaining = listCheckpoints(projectId).filterNot { it.id == checkpointId }
-            saveIndex(projectId, remaining)
-            true
-        }.getOrElse { false }
-    }
 
     /**
      * Atomically writes file content using SafeFileOps to prevent partial writes.
@@ -204,12 +192,6 @@ class WorkspaceCheckpointManager(private val filesDir: File) {
         return issues
     }
 
-    /**
-     * Validates that the workspace baseline directory is accessible and readable.
-     */
-    fun verifyWorkspaceBaseline(workspaceDir: File): Boolean {
-        return workspaceDir.exists() && workspaceDir.isDirectory && workspaceDir.canRead() && workspaceDir.canWrite()
-    }
 
     private fun saveIndex(projectId: String, checkpoints: List<WorkspaceCheckpoint>) {
         val arr = JSONArray()

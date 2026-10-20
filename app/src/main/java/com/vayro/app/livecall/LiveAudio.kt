@@ -40,7 +40,6 @@ class LiveMicCapture(
     var level: Float = 0f
         private set
 
-    val isCapturing: Boolean get() = record != null
 
     @SuppressLint("MissingPermission") // the host checks RECORD_AUDIO before the call screen opens
     fun start() {

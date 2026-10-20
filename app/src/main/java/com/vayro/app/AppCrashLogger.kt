@@ -145,18 +145,6 @@ object AppCrashLogger {
         log("CHECKPOINT $name" + (details?.let { " | " + it.replace('\n', ' ').take(1000) } ?: ""))
     }
 
-    fun logSection(message: String, block: () -> Unit) {
-        log("START $message")
-        try {
-            block()
-            log("SUCCESS $message")
-        } catch (throwable: Throwable) {
-            logThrowable("FAILED $message", throwable)
-            throw throwable
-        }
-    }
-
-    fun internalLogFile(context: Context): File = File(context.filesDir, FILE_NAME)
 
     internal fun sanitizedForCrashlytics(throwable: Throwable, depth: Int = 0): Throwable {
         if (depth > 8) return RuntimeException("Crash cause chain truncated for privacy")

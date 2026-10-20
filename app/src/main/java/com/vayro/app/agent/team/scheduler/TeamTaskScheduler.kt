@@ -28,16 +28,6 @@ class TeamTaskScheduler {
         evaluateReadyQueue()
     }
 
-    @Synchronized
-    fun addTask(task: TeamTask) {
-        val initialStatus = if (task.status == TeamTaskStatus.PENDING && task.dependencies.isEmpty()) {
-            TeamTaskStatus.READY
-        } else {
-            task.status
-        }
-        tasksById[task.id] = task.copy(status = initialStatus)
-        evaluateReadyQueue()
-    }
 
     fun getTasks(): List<TeamTask> = tasksById.values.toList()
 

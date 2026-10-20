@@ -176,7 +176,6 @@ class LiveCallController(
     /** Orb energy: the model's voice while it sounds, otherwise the mic. Polled by the screen. */
     fun orbLevel(): Float = if (player.isSounding) player.level else mic.level
 
-    fun isSpeaking(): Boolean = player.isSounding
 
     fun stop() {
         if (stopped) return

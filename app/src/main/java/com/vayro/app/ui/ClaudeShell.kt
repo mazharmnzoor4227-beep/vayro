@@ -142,6 +142,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
@@ -191,9 +192,11 @@ import com.vayro.app.ui.voice.VoiceInputBar
 import com.vayro.app.ui.voice.VoiceRecognizer
 import java.io.File
 import java.util.Calendar
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ---------------------------------------------------------------------------
 // Kodex Claude-style shell (v3.2.32).
@@ -544,6 +547,7 @@ internal fun AddToChatSheet(
         containerColor = MaterialTheme.colorScheme.surface,
         dragHandle = null,
     ) {
+        SheetWindowImeGuard()
         Column(Modifier.padding(bottom = 26.dp)) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
@@ -630,6 +634,7 @@ internal fun SelectAgentSheet(
         containerColor = MaterialTheme.colorScheme.surface,
         dragHandle = null,
     ) {
+        SheetWindowImeGuard()
         Column(Modifier.padding(bottom = 26.dp)) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
@@ -836,6 +841,7 @@ internal fun ChatModelPickerSheet(
         containerColor = MaterialTheme.colorScheme.surface,
         dragHandle = null,
     ) {
+        SheetWindowImeGuard()
         Column(Modifier.padding(bottom = 26.dp)) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
@@ -1243,11 +1249,7 @@ private fun HomeMessageRow(
                                     modifier = Modifier.padding(start = 10.dp, end = 10.dp, top = 10.dp, bottom = if (message.text.isBlank() && message.pastedText.isBlank()) 10.dp else 2.dp),
                                 ) {
                                     message.imagePaths.forEach { path ->
-                                        val bmp = remember(path) {
-                                            runCatching {
-                                                android.graphics.BitmapFactory.decodeFile(path)?.asImageBitmap()
-                                            }.getOrNull()
-                                        }
+                                        val bmp = rememberChatThumbnail(path, 512)
                                         if (bmp != null) {
                                             androidx.compose.foundation.Image(
                                                 bitmap = bmp,
@@ -1381,6 +1383,7 @@ private fun WorkActionsSheet(
         containerColor = MaterialTheme.colorScheme.surface,
         dragHandle = null,
     ) {
+        SheetWindowImeGuard()
         Column(Modifier.padding(bottom = 26.dp)) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterStart)) {
@@ -1974,6 +1977,25 @@ internal fun ChatHomeScreen(
             }
         } else {
           Box(Modifier.weight(1f).fillMaxWidth()) {
+            // v3.2.49: the "moved to Work" project name for a task card
+            // used to be resolved INSIDE every row with a firstOrNull
+            // scan over the whole thread — O(rows × thread) on every
+            // recomposition, i.e. quadratic while a reply streams in.
+            // Resolve it once per thread change into an id-keyed map.
+            val movedProjectNames = remember(homeMessages) {
+                val notesByTask = homeMessages
+                    .filter { it.kind == "work_note" }
+                    .groupBy { it.taskText }
+                if (notesByTask.isEmpty()) {
+                    emptyMap()
+                } else {
+                    homeMessages.associate { msg ->
+                        msg.id to notesByTask[msg.taskText]
+                            ?.firstOrNull { it.createdAtMillis >= msg.createdAtMillis }
+                            ?.projectName
+                    }
+                }
+            }
             androidx.compose.foundation.lazy.LazyColumn(
                 state = threadListState,
                 // v3.2.42: reverseLayout — index 0 (the thinking row
@@ -2016,10 +2038,7 @@ internal fun ChatHomeScreen(
                     val message = homeMessages[homeMessages.lastIndex - revIndex]
                     HomeMessageRow(
                         message = message,
-                        movedProjectName = homeMessages.firstOrNull {
-                            it.kind == "work_note" && it.taskText == message.taskText &&
-                                it.createdAtMillis >= message.createdAtMillis
-                        }?.projectName,
+                        movedProjectName = movedProjectNames[message.id],
                         onOpenInWork = onOpenInWork,
                         onRegenerate = onRegenerateHomeReply,
                         onOpenPasted = { viewingPasted = it },
@@ -2175,11 +2194,7 @@ internal fun ChatHomeScreen(
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         homePendingImages.forEach { path ->
                                             Box {
-                                                val bmp = remember(path) {
-                                                    runCatching {
-                                                        android.graphics.BitmapFactory.decodeFile(path)?.asImageBitmap()
-                                                    }.getOrNull()
-                                                }
+                                                val bmp = rememberChatThumbnail(path, 256)
                                                 if (bmp != null) {
                                                     androidx.compose.foundation.Image(
                                                         bitmap = bmp,
@@ -2454,6 +2469,7 @@ internal fun KodexSidebar(
             containerColor = MaterialTheme.colorScheme.surface,
             dragHandle = null,
         ) {
+            SheetWindowImeGuard()
             Column(Modifier.padding(bottom = 26.dp, top = 8.dp)) {
                 Text(
                     project.name,
@@ -4286,6 +4302,7 @@ internal fun GitPushUi(
                 dragHandle = null,
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
             ) {
+                SheetWindowImeGuard()
                 Column(Modifier.padding(bottom = 26.dp)) {
                     Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                         IconButton(onClick = { state.dismiss() }, modifier = Modifier.align(Alignment.CenterStart)) {
@@ -4805,4 +4822,41 @@ internal fun ConnectorsHeader(
             ),
         )
     }
+}
+
+/**
+ * v3.2.49 — chat image thumbnail, decoded off the main thread.
+ *
+ * Both call sites (a sent message's images at 120.dp, the composer's
+ * staged images at 52.dp) previously ran `BitmapFactory.decodeFile`
+ * FULL-SIZE inside `remember {}` during composition: a multi-megapixel
+ * photo blocked the UI thread for the entire decode the first time its
+ * row composed, and the full-size bitmap stayed in memory for a
+ * thumbnail. Now: bounds-first downsampled decode on Dispatchers.IO,
+ * published through produceState when ready. The displayed crop/fit is
+ * unchanged (the Image composable scales), only the decode cost moves.
+ */
+@Composable
+private fun rememberChatThumbnail(path: String, maxDimensionPx: Int): androidx.compose.ui.graphics.ImageBitmap? {
+    val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, path) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { decodeDownscaledImageBitmap(path, maxDimensionPx) }.getOrNull()
+        }
+    }
+    return bitmap
+}
+
+private fun decodeDownscaledImageBitmap(path: String, maxDimensionPx: Int): androidx.compose.ui.graphics.ImageBitmap? {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= maxDimensionPx || bounds.outHeight / (sample * 2) >= maxDimensionPx) {
+        sample *= 2
+    }
+    val decoded = android.graphics.BitmapFactory.decodeFile(
+        path,
+        android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+    ) ?: return null
+    return decoded.asImageBitmap()
 }

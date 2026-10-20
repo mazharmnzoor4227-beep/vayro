@@ -11,10 +11,6 @@ import com.vayro.app.AppCrashLogger
 
 object BackgroundProtectionHelper {
 
-    fun isBatteryOptimizationIgnored(context: Context): Boolean {
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true
-        return powerManager.isIgnoringBatteryOptimizations(context.packageName)
-    }
 
     fun getBatteryOptimizationIntent(context: Context): Intent {
         val packageName = context.packageName

@@ -1,24 +1,26 @@
 package com.vayro.app.data
 
 /**
- * Coordinates automatic failover across multiple API keys for a single provider.
+ * Failure classification for automatic API-key failover.
  *
- * When a request fails with a quota / rate-limit / auth error, the coordinator marks
- * the current key as exhausted and selects the next healthy key. This powers the
- * multi-account behavior for DeepSeek, NVIDIA NIM, and any other API-key provider:
- * add several keys in Settings, and sessions automatically carry forward when one
- * key hits its limit — no manual switching required.
+ * The rotation itself is hand-rolled at the call sites (home chat walks
+ * its ordered credential list in MainViewModel; workspace sessions rotate
+ * in MainViewModel.retryWithNextApiKey), because each surface persists
+ * and reports the switch differently. This class is the shared
+ * classifier both paths consult: [recordFailure] / [isKeyFailure] decide
+ * whether a failure looks like a key problem worth rotating over, and
+ * [isQuotaFailure] whether it specifically spent the key's quota.
  *
- * Pure logic (no Android dependencies) so it is unit-testable; the [ApiKeyVault]
- * remains the encrypted storage backing.
+ * v3.2.49: the session-scoped rotation state that used to live here
+ * (nextKey / reset / failedCount and their failed/cooldown sets) was
+ * removed — an exhaustive call-site audit showed no production caller
+ * ever used it (rotation is hand-rolled, above); only its own unit
+ * tests kept it alive.
+ *
+ * Pure logic (no Android dependencies) so it is unit-testable; the
+ * [ApiKeyVault] remains the encrypted storage backing.
  */
 class ApiKeyFailoverCoordinator {
-
-    /** Key IDs that have failed in the current session and should be skipped. */
-    private val failedKeyIds = mutableSetOf<String>()
-
-    /** Key IDs currently in quota cooldown (exhaustedAt millis). */
-    private val quotaCooldowns = mutableMapOf<String, Long>()
 
     companion object {
         /** How long a quota-exhausted key stays out of rotation before being retried. */
@@ -44,53 +46,14 @@ class ApiKeyFailoverCoordinator {
         }
     }
 
-    /** Clears all per-session failure state, e.g. when a new session starts cleanly. */
-    fun reset() {
-        failedKeyIds.clear()
-        quotaCooldowns.clear()
-    }
-
     /**
-     * Records that [keyId] failed with [reason]. Returns true when the failure looks
-     * like a key problem (worth rotating); false for unrelated errors.
+     * Reports that a key failed with [reason]. Returns true when the
+     * failure looks like a key problem (worth rotating); false for
+     * unrelated errors. The keyId/nowMs parameters are kept for call-site
+     * compatibility; the decision itself is the pure [isKeyFailure]
+     * classification.
      */
     fun recordFailure(keyId: String, reason: String, nowMs: Long = System.currentTimeMillis()): Boolean {
-        if (!isKeyFailure(reason)) return false
-        failedKeyIds += keyId
-        if (isQuotaFailure(reason)) {
-            quotaCooldowns[keyId] = nowMs
-        }
-        return true
+        return isKeyFailure(reason)
     }
-
-    /**
-     * Selects the next key to try from [credentials] (active key first).
-     * Skips keys that failed this session, preferring keys never exhausted; falls back
-     * to the key whose quota cooldown elapsed longest ago.
-     */
-    fun nextKey(
-        credentials: List<ApiKeyCredential>,
-        nowMs: Long = System.currentTimeMillis(),
-    ): ApiKeyCredential? {
-        if (credentials.isEmpty()) return null
-        // 1. Keys that have not failed this session and are not in quota cooldown.
-        val fresh = credentials.filter { it.id !in failedKeyIds && it.id !in quotaCooldowns }
-        if (fresh.isNotEmpty()) return fresh.first()
-        // 2. Keys whose quota cooldown has elapsed.
-        val cooledDown = credentials
-            .filter { it.id in quotaCooldowns && nowMs - (quotaCooldowns[it.id] ?: 0L) >= QUOTA_COOLDOWN_MS }
-            .sortedBy { quotaCooldowns[it.id] }
-        if (cooledDown.isNotEmpty()) {
-            val chosen = cooledDown.first()
-            quotaCooldowns.remove(chosen.id)
-            failedKeyIds.remove(chosen.id)
-            return chosen
-        }
-        // 3. Any failed key not in quota cooldown (e.g. transient 401 that may recover).
-        val retryable = credentials.filter { it.id !in quotaCooldowns }
-        return retryable.firstOrNull()
-    }
-
-    /** Number of keys currently excluded from rotation. */
-    fun failedCount(): Int = failedKeyIds.size
 }

@@ -54,7 +54,6 @@ data class OperationResult(
     val isSuccess: Boolean get() = status == OperationStatus.SUCCESS
 
     /** True when the operation did not really execute (demo or unconfigured). */
-    val isNonExecuting: Boolean get() = status == OperationStatus.SIMULATED || status == OperationStatus.NOT_CONFIGURED
 
     val durationMs: Long get() = (finishedAt ?: System.currentTimeMillis()) - startedAt
 

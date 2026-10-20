@@ -42,11 +42,6 @@ class TeamBlackboard {
 
     fun getArtifact(id: String): TeamArtifact? = artifactsById[id]
 
-    fun getLatestArtifact(title: String, type: ArtifactType): TeamArtifact? {
-        return artifactsById.values
-            .filter { it.title.equals(title, ignoreCase = true) && it.type == type }
-            .maxByOrNull { it.version }
-    }
 
     fun getArtifactsByType(type: ArtifactType): List<TeamArtifact> {
         return artifactsById.values

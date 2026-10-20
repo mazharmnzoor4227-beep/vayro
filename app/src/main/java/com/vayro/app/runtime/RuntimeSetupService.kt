@@ -183,7 +183,6 @@ object RuntimeSetupController {
         )
     }
 
-    fun fullLog(context: Context): String = logFile(context).readTailText(MAX_LOG_BYTES.toInt())
 
     private fun set(context: Context, value: RuntimeSetupSnapshot) {
         mutableSnapshot.value = value

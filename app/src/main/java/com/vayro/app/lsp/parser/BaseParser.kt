@@ -134,36 +134,6 @@ abstract class BaseParser(
         return inner
     }
 
-    /**
-     * Skips a `{...}` block starting at the current token, emitting a genuine
-     * diagnostic when it never closes. Returns true when the block closed.
-     */
-    protected fun skipBlock(): Boolean {
-        val opener = peek()
-        if (!matchSymbol("{")) return true
-        var depth = 1
-        while (!isAtEnd() && depth > 0) {
-            val t = advance()
-            if (t.type == TokenType.SYMBOL) {
-                when (t.text) {
-                    "{" -> depth++
-                    "}" -> depth--
-                }
-            }
-        }
-        if (depth > 0) {
-            diagnostics.add(
-                ParseDiagnostic(
-                    line = opener.line,
-                    character = opener.character,
-                    message = "Unclosed '{' — expected '}'",
-                    severity = "error",
-                )
-            )
-            return false
-        }
-        return true
-    }
 
     /**
      * Records a declaration symbol with the current scope stack as its

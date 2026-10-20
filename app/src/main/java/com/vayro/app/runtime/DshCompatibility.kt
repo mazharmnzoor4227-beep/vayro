@@ -101,8 +101,10 @@ object DshCompatibility {
 
     /**
      * Prefix of the chat message emitted when an automatic repair could not
-     * restore a runnable harness. The UI keys on this prefix to surface the
-     * message as a chat bubble, not only inside the Activity sheet.
+     * restore a runnable harness. Since v3.2.49 the UI surfaces it through
+     * the general FailureReasonSurfacing rule (every bridge's substantive
+     * failure reason becomes one chat message); the prefix remains the
+     * message's stable opening for tests and support.
      */
     const val REPAIR_FAILED_PREFIX = "DeepSeek Harness could not be repaired."
 

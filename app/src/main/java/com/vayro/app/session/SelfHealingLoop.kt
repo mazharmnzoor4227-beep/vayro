@@ -44,7 +44,6 @@ class SelfHealingLoop(val maxIterations: Int = 3) {
         failureHistory.clear()
     }
 
-    fun getFailures(): List<ErrorDiagnosis> = failureHistory.toList()
 
     fun diagnose(output: String): ErrorDiagnosis {
         val lines = output.lines()

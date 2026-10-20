@@ -35,13 +35,6 @@ class TeamBudgetTracker(
         tokenQuota.set(quota)
     }
 
-    fun setMaxExecutionTime(timeMs: Long) {
-        maxExecutionTimeMs.set(timeMs)
-    }
-
-    fun setCostPer1kTokens(cost: Double) {
-        costPer1kTokens = cost
-    }
 
     fun recordUsage(role: TeamRole, tokens: Long, durationMs: Long = 0L) {
         if (tokens > 0) {

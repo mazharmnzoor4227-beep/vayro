@@ -18,6 +18,4 @@ sealed interface AuthState {
     val isAuthenticated: Boolean
         get() = this is Authenticated
 
-    val isEmailVerificationRequired: Boolean
-        get() = this is EmailVerificationRequired
 }

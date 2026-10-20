@@ -1583,6 +1583,7 @@ fun PreviewTab(
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
+            SheetWindowImeGuard()
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

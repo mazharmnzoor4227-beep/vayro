@@ -14,13 +14,6 @@ data class FoldableRange(
     val previewText: String = "...",
 )
 
-data class FoldedLineDisplay(
-    val originalLineNumber: Int,
-    val text: String,
-    val isFoldedHeader: Boolean = false,
-    val isFoldableStart: Boolean = false,
-    val matchingRange: FoldableRange? = null,
-)
 
 /**
  * Engine responsible for detecting collapsible code regions and computing

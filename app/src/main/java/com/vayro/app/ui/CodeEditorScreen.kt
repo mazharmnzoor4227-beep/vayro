@@ -795,6 +795,7 @@ fun CodeEditorScreen(
 
     if (outlineOpen) {
         ModalBottomSheet(onDismissRequest = { outlineOpen = false }, containerColor = MaterialTheme.colorScheme.surface) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1023,7 +1024,6 @@ fun CodeEditorScreen(
                         val preview = renamePreview
                         TextButton(
                             onClick = {
-                                val oldSym = renameOldName
                                 renameDialogOpen = false
                                 renamePreview = null
                                 scope.launch {
@@ -1055,6 +1055,7 @@ fun CodeEditorScreen(
 
     if (referencesOpen) {
         ModalBottomSheet(onDismissRequest = { referencesOpen = false }, containerColor = MaterialTheme.colorScheme.surface) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1096,6 +1097,7 @@ fun CodeEditorScreen(
 
     if (diagnosticsOpen) {
         ModalBottomSheet(onDismissRequest = { diagnosticsOpen = false }, containerColor = MaterialTheme.colorScheme.surface) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1180,6 +1182,7 @@ fun CodeEditorScreen(
 
     if (codeActionsOpen) {
         ModalBottomSheet(onDismissRequest = { codeActionsOpen = false }, containerColor = MaterialTheme.colorScheme.surface) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1242,6 +1245,7 @@ fun CodeEditorScreen(
 
     if (implementationsOpen) {
         ModalBottomSheet(onDismissRequest = { implementationsOpen = false }, containerColor = MaterialTheme.colorScheme.surface) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -1283,6 +1287,7 @@ fun CodeEditorScreen(
 
     if (callHierarchyOpen) {
         ModalBottomSheet(onDismissRequest = { callHierarchyOpen = false }, containerColor = MaterialTheme.colorScheme.surface) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()

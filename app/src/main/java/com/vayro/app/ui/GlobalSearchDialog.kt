@@ -188,6 +188,7 @@ fun GlobalSearchDialog(
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+        SheetWindowImeGuard()
         Column(
             Modifier
                 .fillMaxWidth()

@@ -6,13 +6,6 @@ import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class GitHubDeviceCode(
-    val deviceCode: String,
-    val userCode: String,
-    val verificationUri: String,
-    val expiresInSeconds: Long,
-    val intervalSeconds: Long,
-)
 
 data class GitHubAccount(val login: String, val avatarUrl: String)
 
@@ -49,45 +42,9 @@ data class GitHubPullRequest(
     val body: String = "",
 )
 
-sealed interface GitHubTokenPoll {
-    data class Success(val accessToken: String) : GitHubTokenPoll
-    data class Pending(val slowDown: Boolean = false) : GitHubTokenPoll
-    data class Failure(val message: String) : GitHubTokenPoll
-}
 
 open class GitHubClient {
-    fun requestDeviceCode(clientId: String): GitHubDeviceCode {
-        val json = postForm(
-            "https://github.com/login/device/code",
-            mapOf("client_id" to clientId),
-        )
-        return GitHubDeviceCode(
-            deviceCode = json.getString("device_code"),
-            userCode = json.getString("user_code"),
-            verificationUri = json.optString("verification_uri", "https://github.com/login/device"),
-            expiresInSeconds = json.optLong("expires_in", 900L),
-            intervalSeconds = json.optLong("interval", 5L).coerceAtLeast(5L),
-        )
-    }
 
-    fun pollDeviceToken(clientId: String, deviceCode: String): GitHubTokenPoll {
-        val json = postForm(
-            "https://github.com/login/oauth/access_token",
-            mapOf(
-                "client_id" to clientId,
-                "device_code" to deviceCode,
-                "grant_type" to "urn:ietf:params:oauth:grant-type:device_code",
-            ),
-        )
-        json.optString("access_token").takeIf(String::isNotBlank)?.let { return GitHubTokenPoll.Success(it) }
-        return when (val error = json.optString("error")) {
-            "authorization_pending" -> GitHubTokenPoll.Pending()
-            "slow_down" -> GitHubTokenPoll.Pending(slowDown = true)
-            "access_denied" -> GitHubTokenPoll.Failure("GitHub authorization was cancelled")
-            "expired_token" -> GitHubTokenPoll.Failure("The GitHub sign-in code expired. Try again.")
-            else -> GitHubTokenPoll.Failure(json.optString("error_description").ifBlank { error.ifBlank { "GitHub sign-in failed" } })
-        }
-    }
 
     fun account(token: String): GitHubAccount {
         val json = getJson("https://api.github.com/user", token) as JSONObject
@@ -389,29 +346,6 @@ open class GitHubClient {
         )
     }
 
-    fun getPullRequestDiff(token: String, repoFullName: String, prNumber: Int): String {
-        val connection = (URL("https://api.github.com/repos/$repoFullName/pulls/$prNumber").openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            setRequestProperty("Accept", "application/vnd.github.v3.diff")
-            if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("User-Agent", "Kodex-Android")
-        }
-        try {
-            // Check the status BEFORE touching inputStream: on a 403/404/
-            // rate-limit response, inputStream throws a bare
-            // FileNotFoundException that hides the real GitHub error.
-            val status = connection.responseCode
-            if (status !in 200..299) {
-                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                error(githubErrorMessage(status, errorBody))
-            }
-            return connection.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            connection.disconnect()
-        }
-    }
 
     fun submitReview(
         token: String,
@@ -450,21 +384,6 @@ open class GitHubClient {
         return list
     }
 
-    fun listWorkflows(token: String, repoFullName: String): List<GitHubWorkflow> {
-        val json = getJson("https://api.github.com/repos/$repoFullName/actions/workflows", token) as? JSONObject ?: return emptyList()
-        val array = json.optJSONArray("workflows") ?: return emptyList()
-        val list = mutableListOf<GitHubWorkflow>()
-        for (i in 0 until array.length()) {
-            val item = array.getJSONObject(i)
-            list += GitHubWorkflow(
-                id = item.getLong("id"),
-                name = item.getString("name"),
-                path = item.getString("path"),
-                state = item.optString("state", "active")
-            )
-        }
-        return list
-    }
 
     fun listWorkflowRuns(token: String, repoFullName: String): List<GitHubWorkflowRun> {
         val list = mutableListOf<GitHubWorkflowRun>()

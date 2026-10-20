@@ -47,10 +47,4 @@ class ProjectWorkspaceController(private val context: Context) {
         }
     }
 
-    fun deleteProjectWorkspace(projectId: String): Boolean {
-        return runCatching {
-            val dir = File(workspacesDir, projectId)
-            if (dir.exists()) dir.deleteRecursively() else true
-        }.getOrDefault(false)
-    }
 }

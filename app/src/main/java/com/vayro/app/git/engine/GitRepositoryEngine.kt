@@ -253,16 +253,12 @@ class GitRepositoryEngine(
         return execute(args, workingDir)
     }
 
-    fun checkoutBranch(workingDir: File, branchName: String): GitCommandResult =
-        execute(listOf("checkout", branchName), workingDir)
 
     fun deleteBranch(workingDir: File, branchName: String, force: Boolean = false): GitCommandResult {
         val flag = if (force) "-D" else "-d"
         return execute(listOf("branch", flag, branchName), workingDir)
     }
 
-    fun renameBranch(workingDir: File, newName: String): GitCommandResult =
-        execute(listOf("branch", "-m", newName), workingDir)
 
     // --- Merge & Rebase ---
 
@@ -283,8 +279,6 @@ class GitRepositoryEngine(
     fun abortRebase(workingDir: File): GitCommandResult =
         execute(listOf("rebase", "--abort"), workingDir)
 
-    fun continueRebase(workingDir: File): GitCommandResult =
-        execute(listOf("rebase", "--continue"), workingDir)
 
     // --- Stash Operations ---
 
@@ -315,8 +309,6 @@ class GitRepositoryEngine(
     fun stashPop(workingDir: File, index: Int = 0): GitCommandResult =
         execute(listOf("stash", "pop", "stash@{$index}"), workingDir)
 
-    fun stashDrop(workingDir: File, index: Int = 0): GitCommandResult =
-        execute(listOf("stash", "drop", "stash@{$index}"), workingDir)
 
     // --- Commit History (Log) ---
 

@@ -81,8 +81,6 @@ class WorkspaceSemanticIndex(
         val activeSummaries = summaries.values.toList()
         cachedSymbolGraph = SymbolGraph.buildFromSummaries(activeSummaries)
 
-        // Build file contents map for dependency graph resolution
-        val filesMap = summaries.mapValues { it.value.contentHash }
         val allPaths = summaries.keys.toList()
         val importsMap = mutableMapOf<String, List<String>>()
         val dependentsMap = mutableMapOf<String, MutableList<String>>()

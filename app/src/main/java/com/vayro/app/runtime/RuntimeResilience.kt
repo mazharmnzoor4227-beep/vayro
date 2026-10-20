@@ -58,16 +58,7 @@ object RuntimeFailureClassifier {
         }
     }
 
-    fun normalizeThrowable(error: Throwable): String = when (error) {
-        is UnknownHostException -> "Network unavailable: DNS lookup failed."
-        is SocketTimeoutException -> "Network error: connection timed out."
-        is ConnectException -> "Network error: connection could not be established."
-        is SocketException -> "Network error: " + error.message.orEmpty().ifBlank { "socket connection failed" } + "."
-        else -> error.message.orEmpty().ifBlank { error::class.java.simpleName }
-    }
 
-    fun verifyAndHealRootfs(rootfsDir: java.io.File): RootfsIntegrityReport =
-        RootfsIntegrityVerifier.verifyAndHeal(rootfsDir)
 }
 
 data class RuntimeRetryPolicy(

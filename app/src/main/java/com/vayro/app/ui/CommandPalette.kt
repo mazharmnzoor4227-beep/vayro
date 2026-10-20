@@ -136,6 +136,7 @@ fun CommandPalette(
     } else emptyList()
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface) {
+        SheetWindowImeGuard()
         Column(
             Modifier
                 .fillMaxWidth()

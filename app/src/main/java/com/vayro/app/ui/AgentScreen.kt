@@ -367,7 +367,6 @@ fun AgentScreen(
     val isAntigravity = state.agentKind == AgentKind.ANTIGRAVITY
     val antigravityTesting = isAntigravity && state.apiPingStatus == ApiPingStatus.PINGING
     val antigravityHelloFailed = isAntigravity && state.apiPingStatus == ApiPingStatus.FAILED
-    val pillLoading = antigravityTesting || (!isAntigravity && state.apiPingStatus == ApiPingStatus.PINGING)
 
     val (dot, label, pillBg) = if (isAntigravity) {
         when {
@@ -392,6 +391,7 @@ fun AgentScreen(
             sheetState = antigravitySheetState,
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -504,6 +504,7 @@ fun AgentScreen(
             sheetState = providerSheetState,
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
+            SheetWindowImeGuard()
             Column(
                 Modifier
                     .fillMaxWidth()

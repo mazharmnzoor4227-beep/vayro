@@ -74,6 +74,7 @@ fun VisualDevToolsSheet(
         modifier = Modifier.fillMaxHeight(0.85f),
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
+        SheetWindowImeGuard()
         Column(
             modifier = Modifier
                 .fillMaxSize()

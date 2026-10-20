@@ -69,7 +69,6 @@ data class ReplaceTransaction(
     val appliedFiles: List<String>,
     val filesChanged: Int,
     val matchesReplaced: Int,
-    val appliedAt: Long = System.currentTimeMillis(),
 )
 
 /**

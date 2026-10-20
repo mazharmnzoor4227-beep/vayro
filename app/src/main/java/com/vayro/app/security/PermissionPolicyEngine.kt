@@ -379,7 +379,6 @@ class PermissionPolicyEngine(
     }
 
     fun getAllGlobalPolicies(): Map<PermissionCategory, PermissionLevel> = globalPolicies.toMap()
-    fun getGlobalPolicy(category: PermissionCategory): PermissionLevel? = globalPolicies[category]
     fun getProjectPolicy(projectId: String, category: PermissionCategory): PermissionLevel? = projectPolicies[projectId]?.get(category)
 
     private fun checkScopeGrant(category: PermissionCategory, target: String, projectId: String?, sessionId: String?): Boolean {
@@ -440,31 +439,12 @@ class PermissionPolicyEngine(
         }
     }
 
-    fun revokePermission(category: PermissionCategory, projectId: String? = null, sessionId: String? = null) {
-        if (sessionId != null) {
-            sessionGrants[sessionId]?.remove(category)
-            onceGrants[sessionId]?.remove(category)
-        }
-        if (projectId != null) {
-            projectPolicies[projectId]?.remove(category)
-        }
-        globalPolicies.remove(category)
-        persistPolicies()
-    }
 
     fun clearSessionPermissions(sessionId: String) {
         sessionGrants.remove(sessionId)
         onceGrants.remove(sessionId)
     }
 
-    fun resetAllPolicies() {
-        sessionGrants.clear()
-        onceGrants.clear()
-        projectPolicies.clear()
-        globalPolicies.clear()
-        killSwitchEngaged.set(false)
-        policyFile?.let { if (it.exists()) it.delete() }
-    }
 
     private fun consumeOnceGrant(sessionId: String, category: PermissionCategory, target: String): Boolean {
         val patterns = onceGrants[sessionId]?.get(category) ?: return false

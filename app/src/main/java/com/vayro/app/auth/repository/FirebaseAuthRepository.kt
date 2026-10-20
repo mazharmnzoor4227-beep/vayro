@@ -49,7 +49,6 @@ class FirebaseAuthRepository(
         get() = authOrNull
             ?: throw IllegalStateException("Sign-in is unavailable right now. Please continue as guest.")
 
-    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val _authState = MutableStateFlow<AuthState>(AuthState.Loading)
     override val authState: StateFlow<AuthState> = _authState.asStateFlow()

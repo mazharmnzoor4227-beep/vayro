@@ -100,7 +100,6 @@ class MarketplaceInstallManager(private val context: Context) {
 
     fun installedIds(): Set<String> = _installedPackages.value.keys.toSet()
 
-    fun getInstalled(itemId: String): InstalledPackage? = _installedPackages.value[itemId]
 
     /**
      * Installs [item]: materializes the package on disk and records it durably.

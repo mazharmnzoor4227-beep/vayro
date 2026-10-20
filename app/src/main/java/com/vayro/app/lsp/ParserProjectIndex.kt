@@ -483,26 +483,5 @@ class ParserProjectIndex {
             ParsedSymbolKind.CONSTRUCTOR,
         )
 
-        /** Index a whole directory tree (bounded). */
-        fun indexDirectory(root: File, maxFiles: Int = 200): ParserProjectIndex {
-            val index = ParserProjectIndex()
-            if (!root.isDirectory) return index
-            root.walkTopDown()
-                .filter { f ->
-                    f.isFile && f.length() in 1..500_000 &&
-                        !f.path.contains("/build/") &&
-                        !f.path.contains("/.git/") &&
-                        !f.path.contains("/node_modules/") &&
-                        SourceParser.supportsLanguage(SourceParser.languageIdForPath(f.path))
-                }
-                .take(maxFiles)
-                .forEach { f ->
-                    val content = runCatching { f.readText() }.getOrDefault("")
-                    // Store paths relative to root for stable cross-file resolution.
-                    val rel = runCatching { f.relativeTo(root).invariantSeparatorsPath }.getOrDefault(f.path)
-                    index.indexFile(rel, content)
-                }
-            return index
-        }
     }
 }

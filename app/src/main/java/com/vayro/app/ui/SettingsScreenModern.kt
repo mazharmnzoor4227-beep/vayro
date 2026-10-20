@@ -1279,6 +1279,7 @@ fun SettingsScreen(
             onDismissRequest = { showAuditLogSheet = false },
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
+            SheetWindowImeGuard()
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
