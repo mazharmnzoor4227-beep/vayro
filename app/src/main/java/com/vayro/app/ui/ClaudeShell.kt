@@ -1442,8 +1442,15 @@ private fun HomeMessageRow(
                 // workspace (serif, like the workspace's agent messages),
                 // with the workspace's link cards and the shared
                 // Copy + Listen actions.
-                val messageLinks = remember(message.id, message.text) {
-                    com.vayro.app.chat.ChatLinkExtractor.extract(message.text).take(3)
+                // v3.2.51: a searched reply shows the sources it
+                // actually rested on (persisted on the message);
+                // they replace links extracted from the reply text.
+                val messageLinks = remember(message.id, message.text, message.sourceUrls) {
+                    if (message.sourceUrls.isNotEmpty()) {
+                        message.sourceUrls.distinct()
+                    } else {
+                        com.vayro.app.chat.ChatLinkExtractor.extract(message.text).take(3)
+                    }
                 }
                 Column(Modifier.fillMaxWidth()) {
                     SelectionContainer {
@@ -1592,6 +1599,9 @@ internal fun ChatHomeScreen(
     onAttachDocuments: (List<Uri>) -> Unit = onAttach,
     onRemoveHomeDoc: () -> Unit = {},
     homeSending: Boolean = false,
+    // v3.2.51: live phase label for the thinking row while the home
+    // engine searches the web / reads a page; "" = "Thinking…".
+    homeActivityLabel: String = "",
     // v3.2.45 (Item 3): Regenerate under a home reply (host = the view model).
     onRegenerateHomeReply: () -> Unit = {},
     homeProviderName: String = "",
@@ -2137,7 +2147,7 @@ internal fun ChatHomeScreen(
                             ThinkingOrb(Modifier.size(17.dp))
                             Spacer(Modifier.width(9.dp))
                             Text(
-                                "Thinking…",
+                                homeActivityLabel.ifBlank { "Thinking…" },
                                 fontSize = 13.5.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

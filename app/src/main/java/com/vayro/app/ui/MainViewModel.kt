@@ -410,6 +410,8 @@ data class AppUiState(
     val activeHomeThreadId: String = "",
     /** True while the home-chat engine is waiting for a reply. */
     val homeSending: Boolean = false,
+    /** v3.2.51: live phase label for the home thinking row ("Searching the web…", "Reading <host>…"); "" = plain "Thinking…". */
+    val homeActivityLabel: String = "",
     /** Title of the provider answering home chat ("" = none connected yet). */
     val homeChatProviderName: String = "",
     /** v3.2.40 (Scope G): images staged in the home composer — absolute paths of downscaled JPEGs under filesDir/home_images, sent as real vision parts with the next message. */
@@ -565,6 +567,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return projectBridgePool.getOrCreate(projectId, kind, rootPath, viewModelScope) { pid, event -> onRuntimeEvent(pid, event) }
     }
     private val providerApi = ProviderApiClient()
+    // v3.2.51: home-chat web machinery — keyless search, page fetch,
+    // and the native Gemini grounded route.
+    private val webSearchClient = com.vayro.app.network.WebSearchClient()
+    private val webPageFetcher = com.vayro.app.network.WebPageFetcher()
+    private val geminiGrounding = com.vayro.app.network.GeminiGrounding()
     // v3.2.37 (Parts C/F/F2/G): home chat + key health stores.
     private val homeChatStore = com.vayro.app.data.HomeChatStore(application)
     private val keyHealthStore = com.vayro.app.data.KeyHealthStore(application)
@@ -4745,6 +4752,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * v3.2.51: the `<home_skills>` system-prompt block for one home
+     * turn — the same enabled repo skills the workspace agents see
+     * (live SkillManager; disabled skills stay invisible here too).
+     * Bodies are read from each skill's SKILL.md on disk; selection
+     * and caps live in the pure [com.vayro.app.chat.HomeSkillContext].
+     */
+    private fun buildHomeSkillsBlock(latestUserText: String): String {
+        val enabled = runCatching { skillManager.enabledSkills() }.getOrDefault(emptyList())
+        if (enabled.isEmpty()) return ""
+        val candidates = enabled.map { info ->
+            val body = runCatching {
+                val manifest = skillManager.getSkillManifest(File(info.path))
+                val raw = manifest?.readText().orEmpty()
+                com.vayro.app.chat.HomeSkillContext.stripFrontmatter(raw)
+            }.getOrDefault("")
+            com.vayro.app.chat.HomeSkillContext.SkillCandidate(info.name, info.description, body)
+        }
+        val selected = com.vayro.app.chat.HomeSkillContext.select(latestUserText, candidates)
+        return com.vayro.app.chat.HomeSkillContext.buildBlock(candidates, selected)
+    }
+
     private suspend fun runHomeChat(threadId: String) {
         try {
             val thread = _state.value.homeThreads.firstOrNull { it.id == threadId } ?: return
@@ -4781,6 +4810,180 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var answeredByFallback = false
             var fallbackTriedKey = false
             var fallbackError: String? = null
+            // ------------------------------------------------------
+            // v3.2.51: Powerful Home Chat preparation. The model
+            // always learns today's date; enabled repo skills join
+            // the system prompt; the freshness policy plans this
+            // turn's web work. Retrieval itself is LAZY — gathered
+            // at most once, only when an attempt actually needs it.
+            // Native routes (Gemini grounding, OpenRouter /
+            // Anthropic server tools) get the first try; the
+            // app-driven route is the same-turn fallback; a plain
+            // call sits underneath everything, so a web failure can
+            // never cost the owner his reply.
+            // ------------------------------------------------------
+            val latestUserText = textMessages.lastOrNull { it.fromUser }?.modelText().orEmpty()
+            val now = java.time.ZonedDateTime.now()
+            val dateLine = HomeFreshnessPolicy.todayLine(now)
+            val skillsBlock = buildHomeSkillsBlock(latestUserText)
+            val baseSystem = buildString {
+                append(HOME_CHAT_SYSTEM_PROMPT)
+                append("\n\n")
+                append(dateLine)
+                if (skillsBlock.isNotBlank()) {
+                    append("\n\n")
+                    append(skillsBlock)
+                }
+            }
+            val webPlan = HomeFreshnessPolicy.decide(latestUserText, HomeFreshnessPolicy.todayLabel(now))
+            val wantsWeb = webPlan.wantsWeb
+            val retrievedLabel = HomeFreshnessPolicy.retrievedLabel(now)
+
+            fun setHomeLabel(label: String) {
+                _state.update { st -> if (st.homeActivityLabel == label) st else st.copy(homeActivityLabel = label) }
+            }
+
+            var appWeb: com.vayro.app.chat.WebContext.Assembled? = null
+            var appWebUsable = false
+            suspend fun ensureAppWeb(): com.vayro.app.chat.WebContext.Assembled {
+                appWeb?.let { return it }
+                val parts = mutableListOf<com.vayro.app.chat.WebContext.Part>()
+                var usable = false
+                for (query in webPlan.searchQueries) {
+                    setHomeLabel("Searching the web…")
+                    val hits = try {
+                        webSearchClient.search(query)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                    if (hits.isNotEmpty()) {
+                        usable = true
+                        parts += com.vayro.app.chat.WebContext.Part.Search(
+                            query,
+                            hits.map {
+                                com.vayro.app.chat.WebContext.SearchResult(it.title, it.url, it.snippet)
+                            },
+                        )
+                    }
+                }
+                for (url in webPlan.fetchUrls) {
+                    setHomeLabel("Reading ${com.vayro.app.chat.WebContext.hostOf(url)}…")
+                    val pageText = try {
+                        webPageFetcher.fetchText(url)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    }
+                    if (pageText != null) usable = true
+                    parts += com.vayro.app.chat.WebContext.Part.Page(url, pageText)
+                }
+                val assembled = com.vayro.app.chat.WebContext.assemble(parts, retrievedLabel)
+                appWeb = assembled
+                appWebUsable = usable
+                setHomeLabel("")
+                return assembled
+            }
+
+            fun injectWebContext(injected: String): List<ProviderApiClient.ChatTurn> {
+                val lastUser = turns.indexOfLast { it.role == "user" }
+                if (lastUser < 0) return turns
+                return turns.mapIndexed { index, turn ->
+                    if (index == lastUser) turn.copy(content = turn.content + "\n\n" + injected) else turn
+                }
+            }
+
+            var geminiNativeFailed = false
+            var serverToolsFailed = false
+            var answeredViaNative = false
+            var replySources: List<String> = emptyList()
+
+            // One provider attempt with the v3.2.51 routing. A
+            // ChatApiException from the final (plain) call propagates
+            // to the key-failover catch below, unchanged.
+            suspend fun attemptHomeCompletion(
+                kind: ProviderKind,
+                credential: com.vayro.app.data.ApiKeyCredential,
+                profile: ProviderProfile,
+            ): Pair<String, List<String>> {
+                if (kind == ProviderKind.GOOGLE_AI_STUDIO && wantsWeb && !geminiNativeFailed) {
+                    setHomeLabel("Searching the web…")
+                    val native = try {
+                        geminiGrounding.groundedCompletion(
+                            apiKey = credential.secret,
+                            model = profile.model,
+                            systemPrompt = baseSystem,
+                            turns = turns,
+                        )
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        lastError = e.message
+                        null
+                    }
+                    if (native != null && native.text.isNotBlank()) {
+                        answeredViaNative = true
+                        return native.text to native.sources
+                    }
+                    geminiNativeFailed = true
+                }
+                val toolSet = when (kind) {
+                    ProviderKind.LLM_ROUTER -> ProviderApiClient.WebToolSet.OPENROUTER
+                    ProviderKind.ANTHROPIC -> ProviderApiClient.WebToolSet.ANTHROPIC
+                    else -> null
+                }
+                if (wantsWeb && toolSet != null && !serverToolsFailed) {
+                    setHomeLabel("Searching the web…")
+                    try {
+                        val result = providerApi.chatCompletionWithSources(
+                            baseUrl = profile.resolvedBaseUrl,
+                            model = profile.model,
+                            apiKey = credential.secret,
+                            protocol = kind.protocol,
+                            turns = turns,
+                            systemPrompt = baseSystem,
+                            webTools = toolSet,
+                        )
+                        answeredViaNative = true
+                        return result.text to result.sourceUrls
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: ChatApiException) {
+                        serverToolsFailed = true
+                        lastError = e.providerMessage ?: e.message
+                        // Same turn, same key: fall through to the
+                        // app-driven route below.
+                    }
+                }
+                if (wantsWeb) {
+                    val web = ensureAppWeb()
+                    if (web.text.isNotBlank()) {
+                        setHomeLabel("")
+                        val text = providerApi.chatCompletion(
+                            baseUrl = profile.resolvedBaseUrl,
+                            model = profile.model,
+                            apiKey = credential.secret,
+                            protocol = kind.protocol,
+                            turns = injectWebContext(web.text),
+                            systemPrompt = baseSystem + "\n\n" + com.vayro.app.chat.WebContext.GUARD_CLAUSE,
+                        )
+                        return text to web.sources
+                    }
+                }
+                setHomeLabel("")
+                val text = providerApi.chatCompletion(
+                    baseUrl = profile.resolvedBaseUrl,
+                    model = profile.model,
+                    apiKey = credential.secret,
+                    protocol = kind.protocol,
+                    turns = turns,
+                    systemPrompt = baseSystem,
+                )
+                return text to emptyList()
+            }
+
             val chain = buildList {
                 resolvedChatProvider()?.let { add(it) }
                 addAll(connectedChatProviders())
@@ -4801,17 +5004,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 for ((index, credential) in ordered.withIndex()) {
                     try {
-                        val text = providerApi.chatCompletion(
-                            baseUrl = profile.resolvedBaseUrl,
-                            model = profile.model,
-                            apiKey = credential.secret,
-                            protocol = kind.protocol,
-                            turns = turns,
-                            systemPrompt = HOME_CHAT_SYSTEM_PROMPT,
-                        )
+                        val (text, attemptSources) = attemptHomeCompletion(kind, credential, profile)
                         if (!credential.isActive) vault.activate(kind.name, credential.id)
                         keyHealthStore.clear(kind.name, credential.id)
                         reply = text
+                        replySources = attemptSources
                         answeredBy = kind
                         break
                     } catch (e: ChatApiException) {
@@ -4848,11 +5045,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             if (reply == null) {
-                val outcome = tryWorkspaceProviderFallback(turns, chain.toSet())
+                // v3.2.51: the workspace fallback answers with the
+                // same date/skills system prompt, and with the web
+                // context when this turn wanted it and the fallback
+                // will actually be attempted (never gather for a
+                // fallback that cannot run).
+                var fallbackTurns = turns
+                var fallbackSystem = baseSystem
+                var fallbackSources: List<String> = emptyList()
+                if (wantsWeb) {
+                    val fbProfile = _state.value.provider
+                    val fbWillTry = fbProfile.kind != ProviderKind.CLAUDE &&
+                        fbProfile.kind !in chain.toSet() &&
+                        vault.get(fbProfile.kind.name) != null
+                    if (fbWillTry) {
+                        val web = ensureAppWeb()
+                        if (web.text.isNotBlank()) {
+                            fallbackTurns = injectWebContext(web.text)
+                            fallbackSystem = baseSystem + "\n\n" + com.vayro.app.chat.WebContext.GUARD_CLAUSE
+                            fallbackSources = web.sources
+                        }
+                    }
+                }
+                val outcome = tryWorkspaceProviderFallback(fallbackTurns, chain.toSet(), fallbackSystem)
                 fallbackTriedKey = outcome.triedKey
                 fallbackError = outcome.error
                 if (outcome.text != null) {
                     reply = outcome.text
+                    replySources = fallbackSources
                     answeredBy = outcome.kind
                     answeredByFallback = true
                 }
@@ -4892,10 +5112,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             appendHomeMessage(
                 threadId,
-                com.vayro.app.data.HomeChatMessage(fromUser = false, text = finalText),
+                com.vayro.app.data.HomeChatMessage(
+                    fromUser = false,
+                    text = finalText,
+                    sourceUrls = if (reply != null) replySources else emptyList(),
+                ),
             )
+            // v3.2.51: when this turn wanted a web search, no native
+            // route answered, and the app-driven route retrieved
+            // nothing usable, the owner is told plainly — a stale
+            // answer is never passed off as a fresh one in silence.
+            if (reply != null && webPlan.wantsSearch && !answeredViaNative && appWeb != null && !appWebUsable) {
+                appendHomeMessage(
+                    threadId,
+                    com.vayro.app.data.HomeChatMessage(
+                        fromUser = false,
+                        text = "Web search didn't work just now, so I answered from what I already know.",
+                        kind = "system",
+                    ),
+                )
+            }
         } finally {
-            _state.update { it.copy(homeSending = false) }
+            _state.update { it.copy(homeSending = false, homeActivityLabel = "") }
         }
     }
 
@@ -4915,6 +5153,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun tryWorkspaceProviderFallback(
         turns: List<ProviderApiClient.ChatTurn>,
         alreadyTried: Set<ProviderKind>,
+        systemPrompt: String,
     ): WorkspaceFallbackOutcome {
         val profile = _state.value.provider
         if (profile.kind == ProviderKind.CLAUDE || profile.kind in alreadyTried) {
@@ -4929,7 +5168,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 apiKey = secret,
                 protocol = profile.kind.protocol,
                 turns = turns,
-                systemPrompt = HOME_CHAT_SYSTEM_PROMPT,
+                systemPrompt = systemPrompt,
             )
             WorkspaceFallbackOutcome(text, profile.kind, triedKey = true, error = null)
         } catch (e: ChatApiException) {

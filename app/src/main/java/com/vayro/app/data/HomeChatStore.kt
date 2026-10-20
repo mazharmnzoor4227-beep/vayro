@@ -42,6 +42,11 @@ data class HomeChatMessage(
     // the message to the model, exactly like the pasted text.
     val docName: String = "",
     val docText: String = "",
+    // v3.2.51: the web sources a reply actually rested on (injected
+    // search results / fetched pages, or a native search route's own
+    // citations) — rendered as link cards under the reply, so a
+    // searched answer always shows where it came from.
+    val sourceUrls: List<String> = emptyList(),
 ) {
     /** The full text the model receives: typed text + pasted content + attached document content. */
     fun modelText(): String =
@@ -65,6 +70,46 @@ object HomeRegenerate {
         if (history.none { it.fromUser && it.kind == "text" }) return null
         return history
     }
+}
+
+/** v3.2.51: the message ↔ JSON mapping, extracted so the round-trip (incl. sourceUrls) is unit-testable. */
+internal fun HomeChatMessage.toJson(): JSONObject = JSONObject()
+    .put("id", id)
+    .put("fromUser", fromUser)
+    .put("text", text)
+    .put("createdAtMillis", createdAtMillis)
+    .put("kind", kind)
+    .put("taskText", taskText)
+    .put("projectName", projectName)
+    .put("pastedText", pastedText)
+    .put("docName", docName)
+    .put("docText", docText)
+    .put("imagePaths", JSONArray(imagePaths))
+    .put("sourceUrls", JSONArray(sourceUrls))
+
+internal fun homeChatMessageFromJson(m: JSONObject): HomeChatMessage {
+    fun stringList(key: String): List<String> = buildList {
+        val arr = m.optJSONArray(key)
+        if (arr != null) {
+            for (k in 0 until arr.length()) {
+                arr.optString(k).takeIf { it.isNotBlank() }?.let { add(it) }
+            }
+        }
+    }
+    return HomeChatMessage(
+        id = m.optString("id").ifBlank { UUID.randomUUID().toString() },
+        fromUser = m.optBoolean("fromUser"),
+        text = m.optString("text"),
+        createdAtMillis = m.optLong("createdAtMillis"),
+        kind = m.optString("kind").ifBlank { "text" },
+        taskText = m.optString("taskText"),
+        projectName = m.optString("projectName"),
+        pastedText = m.optString("pastedText"),
+        docName = m.optString("docName"),
+        docText = m.optString("docText"),
+        imagePaths = stringList("imagePaths"),
+        sourceUrls = stringList("sourceUrls"),
+    )
 }
 
 /** A persisted home conversation. Home threads are NOT workspace projects. */
@@ -96,28 +141,7 @@ class HomeChatStore(context: Context) {
                     val msgs = thread.optJSONArray("messages") ?: JSONArray()
                     for (j in 0 until msgs.length()) {
                         val m = msgs.optJSONObject(j) ?: continue
-                        add(
-                            HomeChatMessage(
-                                id = m.optString("id").ifBlank { UUID.randomUUID().toString() },
-                                fromUser = m.optBoolean("fromUser"),
-                                text = m.optString("text"),
-                                createdAtMillis = m.optLong("createdAtMillis"),
-                                kind = m.optString("kind").ifBlank { "text" },
-                                taskText = m.optString("taskText"),
-                                projectName = m.optString("projectName"),
-                                pastedText = m.optString("pastedText"),
-                                docName = m.optString("docName"),
-                                docText = m.optString("docText"),
-                                imagePaths = buildList {
-                                    val arr = m.optJSONArray("imagePaths")
-                                    if (arr != null) {
-                                        for (k in 0 until arr.length()) {
-                                            arr.optString(k).takeIf { it.isNotBlank() }?.let { add(it) }
-                                        }
-                                    }
-                                },
-                            ),
-                        )
+                        add(homeChatMessageFromJson(m))
                     }
                 }
                 add(
@@ -138,20 +162,7 @@ class HomeChatStore(context: Context) {
             threads.forEach { thread ->
                 val messages = JSONArray()
                 thread.messages.forEach { m ->
-                    messages.put(
-                        JSONObject()
-                            .put("id", m.id)
-                            .put("fromUser", m.fromUser)
-                            .put("text", m.text)
-                            .put("createdAtMillis", m.createdAtMillis)
-                            .put("kind", m.kind)
-                            .put("taskText", m.taskText)
-                            .put("projectName", m.projectName)
-                            .put("pastedText", m.pastedText)
-                            .put("docName", m.docName)
-                            .put("docText", m.docText)
-                            .put("imagePaths", JSONArray(m.imagePaths)),
-                    )
+                    messages.put(m.toJson())
                 }
                 array.put(
                     JSONObject()

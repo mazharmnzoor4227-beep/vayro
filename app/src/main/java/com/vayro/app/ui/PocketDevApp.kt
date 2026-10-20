@@ -2816,6 +2816,7 @@ private fun RootScreenHost(
                     homeDocNote = state.homeDocNote,
                     onRemoveHomeDoc = viewModel::removeHomePendingDoc,
                     homeSending = state.homeSending,
+                    homeActivityLabel = state.homeActivityLabel,
                     onRegenerateHomeReply = viewModel::regenerateHomeReply,
                     homeProviderName = state.homeChatProviderName,
                     onNewChat = { viewModel.newHomeThread() },

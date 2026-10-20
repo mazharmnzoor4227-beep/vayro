@@ -216,6 +216,17 @@ class ProviderApiClient {
     )
 
     /**
+     * v3.2.51: which provider-native web tool set [chatBody] should
+     * declare. Only the two kinds with a documented server-side web
+     * tool on the Anthropic Messages shape get one; every other kind
+     * keeps a byte-identical body and uses the app-driven web route.
+     */
+    enum class WebToolSet { OPENROUTER, ANTHROPIC }
+
+    /** A completion plus the source URLs its provider-native web tools cited. */
+    data class ChatCompletionResult(val text: String, val sourceUrls: List<String> = emptyList())
+
+    /**
      * v3.2.37 (Part F2): one real chat completion against any catalog
      * provider, in that provider's own wire shape. Returns the reply text;
      * throws [ChatApiException] carrying the HTTP code so callers can run
@@ -230,7 +241,32 @@ class ProviderApiClient {
         turns: List<ChatTurn>,
         systemPrompt: String? = null,
         maxTokens: Int = 2048,
-    ): String = withContext(Dispatchers.IO) {
+    ): String = chatCompletionWithSources(
+        baseUrl = baseUrl,
+        model = model,
+        apiKey = apiKey,
+        protocol = protocol,
+        turns = turns,
+        systemPrompt = systemPrompt,
+        maxTokens = maxTokens,
+        webTools = null,
+    ).text
+
+    /**
+     * v3.2.51: [chatCompletion] that can also declare provider-native
+     * web tools ([webTools]) and returns the URLs those tools cited,
+     * so a natively-searched reply can show its real sources.
+     */
+    suspend fun chatCompletionWithSources(
+        baseUrl: String,
+        model: String,
+        apiKey: String,
+        protocol: ProviderProtocol,
+        turns: List<ChatTurn>,
+        systemPrompt: String? = null,
+        maxTokens: Int = 2048,
+        webTools: WebToolSet? = null,
+    ): ChatCompletionResult = withContext(Dispatchers.IO) {
         if (baseUrl.isBlank() || model.isBlank() || apiKey.isBlank()) {
             throw ChatApiException(0, "This provider is not fully set up yet.", null)
         }
@@ -238,13 +274,16 @@ class ProviderApiClient {
             throw ChatApiException(0, message, null)
         }
         val endpoint = messagesEndpoint(baseUrl, protocol)
-        val body = chatBody(model, protocol, turns, systemPrompt, maxTokens)
+        val body = chatBody(model, protocol, turns, systemPrompt, maxTokens, webTools)
         val response = request(endpoint, "POST", apiKey, body, protocol, connectTimeoutMs = 15_000, readTimeoutMs = 90_000)
         when {
             response.code in 200..299 -> {
                 val text = parseChatText(response.body, protocol)
                 if (text.isBlank()) throw ChatApiException(0, "The provider replied with an empty message.", null)
-                text
+                ChatCompletionResult(
+                    text = text,
+                    sourceUrls = if (webTools != null) parseChatSources(response.body) else emptyList(),
+                )
             }
             response.code > 0 -> throw ChatApiException(
                 response.code,
@@ -253,6 +292,39 @@ class ProviderApiClient {
             )
             else -> throw ChatApiException(0, response.error ?: "Network connection failed", null)
         }
+    }
+
+    /**
+     * v3.2.51: source URLs cited by provider-native web tools in an
+     * Anthropic-shaped response — `web_search_result` /
+     * `web_fetch_result` tool blocks and text-block citations
+     * (`web_search_result_location`, `url_citation`). A tolerant
+     * recursive walk: only objects whose type marks them as a search
+     * result or citation contribute their URL, so prose, tool inputs
+     * and usage blocks can never leak a "source" in.
+     */
+    internal fun parseChatSources(body: String): List<String> {
+        val root = runCatching { JSONObject(body) }.getOrNull() ?: return emptyList()
+        val found = LinkedHashSet<String>()
+        fun visit(node: Any?) {
+            when (node) {
+                is JSONObject -> {
+                    val type = node.optString("type")
+                    if (type == "web_search_result" || type == "web_fetch_result" ||
+                        type.endsWith("_result_location") || type == "url_citation"
+                    ) {
+                        node.optString("url").takeIf { it.startsWith("http") }?.let { found += it }
+                    }
+                    node.optJSONObject("url_citation")?.optString("url")
+                        ?.takeIf { it.startsWith("http") }?.let { found += it }
+                    val keys = node.keys()
+                    while (keys.hasNext()) visit(node.opt(keys.next()))
+                }
+                is JSONArray -> for (i in 0 until node.length()) visit(node.opt(i))
+            }
+        }
+        visit(root)
+        return found.take(12)
     }
 
     /**
@@ -313,6 +385,7 @@ class ProviderApiClient {
         turns: List<ChatTurn>,
         systemPrompt: String?,
         maxTokens: Int,
+        webTools: WebToolSet? = null,
     ): String = when (protocol) {
         ProviderProtocol.OPENAI_RESPONSES -> JSONObject()
             .put("model", model)
@@ -357,6 +430,29 @@ class ProviderApiClient {
                         }
                     },
                 )
+                // v3.2.51: provider-native web tools ride ONLY on the
+                // Anthropic Messages shape and ONLY when the caller
+                // asked for them (a freshness-fired home turn on the
+                // OpenRouter / Anthropic kinds). With webTools == null
+                // this body stays byte-identical to before.
+                when (webTools) {
+                    WebToolSet.OPENROUTER -> put(
+                        "tools",
+                        JSONArray()
+                            .put(JSONObject().put("type", "openrouter:web_search"))
+                            .put(JSONObject().put("type", "openrouter:web_fetch")),
+                    )
+                    WebToolSet.ANTHROPIC -> put(
+                        "tools",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("type", "web_search_20250305")
+                                .put("name", "web_search")
+                                .put("max_uses", 5),
+                        ),
+                    )
+                    null -> Unit
+                }
             }
             .toString()
     }
