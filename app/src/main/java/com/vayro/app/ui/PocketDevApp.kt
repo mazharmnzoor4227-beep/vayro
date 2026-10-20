@@ -251,7 +251,9 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -2813,6 +2815,7 @@ private fun RootScreenHost(
                     homeDocNote = state.homeDocNote,
                     onRemoveHomeDoc = viewModel::removeHomePendingDoc,
                     homeSending = state.homeSending,
+                    onRegenerateHomeReply = viewModel::regenerateHomeReply,
                     homeProviderName = state.homeChatProviderName,
                     onNewChat = { viewModel.newHomeThread() },
                     onOpenWork = {
@@ -7463,6 +7466,19 @@ private fun ChatTab(
                                 }
                             },
                             onOpenPasted = { viewingPasted = it },
+                            // v3.2.45 (Item 3): Regenerate resends the
+                            // user's last instruction as a NEW turn
+                            // through the normal send path, so the
+                            // v3.2.44 completion gate applies as usual.
+                            onRegenerate = {
+                                if (!isRunning) {
+                                    messages.lastOrNull { it.fromUser }?.let { lastUser ->
+                                        val resend = listOf(lastUser.text, lastUser.pastedText.orEmpty())
+                                            .filter { it.isNotBlank() }.joinToString("\n\n")
+                                        if (resend.isNotBlank()) onSend(resend, null)
+                                    }
+                                }
+                            },
                         )
                     }
                 }
@@ -7841,15 +7857,15 @@ private fun ChatTab(
                             verticalAlignment = Alignment.Bottom,
                         ) {
                             if (!controlsVisible) {
-                                IconButton(
+                                ComposerCircleButton(
+                                    contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
                                     onClick = { toolsOpen = !toolsOpen },
-                                    modifier = Modifier.size(40.dp),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Add,
-                                        contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
+                                        contentDescription = null,
                                         modifier = Modifier
-                                            .size(22.dp)
+                                            .size(20.dp)
                                             .graphicsLayer { rotationZ = plusRotation },
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -7879,11 +7895,25 @@ private fun ChatTab(
                                 // field scrolls inside, caret visible.
                                 minLines = 1,
                                 maxLines = COMPOSER_MAX_LINES,
+                            // v3.2.45 (Item 1): includeFontPadding
+                            // OFF + line-height trim — the same fix
+                            // as the home composer. Source Serif 4's
+                            // metrics (ascent+descent = 1.371 em)
+                            // inflated the field's measured height,
+                            // so typed text sat at the top of an
+                            // over-tall box with a dead gap before
+                            // the controls row. The field now hugs
+                            // its actual lines in every state.
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                                 fontSize = 15.sp,
                                 lineHeight = 20.sp,
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both,
+                                ),
                             ),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
@@ -7897,6 +7927,13 @@ private fun ChatTab(
                                             fontSize = 15.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both,
+                                                ),
+                                            ),
                                         )
                                     }
                                     innerTextField()
@@ -7904,14 +7941,11 @@ private fun ChatTab(
                             },
                         )
                             if (!controlsVisible) {
-                                IconButton(
-                                    onClick = onStartVoiceInput,
-                                    modifier = Modifier.size(40.dp),
-                                ) {
+                                ComposerCircleButton(contentDescription = "Voice input", onClick = onStartVoiceInput) {
                                     Icon(
                                         imageVector = Icons.Default.Mic,
-                                        contentDescription = "Voice input",
-                                        modifier = Modifier.size(20.dp),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(19.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -7933,15 +7967,15 @@ private fun ChatTab(
                                     .padding(horizontal = 4.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                IconButton(
+                                ComposerCircleButton(
+                                    contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
                                     onClick = { toolsOpen = !toolsOpen },
-                                    modifier = Modifier.size(40.dp),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Add,
-                                        contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
+                                        contentDescription = null,
                                         modifier = Modifier
-                                            .size(22.dp)
+                                            .size(20.dp)
                                             .graphicsLayer { rotationZ = plusRotation },
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -7970,14 +8004,11 @@ private fun ChatTab(
                                     }
                                 }
                                 Spacer(Modifier.weight(1f))
-                                IconButton(
-                                    onClick = onStartVoiceInput,
-                                    modifier = Modifier.size(40.dp),
-                                ) {
+                                ComposerCircleButton(contentDescription = "Voice input", onClick = onStartVoiceInput) {
                                     Icon(
                                         imageVector = Icons.Default.Mic,
-                                        contentDescription = "Voice input",
-                                        modifier = Modifier.size(20.dp),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(19.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
@@ -9530,6 +9561,9 @@ private fun MessageBubble(
     message: ChatMessage,
     isStreaming: Boolean = false,
     onOpenPasted: (String) -> Unit = {},
+    // v3.2.45 (Item 3): Regenerate in the message action row (null =
+    // no button, e.g. read-only history).
+    onRegenerate: (() -> Unit)? = null,
     onRunInTerminal: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
     onSaveAttachment: (ChatAttachment) -> Unit = {},
@@ -9613,13 +9647,18 @@ private fun MessageBubble(
                 }
                     // v3.2.39 (Scope 5): the shared copy button — the home
                     // thread uses this exact component too.
-                    MessageCopyButton(
-                        text = message.text,
-                        fromUser = message.fromUser,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = 8.dp),
-                    )
+                    // v3.2.45 (Item 3): assistant replies carry Copy in
+                    // the action row below instead; the overlay circle
+                    // remains for user messages only.
+                    if (message.fromUser) {
+                        MessageCopyButton(
+                            text = message.text,
+                            fromUser = true,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 8.dp),
+                        )
+                    }
                 }
                 if (!message.fromUser && message.roadmap != null) {
                     RoadmapCard(
@@ -9661,10 +9700,13 @@ private fun MessageBubble(
             }
         }
         if (!message.fromUser && !isStreaming && message.text.isNotBlank()) {
-            // v3.2.39 (Scope 5): shared with the home thread.
-            MessageListenRow(
+            // v3.2.45 (Item 3): Copy - Share - Listen - Regenerate,
+            // one muted row — the same shared row as the home thread
+            // (was: Listen only, v3.2.39 Scope 5).
+            MessageActionRow(
                 messageId = message.id,
                 text = message.text,
+                onRegenerate = onRegenerate,
                 modifier = Modifier.fillMaxWidth(.92f),
             )
         }

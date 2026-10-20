@@ -48,6 +48,25 @@ data class HomeChatMessage(
         listOf(text.trim(), pastedText.trim(), docText.trim()).filter { it.isNotBlank() }.joinToString("\n\n")
 }
 
+/**
+ * v3.2.45 (Item 3): history shaping for the home Regenerate action.
+ * Regenerating re-answers the thread's LAST user turn: the last
+ * assistant "text" reply is dropped and everything before it is kept
+ * as the history for the fresh request (system lines and cards that
+ * came after that reply go with it — they described the dropped
+ * answer). Returns null when there is nothing to regenerate: no
+ * assistant reply, or no user turn underneath it.
+ */
+object HomeRegenerate {
+    fun historyWithoutLastReply(messages: List<HomeChatMessage>): List<HomeChatMessage>? {
+        val replyIndex = messages.indexOfLast { !it.fromUser && it.kind == "text" }
+        if (replyIndex < 0) return null
+        val history = messages.subList(0, replyIndex)
+        if (history.none { it.fromUser && it.kind == "text" }) return null
+        return history
+    }
+}
+
 /** A persisted home conversation. Home threads are NOT workspace projects. */
 data class HomeThread(
     val id: String = UUID.randomUUID().toString(),

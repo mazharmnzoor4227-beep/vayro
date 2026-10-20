@@ -107,6 +107,10 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SmartDisplay
@@ -154,7 +158,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -1034,12 +1040,99 @@ internal fun MessageListenRow(
     }
 }
 
+/**
+ * v3.2.45 (Item 3): THE message action row — one muted row of
+ * thin-stroke icon buttons under a completed assistant reply, in
+ * Claude's order: Copy, Share, Listen, Regenerate. Shared by the
+ * home thread and the workspace bubble so both surfaces behave
+ * identically. NO like/dislike — the user explicitly refused them.
+ * Listen rides the same ReadAloudPlayer path as always (the user's
+ * selected voice speaks); Share carries the reply's text through
+ * the Android share sheet; Regenerate is supplied by the host
+ * (null hides the button — e.g. while a reply is streaming).
+ */
+@Composable
+internal fun MessageActionRow(
+    messageId: String,
+    text: String,
+    onRegenerate: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    val listeningThis = com.vayro.app.voice.ReadAloudPlayer.playingMessageId == messageId
+    val tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
+                clipboardManager.setText(AnnotatedString(text))
+                copied = true
+                Toast.makeText(context, "Response copied to clipboard", Toast.LENGTH_SHORT).show()
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy,
+                contentDescription = "Copy response",
+                tint = if (copied) com.vayro.app.ui.theme.PocketGreen else tint,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, text)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Share response"))
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Share,
+                contentDescription = "Share response",
+                tint = tint,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
+                com.vayro.app.voice.ReadAloudPlayer.toggle(context, messageId, text)
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (listeningThis) Icons.Default.Stop else Icons.Outlined.VolumeUp,
+                contentDescription = if (listeningThis) "Stop listening" else "Listen to response",
+                tint = if (listeningThis) MaterialTheme.colorScheme.primary else tint,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        if (onRegenerate != null) {
+            Box(
+                modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onRegenerate),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Replay,
+                    contentDescription = "Regenerate response",
+                    tint = tint,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+        }
+    }
+}
+
 // v3.2.37 (Part F): one row of the home thread.
 @Composable
 private fun HomeMessageRow(
     message: com.vayro.app.data.HomeChatMessage,
     movedProjectName: String?,
     onOpenInWork: (String) -> Unit,
+    // v3.2.45 (Item 3): Regenerate in the message action row.
+    onRegenerate: () -> Unit = {},
     onOpenPasted: (String) -> Unit = {},
     // v3.2.41 (Scope 3): opens the attached document's extracted text.
     onOpenDoc: (String, String) -> Unit = { _, _ -> },
@@ -1232,25 +1325,22 @@ private fun HomeMessageRow(
                     com.vayro.app.chat.ChatLinkExtractor.extract(message.text).take(3)
                 }
                 Column(Modifier.fillMaxWidth()) {
-                    Box(Modifier.fillMaxWidth()) {
-                        SelectionContainer {
-                            MarkdownText(
-                                markdown = message.text,
-                                modifier = Modifier.fillMaxWidth().padding(end = 44.dp),
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
-                            )
-                        }
-                        MessageCopyButton(
-                            text = message.text,
-                            fromUser = false,
-                            modifier = Modifier.align(Alignment.BottomEnd),
+                    SelectionContainer {
+                        MarkdownText(
+                            markdown = message.text,
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
                         )
                     }
                     if (message.text.isNotBlank()) {
-                        MessageListenRow(
+                        // v3.2.45 (Item 3): Copy - Share - Listen -
+                        // Regenerate, one muted row (was: a copy
+                        // circle overlaid on the text + a Listen row).
+                        MessageActionRow(
                             messageId = message.id,
                             text = message.text,
+                            onRegenerate = onRegenerate,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -1319,6 +1409,30 @@ private fun WorkActionsSheet(
     }
 }
 
+/**
+ * v3.2.45 (Item 2): the composer's circled buttons, Claude-style —
+ * a filled dark circle (surface-variant tone) with the glyph
+ * centered. One helper for both composers' "+" and mic so the two
+ * surfaces can never drift apart.
+ */
+@Composable
+internal fun ComposerCircleButton(
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: @Composable () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        icon()
+    }
+}
+
 @Composable
 internal fun ChatHomeScreen(
     agentKind: AgentKind,
@@ -1356,6 +1470,8 @@ internal fun ChatHomeScreen(
     onAttachDocuments: (List<Uri>) -> Unit = onAttach,
     onRemoveHomeDoc: () -> Unit = {},
     homeSending: Boolean = false,
+    // v3.2.45 (Item 3): Regenerate under a home reply (host = the view model).
+    onRegenerateHomeReply: () -> Unit = {},
     homeProviderName: String = "",
     onNewChat: () -> Unit = {},
     onOpenWork: () -> Unit = {},
@@ -1908,6 +2024,7 @@ internal fun ChatHomeScreen(
                                 it.createdAtMillis >= message.createdAtMillis
                         }?.projectName,
                         onOpenInWork = onOpenInWork,
+                        onRegenerate = onRegenerateHomeReply,
                         onOpenPasted = { viewingPasted = it },
                         onOpenDoc = { name, text -> viewingDoc = name to text },
                     )
@@ -2130,8 +2247,8 @@ internal fun ChatHomeScreen(
                         }
                         Row(verticalAlignment = Alignment.Bottom) {
                             if (!controlsVisible) {
-                                IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
-                                    Icon(Icons.Outlined.Add, contentDescription = "Add to chat", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                ComposerCircleButton(contentDescription = "Add to chat", onClick = { sheetOpen = true }) {
+                                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                             BasicTextField(
@@ -2156,11 +2273,24 @@ internal fun ChatHomeScreen(
                                 // so no line is ever half-clipped.
                                 minLines = 1,
                                 maxLines = COMPOSER_MAX_LINES,
+                            // v3.2.45 (Item 1): includeFontPadding
+                            // OFF + line-height trim. Source Serif
+                            // 4's metrics (ascent+descent = 1.371 em)
+                            // otherwise inflate the field's measured
+                            // height with dead space under the glyphs
+                            // — the typed text sat at the top of an
+                            // over-tall box. The field now hugs its
+                            // actual lines in every state.
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontFamily = SourceSerifFontFamily,
                                 fontSize = 15.5.sp,
                                 lineHeight = 21.sp,
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(
+                                    alignment = LineHeightStyle.Alignment.Center,
+                                    trim = LineHeightStyle.Trim.Both,
+                                ),
                             ),
                             cursorBrush = SolidColor(KodexClay),
                             decorationBox = { innerTextField ->
@@ -2171,6 +2301,13 @@ internal fun ChatHomeScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontFamily = SourceSerifFontFamily,
                                             fontSize = 15.5.sp,
+                                            style = TextStyle(
+                                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                                lineHeightStyle = LineHeightStyle(
+                                                    alignment = LineHeightStyle.Alignment.Center,
+                                                    trim = LineHeightStyle.Trim.Both,
+                                                ),
+                                            ),
                                         )
                                     }
                                     innerTextField()
@@ -2178,8 +2315,8 @@ internal fun ChatHomeScreen(
                             },
                             )
                             if (!controlsVisible) {
-                                IconButton(onClick = onStartVoiceInput, modifier = Modifier.size(38.dp)) {
-                                    Icon(Icons.Outlined.Mic, contentDescription = "Voice input", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                ComposerCircleButton(contentDescription = "Voice input", onClick = onStartVoiceInput) {
+                                    Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 sendOrVoice()
                             }
@@ -2197,8 +2334,8 @@ internal fun ChatHomeScreen(
                             exit = fadeOut(),
                         ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { sheetOpen = true }, modifier = Modifier.size(38.dp)) {
-                                Icon(Icons.Outlined.Add, contentDescription = "Add to chat", modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            ComposerCircleButton(contentDescription = "Add to chat", onClick = { sheetOpen = true }) {
+                                Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             // v3.2.37 (F2) + v3.2.38 (Part P): the pill
                             // names the provider + model that answer HOME
@@ -2227,8 +2364,8 @@ internal fun ChatHomeScreen(
                                 }
                             }
                             Spacer(Modifier.weight(1f))
-                            IconButton(onClick = onStartVoiceInput, modifier = Modifier.size(38.dp)) {
-                                Icon(Icons.Outlined.Mic, contentDescription = "Voice input", modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            ComposerCircleButton(contentDescription = "Voice input", onClick = onStartVoiceInput) {
+                                Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             sendOrVoice()
                         }

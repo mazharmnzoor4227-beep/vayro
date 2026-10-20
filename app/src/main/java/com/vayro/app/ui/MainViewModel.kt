@@ -4260,6 +4260,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * v3.2.45 (Item 3): Regenerate on a home reply — drop the last
+     * assistant reply and re-request an answer to the same last user
+     * turn with the same preceding history (HomeRegenerate shapes
+     * it). The fresh reply lands as a new message through the normal
+     * runHomeChat path. A no-op while a reply is already in flight,
+     * or when the thread holds no reply over a user turn.
+     */
+    fun regenerateHomeReply() {
+        if (_state.value.homeSending) return
+        val thread = activeHomeThread() ?: return
+        val history = com.vayro.app.data.HomeRegenerate.historyWithoutLastReply(thread.messages) ?: return
+        _state.update { st ->
+            st.copy(
+                homeThreads = st.homeThreads.map { t ->
+                    if (t.id != thread.id) t else t.copy(messages = history, updatedAtMillis = System.currentTimeMillis())
+                },
+            )
+        }
+        persistHomeThreads()
+        _state.update { it.copy(homeSending = true) }
+        homeChatJob = viewModelScope.launch { runHomeChat(thread.id) }
+    }
+
+    /**
      * v3.2.40 (Scope G): stage images (or a video's frames) in the
      * home composer. Capability gate FIRST (G5): if the model that
      * would answer cannot see images, the refusal is stated plainly
