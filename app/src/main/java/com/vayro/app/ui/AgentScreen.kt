@@ -184,6 +184,11 @@ fun AgentScreen(
     catalogChatDefaults: (ProviderKind) -> ProviderProfile = { ProviderProfile(it) },
     onChatEndpointCorrected: (ProviderKind, String, String) -> Unit = { _, _, _ -> },
     onPing: () -> Unit,
+    // v3.2.52: persistent last-known connection state per agent — one
+    // quiet line under each Test button, plus the result callback the
+    // provider card's Test & Connect reports through.
+    agentLastCheckLine: (AgentKind) -> String? = { null },
+    onAgentTestResult: (AgentKind, Boolean, String?) -> Unit = { _, _, _ -> },
     getSavedApiKey: (ProviderKind) -> String,
     getSavedApiKeys: (ProviderKind) -> List<ApiKeyInfo>,
     onAddApiKey: (ProviderKind, String, String) -> List<ApiKeyInfo>,
@@ -1093,6 +1098,7 @@ fun AgentScreen(
                         onOpenModelSheet = { showAntigravityModelSheet = true },
                         onSetEffort = onSetAntigravityEffort,
                         onTest = onPing,
+                        lastCheckLine = agentLastCheckLine(AgentKind.ANTIGRAVITY),
                         onStartAddAccount = onStartAntigravityAddAccount,
                         onSwitchAccount = onSwitchAntigravityAccount,
                         onRemoveAccount = onRemoveAntigravityAccount,
@@ -1153,6 +1159,7 @@ fun AgentScreen(
                 } else {
                     AgentProviderCard(
                         state = state,
+                        lastCheckLine = agentLastCheckLine(state.agentKind),
                         selectedKind = selectedKind,
                         baseUrl = baseUrl,
                         model = model,
@@ -1270,6 +1277,9 @@ fun AgentScreen(
                                     }
                                 } else when (val result = onValidateProvider(profile, apiKey.trim(), models)) {
                                     is ConnectionValidation.Success -> {
+                                        // v3.2.52: persist the verdict as the
+                                        // agent's last-known connection state.
+                                        onAgentTestResult(state.agentKind, true, null)
                                         onSaveProvider(profile, apiKey.trim())
                                         if (activeKeyId != null) {
                                             keyConnectionStatuses = keyConnectionStatuses +
@@ -1280,6 +1290,7 @@ fun AgentScreen(
                                         }
                                     }
                                     is ConnectionValidation.Failure -> {
+                                        onAgentTestResult(state.agentKind, false, result.message)
                                         if (activeKeyId != null) {
                                             keyConnectionStatuses = keyConnectionStatuses +
                                                 (activeKeyId to KeyConnectionStatus(result.message, false, result.providerMessage, result.label))
@@ -1374,6 +1385,7 @@ private fun AgentAntigravityCard(
     onOpenModelSheet: () -> Unit,
     onSetEffort: (String) -> Unit,
     onTest: () -> Unit,
+    lastCheckLine: String? = null,
     onStartAddAccount: () -> Unit = {},
     onSwitchAccount: (String) -> Unit = {},
     onRemoveAccount: (String) -> Unit = {},
@@ -1879,6 +1891,17 @@ private fun AgentAntigravityCard(
                         )
                     }
                 }
+
+                // v3.2.52: the persistent verdict — survives leaving
+                // the screen, unlike the transient message above.
+                lastCheckLine?.let { line ->
+                    Text(
+                        line,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    )
+                }
             }
 
             Text(
@@ -2046,6 +2069,7 @@ private fun GeminiApiModeSection(
 @Composable
 private fun AgentProviderCard(
     state: AppUiState,
+    lastCheckLine: String? = null,
     selectedKind: ProviderKind,
     baseUrl: String,
     model: String,
@@ -2442,6 +2466,18 @@ private fun AgentProviderCard(
                     },
                     color = PocketOrange,
                     fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            // v3.2.52: the persistent last-known connection state for
+            // this agent — one quiet line under the Test button.
+            lastCheckLine?.let { line ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    line,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                 )
             }
         }

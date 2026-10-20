@@ -89,9 +89,18 @@ object HomeFreshnessPolicy {
 
     /** The system-prompt date line, appended to every home request. */
     fun todayLine(now: ZonedDateTime): String =
-        "Today is ${now.format(DAY_FORMAT)}. The current time is ${now.format(TIME_FORMAT)} " +
-            "(${now.zone.id}). For anything that may have changed recently, prefer the web " +
-            "results provided with the user's message over your training knowledge."
+        "Today is ${now.format(DAY_FORMAT)}. The current local time is ${now.format(TIME_FORMAT)} " +
+            "(${now.zone.id})."
+
+    /**
+     * v3.2.52: the web-preference guidance that used to trail [todayLine].
+     * It lives outside the date line so the line itself stays the exact
+     * spec'd sentence; MainViewModel appends this right after it, keeping
+     * the composed system prompt byte-identical to v3.2.51.
+     */
+    const val WEB_PREFERENCE_GUIDANCE: String =
+        "For anything that may have changed recently, prefer the web results " +
+            "provided with the user's message over your training knowledge."
 
     /** "2026-10-20 17:05 PKT" — stamped into every web-context fence. */
     fun retrievedLabel(now: ZonedDateTime): String =
@@ -122,7 +131,7 @@ object HomeFreshnessPolicy {
     private val TIME_MARKERS = Regex(
         "\\b(today|now|right now|latest|current|currently|recent|recently|news|headline|headlines|" +
             "breaking|price|prices|weather|score|scores|live|tonight|yesterday|tomorrow|" +
-            "this week|this morning|this evening|" +
+            "this week|this morning|this evening|last night|last week|last month|" +
             "aaj|aajkal|taza|taaza|abhi|khabar|khabrein|mausam|qeemat)\\b",
     )
 

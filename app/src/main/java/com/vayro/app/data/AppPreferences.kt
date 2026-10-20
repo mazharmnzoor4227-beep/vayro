@@ -80,6 +80,19 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("agent_antigravity_account_email", "") ?: ""
         set(value) { preferences.edit().putString("agent_antigravity_account_email", value).commit() }
 
+    /**
+     * v3.2.52: persistent last-known connection state per agent
+     * (encoded [com.vayro.app.ui.AgentConnectionState] record), keyed by
+     * the agent's stable id. Written when a connection test finishes or
+     * a workspace turn on that agent ends; read by the AI Agent screen.
+     */
+    fun agentConnectionRecord(agentStableId: String): String? =
+        preferences.getString("agent_conn_state_$agentStableId", null)
+
+    fun setAgentConnectionRecord(agentStableId: String, encoded: String) {
+        preferences.edit().putString("agent_conn_state_$agentStableId", encoded).commit()
+    }
+
     var antigravityAutoRoundRobin: Boolean
         get() = preferences.getBoolean("agent_antigravity_auto_round_robin", true)
         set(value) { preferences.edit().putBoolean("agent_antigravity_auto_round_robin", value).commit() }

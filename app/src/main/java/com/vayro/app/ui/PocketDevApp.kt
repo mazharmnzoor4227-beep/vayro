@@ -2927,6 +2927,8 @@ private fun RootScreenHost(
                     catalogChatDefaults = viewModel::catalogChatDefaults,
                     onChatEndpointCorrected = viewModel::saveChatEndpointOverride,
                     onPing = viewModel::pingApi,
+                    agentLastCheckLine = viewModel::agentConnectionLine,
+                    onAgentTestResult = viewModel::onAgentProviderTestResult,
                     getSavedApiKey = viewModel::getSavedApiKey,
                     getSavedApiKeys = viewModel::getSavedApiKeys,
                     onAddApiKey = viewModel::addApiKey,

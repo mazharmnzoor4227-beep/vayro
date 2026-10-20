@@ -150,8 +150,30 @@ private fun redactToolDetail(value: String): String = value
     .trim()
     .take(500)
 
+/**
+ * Probe bound for the Antigravity hello/test. v3.2.52: raised from 60 s
+ * to 120 s — the owner's phone proved a cold first hello legitimately
+ * takes 1–1.5 minutes (the real session path has always allowed
+ * `--print-timeout 2m`), and the 60 s cap killed slow-but-working
+ * connections mid-answer. Eligibility refusals still fail fast.
+ */
+internal const val HELLO_TIMEOUT_MILLIS = 120_000L
+
+/** Silence after which the hello probe says it is still waiting. */
+private val HELLO_WAITING_NOTE_AFTER_NANOS: Long =
+    java.util.concurrent.TimeUnit.SECONDS.toNanos(20)
+
+/** The honest no-answer line for a hello probe that heard nothing. */
+internal fun helloNoAnswerMessage(timeoutMillis: Long): String {
+    val minutes = timeoutMillis / 60_000L
+    return when {
+        minutes >= 2 -> "Antigravity did not answer within $minutes minutes."
+        minutes == 1L -> "Antigravity did not answer within 1 minute."
+        else -> "Antigravity did not answer within ${timeoutMillis / 1_000L} seconds."
+    }
+}
+
 /** Official Antigravity CLI bridge. OAuth and credentials remain owned by agy. */
-private const val HELLO_TIMEOUT_MILLIS = 60_000L
 class AntigravityRuntimeBridge(
     private val context: Context,
     private val model: () -> String,
@@ -196,6 +218,11 @@ class AntigravityRuntimeBridge(
      * - A timeout carries the last diagnostic when there is one; the bare
      *   "did not answer" text is reserved for a probe that truly heard
      *   nothing at all.
+     *
+     * v3.2.52: the bound is [HELLO_TIMEOUT_MILLIS] (120 s — a cold first
+     * answer can take over a minute on device), ~20 s of total silence
+     * earns a "Still waiting" stage note, and a silent timeout states
+     * the wait honestly ("did not answer within 2 minutes").
      */
     suspend fun hello(
         timeoutMillis: Long = HELLO_TIMEOUT_MILLIS,
@@ -243,7 +270,11 @@ class AntigravityRuntimeBridge(
                     val pending = StringBuilder()
                     var reply: String? = null
                     var helloStageSent = false
+                    val startedNanos = System.nanoTime()
+                    var heardAnything = false
+                    var waitingNoteSent = false
                     fun handleLine(line: String): Boolean {
+                        heardAnything = true
                         // Terminal provider refusals end the probe at
                         // once, in the provider's own words: plain output
                         // lines are diagnostics (startSession keeps them
@@ -281,6 +312,15 @@ class AntigravityRuntimeBridge(
                     while (!done && (process.isAlive || outputFile.length() > offset)) {
                         val available = outputFile.length() - offset
                         if (available <= 0) {
+                            // v3.2.52: ~20 s of total silence earns one
+                            // plain waiting note — the user can see the
+                            // test is alive, not stuck.
+                            if (!heardAnything && !waitingNoteSent &&
+                                System.nanoTime() - startedNanos >= HELLO_WAITING_NOTE_AFTER_NANOS
+                            ) {
+                                waitingNoteSent = true
+                                onStage("Still waiting — a cold first answer can take over a minute")
+                            }
                             delay(100)
                             continue
                         }
@@ -329,8 +369,9 @@ class AntigravityRuntimeBridge(
             // v3.2.50: a timeout surfaces whatever the CLI actually said
             // (e.g. a network or eligibility diagnostic); the generic
             // line is only for a probe that heard nothing at all.
+            // v3.2.52: that line now states the wait honestly.
             throw AntigravitySessionException(
-                lastDiagnostic.takeIf { it.isNotBlank() } ?: "Antigravity did not answer. Try again.",
+                lastDiagnostic.takeIf { it.isNotBlank() } ?: helloNoAnswerMessage(timeoutMillis),
             )
         }
     }

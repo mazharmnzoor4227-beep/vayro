@@ -2115,11 +2115,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 profile.openRouterAllowFallbacks,
             )
             when (result) {
-                is ConnectionValidation.Success -> _state.update {
-                    it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = "API responded successfully")
+                is ConnectionValidation.Success -> {
+                    _state.update {
+                        it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = "API responded successfully")
+                    }
+                    recordAgentConnection(
+                        _state.value.agentKind,
+                        AgentConnectionState.Outcome.TEST_CONNECTED,
+                    )
                 }
-                is ConnectionValidation.Failure -> _state.update {
-                    it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = result.message)
+                is ConnectionValidation.Failure -> {
+                    _state.update {
+                        it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = result.message)
+                    }
+                    recordAgentConnection(
+                        _state.value.agentKind,
+                        AgentConnectionState.Outcome.TEST_FAILED,
+                        result.message,
+                    )
                 }
             }
         }
@@ -2153,6 +2166,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _state.update {
                             it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = "Gemini API is working!")
                         }
+                        recordAgentConnection(
+                            AgentKind.ANTIGRAVITY,
+                            AgentConnectionState.Outcome.TEST_CONNECTED,
+                        )
                         testing = false
                     } catch (e: kotlinx.coroutines.CancellationException) {
                         throw e
@@ -2163,12 +2180,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 it.copy(apiPingMessage = "Gemini API did not answer — trying once more…")
                             }
                         } else {
+                            val failMessage = error.message.orEmpty().ifBlank { "Gemini API test failed." }
                             _state.update {
                                 it.copy(
                                     apiPingStatus = ApiPingStatus.FAILED,
-                                    apiPingMessage = error.message.orEmpty().ifBlank { "Gemini API test failed." },
+                                    apiPingMessage = failMessage,
                                 )
                             }
+                            recordAgentConnection(
+                                AgentKind.ANTIGRAVITY,
+                                AgentConnectionState.Outcome.TEST_FAILED,
+                                failMessage,
+                            )
                             testing = false
                         }
                     }
@@ -2183,6 +2206,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     apiPingMessage = "Antigravity needs Google sign-in",
                 )
             }
+            recordAgentConnection(
+                AgentKind.ANTIGRAVITY,
+                AgentConnectionState.Outcome.TEST_FAILED,
+                "Antigravity needs Google sign-in",
+            )
             return
         }
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = "Starting Antigravity…") }
@@ -2204,6 +2232,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             } ?: "Antigravity is Working!",
                         )
                     }
+                    recordAgentConnection(
+                        AgentKind.ANTIGRAVITY,
+                        AgentConnectionState.Outcome.TEST_CONNECTED,
+                    )
                     testing = false
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -2241,15 +2273,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         else -> {
+                            val failMessage = helloFailureMessage(raw)
                             _state.update {
-                                it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = helloFailureMessage(raw))
+                                it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = failMessage)
                             }
+                            recordAgentConnection(
+                                AgentKind.ANTIGRAVITY,
+                                AgentConnectionState.Outcome.TEST_FAILED,
+                                failMessage,
+                            )
                             testing = false
                         }
                     }
                 }
             }
         }
+    }
+
+    // --------------------------------------------------------------
+    // v3.2.52: persistent last-known connection state per agent.
+    // A finished test or a finished workspace turn refreshes the
+    // record; the AI Agent screen renders it as one quiet line under
+    // the Test button, so "did it ever answer?" survives leaving the
+    // screen (and the app) instead of living only in the ping state.
+    // --------------------------------------------------------------
+
+    private fun recordAgentConnection(
+        kind: AgentKind,
+        outcome: AgentConnectionState.Outcome,
+        reason: String = "",
+    ) {
+        runCatching {
+            preferences.setAgentConnectionRecord(
+                kind.stableId,
+                AgentConnectionState.encode(
+                    AgentConnectionState.Record(outcome, reason, System.currentTimeMillis()),
+                ),
+            )
+        }
+    }
+
+    /** The status line for [kind]'s last-known state, or null if never recorded. */
+    fun agentConnectionLine(kind: AgentKind): String? =
+        AgentConnectionState.decode(preferences.agentConnectionRecord(kind.stableId))
+            ?.let { AgentConnectionState.statusLine(it) }
+
+    /** Called by the AI Agent screen when its provider Test & Connect finishes. */
+    fun onAgentProviderTestResult(kind: AgentKind, ok: Boolean, message: String?) {
+        recordAgentConnection(
+            kind,
+            if (ok) AgentConnectionState.Outcome.TEST_CONNECTED
+            else AgentConnectionState.Outcome.TEST_FAILED,
+            message.orEmpty(),
+        )
     }
 
     private fun helloFailureMessage(raw: String): String {
@@ -4830,6 +4906,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 append(HOME_CHAT_SYSTEM_PROMPT)
                 append("\n\n")
                 append(dateLine)
+                // v3.2.52: the guidance moved out of todayLine() (which
+                // now returns the exact date sentence); appending it here
+                // keeps the composed prompt identical to v3.2.51.
+                append(" ")
+                append(HomeFreshnessPolicy.WEB_PREFERENCE_GUIDANCE)
                 if (skillsBlock.isNotBlank()) {
                     append("\n\n")
                     append(skillsBlock)
@@ -6147,6 +6228,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         val scopedAfter = sessionScopeFor(projectId)
         if (event is RuntimeEvent.SessionCompleted || (event is RuntimeEvent.SessionFailed && !scopedAfter.runtimeRecoveryCanResume)) {
+            // v3.2.52: a finished workspace turn is a proof of life (or
+            // of failure) for the agent that ran it — refresh its
+            // persistent last-known connection state. Retries, account
+            // switches and gate continuations return before this point,
+            // so only terminal outcomes are recorded. A turn the user
+            // stopped, or one that already delivered its reply before a
+            // trailing teardown error, is not a connection failure.
+            when (event) {
+                is RuntimeEvent.SessionCompleted -> recordAgentConnection(
+                    scoped.agentKind,
+                    AgentConnectionState.Outcome.TASK_ANSWERED,
+                )
+                is RuntimeEvent.SessionFailed -> {
+                    val reason = event.reason.trim()
+                    if (!hasResponseAlready && reason.isNotEmpty() &&
+                        !reason.contains("Stopped by user", ignoreCase = true)
+                    ) {
+                        recordAgentConnection(
+                            scoped.agentKind,
+                            AgentConnectionState.Outcome.TASK_FAILED,
+                            reason,
+                        )
+                    }
+                }
+                else -> Unit
+            }
             sessionRuntimeRequests.remove(event.sessionId)
             gateSessionConversational.remove(event.sessionId)
             gateSessionToolCounts.remove(event.sessionId)

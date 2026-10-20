@@ -9,6 +9,15 @@ import java.net.URL
 
 data class GeminiApiConfig(val apiKey: String, val model: String)
 
+/**
+ * Network patience for the Gemini API client. The probe and the real
+ * agent path share these bounds (v3.2.52): the probe used to fail fast
+ * at 15 s / 45 s while the real path allows 30 s / 120 s, so the test
+ * could condemn a slow-but-working key the chat would have waited for.
+ */
+internal const val GEMINI_CONNECT_TIMEOUT_MILLIS = 30_000
+internal const val GEMINI_READ_TIMEOUT_MILLIS = 120_000
+
 enum class GeminiRoute { GEMINI_API, ANTIGRAVITY_OAUTH }
 
 fun resolveGeminiRoute(apiModeEnabled: Boolean, apiKey: String?): GeminiRoute =
@@ -121,12 +130,13 @@ class GeminiApiClient {
 
     suspend fun probe(apiKey: String, model: String): String = withContext(Dispatchers.IO) {
         val connection = openConnection(model, apiKey, streaming = false)
-        // Probe-only bounds (v3.2.50): openConnection's 30 s connect /
-        // 120 s read timeouts serve the streaming agent loop; a
-        // connection test must answer or fail fast, not hang for two
-        // minutes on a dead network.
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 45_000
+        // Probe bounds = the real path's bounds (v3.2.52, measured):
+        // openConnection already applies GEMINI_CONNECT_TIMEOUT_MILLIS /
+        // GEMINI_READ_TIMEOUT_MILLIS (30 s / 120 s); the v3.2.50
+        // fail-fast override (15 s / 45 s) is removed so the test waits
+        // exactly as long as a real answer would be waited for.
+        connection.connectTimeout = GEMINI_CONNECT_TIMEOUT_MILLIS
+        connection.readTimeout = GEMINI_READ_TIMEOUT_MILLIS
         try {
             val body = JSONObject()
                 .put(
@@ -162,8 +172,8 @@ class GeminiApiClient {
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:$endpoint")
         return (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 30_000
-            readTimeout = 120_000
+            connectTimeout = GEMINI_CONNECT_TIMEOUT_MILLIS
+            readTimeout = GEMINI_READ_TIMEOUT_MILLIS
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("x-goog-api-key", apiKey)
