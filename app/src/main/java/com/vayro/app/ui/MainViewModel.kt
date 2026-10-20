@@ -718,6 +718,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val pendingAssistantDeltas = ConcurrentHashMap<String, StringBuilder>()
     private val assistantDeltaFlushJobs = ConcurrentHashMap<String, Job>()
     private val lastAssistantDeltaPersistAtMillis = ConcurrentHashMap<String, Long>()
+    // v3.2.44 (Task Completion Gate): per-session facts the gate needs at
+    // run end — whether the session was a plain conversation turn, and
+    // how many tool actions it performed — plus the per-task budget of
+    // auto-continuations and repeated declared blockers. Task state is
+    // keyed by project and reset whenever a fresh user task begins.
+    private val gateSessionConversational = ConcurrentHashMap<String, Boolean>()
+    private val gateSessionToolCounts = ConcurrentHashMap<String, Int>()
+    private class GateTaskState {
+        var continuations: Int = 0
+        val blockerCounts = mutableMapOf<String, Int>()
+    }
+    private val gateTaskStates = ConcurrentHashMap<String, GateTaskState>()
     private data class QueuedSessionStart(
         val projectId: String,
         val prompt: String,
@@ -4911,6 +4923,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // skips the whole task ceremony — no mode wrap, no delivery
         // contract, no plan item, no orchestrator task.
         val conversational = isConversationalTurn(requestText, attachments.isNotEmpty(), mentionedPaths)
+        // v3.2.44: a fresh user task resets the Completion Gate budget for
+        // this project and registers what kind of turn this session is.
+        gateTaskStates.remove(project.id)
+        gateSessionConversational[sessionId] = conversational
+        gateSessionToolCounts[sessionId] = 0
         val mode = _state.value.executionMode
         val modeInstruction = if (conversational) "" else agentChatController.buildModeInstruction(mode, requestText)
         _state.update {
@@ -5427,6 +5444,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val hasResponseAlready = scoped.messages.indices.any {
             it > lastUserIdx && !scoped.messages[it].fromUser && scoped.messages[it].text.isNotBlank()
         }
+        // v3.2.44: the Completion Gate reads how much real tool work this
+        // session did; count tool activity as it streams past.
+        if (event is RuntimeEvent.ToolStarted || event is RuntimeEvent.FilesChanged) {
+            gateSessionToolCounts.merge(event.sessionId, 1, Int::plus)
+        }
         if (event is RuntimeEvent.SessionFailed && retryAntigravityWithNextAccount(projectId, event)) return
         if (event is RuntimeEvent.SessionFailed && scoped.agentKind == AgentKind.ANTIGRAVITY &&
             (event.reason.contains("sign-in", true) || event.reason.contains("authentication", true) || event.reason.contains("401", true))) {
@@ -5434,6 +5456,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (event is RuntimeEvent.SessionFailed && !hasResponseAlready && retryWithNextApiKey(projectId, event)) return
         if (event is RuntimeEvent.SessionFailed && !hasResponseAlready && recoverTransientRuntimeFailure(projectId, event)) return
+        // v3.2.44: the Task Completion Gate gets first say on every
+        // workspace run ending — it may auto-continue the run or end it
+        // honestly as incomplete instead of letting it land as completed.
+        if (event is RuntimeEvent.SessionCompleted && handleTaskCompletionGate(projectId, event)) return
         var backgroundTransition: OrchestratorTransition? = null
         updateSessionScoped(projectId) { current ->
             if (!current.isRunning) {
@@ -5775,6 +5801,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val scopedAfter = sessionScopeFor(projectId)
         if (event is RuntimeEvent.SessionCompleted || (event is RuntimeEvent.SessionFailed && !scopedAfter.runtimeRecoveryCanResume)) {
             sessionRuntimeRequests.remove(event.sessionId)
+            gateSessionConversational.remove(event.sessionId)
+            gateSessionToolCounts.remove(event.sessionId)
             failedApiKeyIds.clear()
             runningSessions.remove(event.sessionId)
             sessionProjects.remove(event.sessionId)
@@ -5812,6 +5840,355 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun ensureCompletionMessage(state: AppUiState, totalDurationText: String): AppUiState =
         state.copy(messages = agentChatController.ensureCompletionMessage(state.messages, totalDurationText))
+
+    // ------------------------------------------------------------------
+    // v3.2.44 — Task Completion Gate.
+    //
+    // A workspace task run may no longer end just because the model
+    // stopped talking: if its final message leaves plan steps open,
+    // names files that do not exist, or ends on a promise/progress note,
+    // the SAME run is continued automatically (the task clock keeps
+    // counting, no user-visible message is added). After
+    // [com.vayro.app.agent.TaskCompletionGate.MAX_CONTINUATIONS] rounds —
+    // or when the same concrete blocker is declared twice — the run ends
+    // honestly as INCOMPLETE (never "Task completed", no Completed
+    // semantics). Pure conversation turns and plan deliveries (PLAN mode,
+    // or a UNIFIED phase-1 roadmap awaiting approval) are never gated.
+    // ------------------------------------------------------------------
+
+    /** Gate path resolver: a referenced guest path counts only if it exists on the host workspace and is a directory or a non-empty file. */
+    private fun gatePathExists(root: File, guestRoot: String, project: Project, reported: String): Boolean {
+        val cleaned = reported.trim().trim('`', '"', '\'', ',', ')', ']')
+        val rel = cleaned.removePrefix("$guestRoot/").removePrefix("/workspace/${project.slug}/")
+        val altRel = cleaned.replace(Regex("^/workspace/[^/]+/"), "")
+        val candidates = listOf(File(cleaned), File(root, rel), File(root, altRel))
+        return candidates.any { file ->
+            runCatching { file.exists() && (file.isDirectory || file.length() > 0L) }.getOrDefault(false)
+        }
+    }
+
+    /**
+     * First say on a workspace run ending. Returns true when the gate
+     * consumed the event (run continued, or ended incomplete); false lets
+     * the normal completion handling proceed.
+     */
+    private fun handleTaskCompletionGate(projectId: String, event: RuntimeEvent.SessionCompleted): Boolean {
+        val sessionId = event.sessionId
+        val conversational = gateSessionConversational.remove(sessionId) ?: false
+        gateSessionToolCounts.remove(sessionId)
+        val scoped = sessionScopeFor(projectId)
+        if (!scoped.isRunning) return false
+        if (scoped.activeSessionId != null && scoped.activeSessionId != sessionId) return false
+        if (conversational) return false
+        // Plan deliveries end BY DESIGN with an unchecked roadmap: PLAN
+        // mode always, and UNIFIED phase 1 when no approved roadmap is
+        // being executed and the final message IS the plan to approve.
+        if (scoped.executionMode == ExecutionMode.PLAN) return false
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return false
+        val lastUserIdx = scoped.messages.indexOfLast { it.fromUser }
+        val finalText = scoped.messages.drop(lastUserIdx + 1)
+            .lastOrNull { !it.fromUser && it.text.isNotBlank() }?.text?.trim().orEmpty()
+        val approvedRoadmap = scoped.activeRoadmap?.takeIf { it.isApproved }
+        if (scoped.executionMode == ExecutionMode.UNIFIED && approvedRoadmap == null &&
+            RoadmapParser.parseFromText(finalText, scoped.executionMode) != null
+        ) {
+            return false
+        }
+        val planSteps = approvedRoadmap?.steps.orEmpty()
+            .filter { it.status != StepStatus.SKIPPED }
+            .map {
+                com.vayro.app.agent.TaskCompletionGate.PlanStepState(
+                    it.title,
+                    it.status == StepStatus.COMPLETED,
+                )
+            }
+        val root = runCatching { projectWorkspaceRoot(project) }.getOrNull()
+        val guestRoot = guestRootFor(project)
+        val verdict = com.vayro.app.agent.TaskCompletionGate.evaluate(
+            com.vayro.app.agent.TaskCompletionGate.Input(
+                armed = true,
+                finalText = finalText,
+                planSteps = planSteps,
+                pathExists = { path -> root != null && gatePathExists(root, guestRoot, project, path) },
+            ),
+        )
+        val taskState = gateTaskStates.getOrPut(projectId) { GateTaskState() }
+        return when (verdict) {
+            is com.vayro.app.agent.TaskCompletionGate.Verdict.Complete -> {
+                gateTaskStates.remove(projectId)
+                false
+            }
+            is com.vayro.app.agent.TaskCompletionGate.Verdict.Blocked -> {
+                val repeats = (taskState.blockerCounts[verdict.signature] ?: 0) + 1
+                taskState.blockerCounts[verdict.signature] = repeats
+                if (repeats >= com.vayro.app.agent.TaskCompletionGate.MAX_SAME_BLOCKER ||
+                    taskState.continuations >= com.vayro.app.agent.TaskCompletionGate.MAX_CONTINUATIONS
+                ) {
+                    finishGateIncomplete(projectId, project, sessionId, emptyList(), emptyList(), verdict.cause)
+                } else {
+                    taskState.continuations++
+                    launchGateContinuation(
+                        projectId, project, sessionId,
+                        com.vayro.app.agent.TaskCompletionGate.buildBlockerContinuationInstruction(
+                            verdict.cause,
+                            scoped.currentTaskRequest.orEmpty(),
+                        ),
+                    )
+                }
+                true
+            }
+            is com.vayro.app.agent.TaskCompletionGate.Verdict.Continue -> {
+                if (taskState.continuations >= com.vayro.app.agent.TaskCompletionGate.MAX_CONTINUATIONS) {
+                    finishGateIncomplete(
+                        projectId, project, sessionId,
+                        verdict.openSteps, verdict.missingPaths, null,
+                    )
+                } else {
+                    taskState.continuations++
+                    launchGateContinuation(
+                        projectId, project, sessionId,
+                        com.vayro.app.agent.TaskCompletionGate.buildContinuationInstruction(
+                            verdict,
+                            scoped.currentTaskRequest.orEmpty(),
+                        ),
+                    )
+                }
+                true
+            }
+        }
+    }
+
+    /**
+     * Continues the SAME task run with an internal instruction. No user
+     * message is added, the task clock (taskStartedAtMillis) is left
+     * untouched, and the run stays in the running state throughout.
+     */
+    private fun launchGateContinuation(
+        projectId: String,
+        project: Project,
+        oldSessionId: String,
+        instruction: String,
+    ): Boolean {
+        val scopedBefore = sessionScopeFor(projectId)
+        val newSessionId = UUID.randomUUID().toString()
+        val finishedAt = System.currentTimeMillis()
+        updateSessionScoped(projectId) { current ->
+            val segment = finishWorkSegment(current, finishedAt)
+            segment.copy(
+                isRunning = true,
+                streamingMessageId = null,
+                activeSessionId = null,
+                liveThinking = true,
+                liveProcess = listOf(
+                    ActivityItem(
+                        "Think",
+                        "Continuing the task — it is not finished yet",
+                        false,
+                        startedAtMillis = finishedAt,
+                    ),
+                ),
+                workSegmentStartedAtMillis = finishedAt,
+                taskFinishedAtMillis = null,
+                activity = listOf(
+                    ActivityItem(
+                        "Continuing task",
+                        "The last message ended before the task was finished — the agent is continuing the same task.",
+                        false,
+                    ),
+                ) + segment.activity,
+            )
+        }
+        sessionRuntimeRequests.remove(oldSessionId)
+        runningSessions.remove(oldSessionId)
+        sessionProjects.remove(oldSessionId)
+        sessionRecoveryStates.remove(oldSessionId)?.job?.cancel()
+        pendingAssistantDeltas.remove(oldSessionId)
+        assistantDeltaFlushJobs.remove(oldSessionId)?.cancel()
+        lastAssistantDeltaPersistAtMillis.remove(oldSessionId)
+        agentSessionController.startSession(
+            sessionId = newSessionId,
+            projectId = project.id,
+            projectTitle = project.name,
+            chatId = scopedBefore.activeChatId.orEmpty(),
+            prompt = instruction,
+            roadmap = scopedBefore.activeRoadmap,
+        )
+        touchProject(project.id)
+        val history = sessionScopeFor(projectId).messages
+        val runtimePrompt = agentChatController.buildEnrichedPrompt(
+            requestText = instruction,
+            modeInstruction = "",
+            mentionedPaths = emptyList(),
+            attachments = emptyList(),
+            guestRoot = guestRootFor(project),
+            skillContext = skillManager.buildPromptContext(_state.value.agentKind),
+            conversational = false,
+        )
+        val bridge = sessionBridge(project.id)
+        sessionRuntimeRequests[newSessionId] = RuntimeRetryRequest(
+            runtime = bridge,
+            project = project,
+            prompt = runtimePrompt,
+            history = history,
+            provider = _state.value.provider,
+        )
+        sessionProjects[newSessionId] = project.id
+        runningSessions[newSessionId] = project.id
+        gateSessionConversational[newSessionId] = false
+        gateSessionToolCounts[newSessionId] = 0
+        runCatching {
+            androidx.core.content.ContextCompat.startForegroundService(
+                getApplication<Application>(),
+                Intent(getApplication<Application>(), RuntimeExecutionService::class.java).apply {
+                    action = RuntimeExecutionService.ACTION_START
+                    putExtra(RuntimeExecutionService.EXTRA_SESSION_ID, newSessionId)
+                    putExtra(RuntimeExecutionService.EXTRA_PROJECT_NAME, project.name)
+                    putExtra(RuntimeExecutionService.EXTRA_AGENT_NAME, _state.value.agentKind.title)
+                    putExtra(
+                        RuntimeExecutionService.EXTRA_DETAIL,
+                        "${_state.value.agentKind.title} is continuing work in ${project.name}",
+                    )
+                    putExtra(RuntimeExecutionService.EXTRA_ROUTE, "project/${project.slug}")
+                },
+            )
+        }
+        val originalTask = scopedBefore.currentTaskRequest.orEmpty()
+        MobileHarnessApplication.appScope.launch {
+            val request = sessionRuntimeRequests[newSessionId] ?: return@launch
+            val workspace = withContext(Dispatchers.IO) {
+                val root = projectWorkspaceRoot(request.project)
+                skillManager.syncToWorkspace(root)
+                root
+            }
+            val enrichedPrompt = withContext(Dispatchers.IO) {
+                val context = contextEngine.buildPromptContext(
+                    projectId = request.project.id,
+                    workspace = workspace,
+                    request = originalTask,
+                    mentionedPaths = emptyList(),
+                    maxReferences = 12,
+                )
+                if (context.isBlank()) request.prompt else request.prompt + "\n\n" + context
+            }
+            val enriched = request.copy(prompt = enrichedPrompt)
+            sessionRuntimeRequests[newSessionId] = enriched
+            sessionRecoveryStates[newSessionId] = SessionRecoveryState()
+            runCatching {
+                enriched.runtime.startSession(
+                    enriched.project.id,
+                    enriched.project.slug,
+                    enriched.project.kind,
+                    enriched.prompt,
+                    enriched.history,
+                    enriched.provider,
+                    newSessionId,
+                )
+            }.onFailure { error ->
+                val failureReason = RuntimeFailureClassifier.friendlyNetworkErrorMessage(error.message.orEmpty())
+                onRuntimeEvent(project.id, RuntimeEvent.SessionFailed(newSessionId, failureReason))
+            }
+        }
+        if (projectId == _state.value.activeProject?.id) {
+            persistMessages(includeLiveProcess = true)
+        } else {
+            persistProjectMessages(projectId)
+        }
+        return true
+    }
+
+    /**
+     * Ends a run the gate would not pass: visibly incomplete, naming what
+     * is still missing. Deliberately mirrors the "Task stopped" ending
+     * shape — NOT the completed one: no "Task completed" activity, no
+     * completion message, no COMPLETED orchestrator transition.
+     */
+    private fun finishGateIncomplete(
+        projectId: String,
+        project: Project,
+        sessionId: String,
+        openSteps: List<String>,
+        missingPaths: List<String>,
+        blockerCause: String?,
+    ): Boolean {
+        val finishedAt = System.currentTimeMillis()
+        val missingSummary = com.vayro.app.agent.TaskCompletionGate.buildMissingSummary(
+            openSteps, missingPaths, blockerCause,
+        )
+        gateTaskStates.remove(projectId)
+        agentSessionController.failSession(sessionId, "Task incomplete: $missingSummary")
+        val isActiveProject = projectId == _state.value.activeProject?.id
+        if (isActiveProject) {
+            agentOrchestrator.transition(
+                com.vayro.app.session.EngineeringState.FAILED,
+                "Task incomplete",
+                missingSummary,
+            )
+        } else {
+            projectSessionStates.update { current ->
+                val slice = current[projectId] ?: return@update current
+                current + (projectId to slice.copy(
+                    pendingOrchestratorTransition = OrchestratorTransition(
+                        com.vayro.app.session.EngineeringState.FAILED,
+                        "Task incomplete",
+                        missingSummary,
+                    ),
+                ))
+            }
+        }
+        updateSessionScoped(projectId) { current ->
+            val segment = finishWorkSegment(current, finishedAt)
+            val withMessage = segment.copy(
+                messages = trimMessages(
+                    segment.messages + ChatMessage(
+                        fromUser = false,
+                        text = com.vayro.app.agent.TaskCompletionGate.buildIncompleteMessage(
+                            openSteps, missingPaths, blockerCause,
+                        ),
+                    ),
+                ),
+            )
+            attachTaskDuration(withMessage, finishedAt).copy(
+                isRunning = false,
+                streamingMessageId = null,
+                activeSessionId = null,
+                pendingApproval = null,
+                scratchpadItems = deriveScratchpadItems(segment.activeRoadmap, emptyList(), false),
+                activity = listOf(ActivityItem("Task incomplete", missingSummary)) +
+                    segment.activity.map { if (!it.isComplete && !isLiveToolItem(it)) it.copy(isComplete = true) else it },
+                taskFinishedAtMillis = finishedAt,
+                currentTaskRequest = null,
+                runtimeRecoveryStatus = null,
+                runtimeRecoveryAttempt = 0,
+                runtimeRecoveryCanResume = false,
+            )
+        }
+        sessionRuntimeRequests.remove(sessionId)
+        runningSessions.remove(sessionId)
+        sessionProjects.remove(sessionId)
+        pendingAssistantDeltas.remove(sessionId)
+        assistantDeltaFlushJobs.remove(sessionId)?.cancel()
+        lastAssistantDeltaPersistAtMillis.remove(sessionId)
+        sessionRecoveryStates.remove(sessionId)?.job?.cancel()
+        if (isActiveProject) {
+            agentOrchestrator.saveState(getApplication<Application>().filesDir)
+        }
+        runCatching {
+            val intent = Intent(getApplication<Application>(), RuntimeExecutionService::class.java).apply {
+                action = RuntimeExecutionService.ACTION_CANCELLED
+                putExtra(RuntimeExecutionService.EXTRA_SESSION_ID, sessionId)
+            }
+            getApplication<Application>().startService(intent)
+        }
+        touchProject(projectId)
+        if (isActiveProject) {
+            persistMessages(includeLiveProcess = true)
+            refreshProjectFiles()
+        } else {
+            persistProjectMessages(projectId)
+        }
+        pumpSessionQueue()
+        return true
+    }
 
     private fun recoverTransientRuntimeFailure(projectId: String, event: RuntimeEvent.SessionFailed): Boolean {
         val scoped = sessionScopeFor(projectId)
@@ -5936,6 +6313,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .forEach { it.value.job?.cancel() }
         sessionRecoveryStates.entries.removeIf { sessionProjects[it.key] == project.id }
 
+        // v3.2.44: a user-initiated resume starts a fresh gate budget.
+        gateTaskStates.remove(project.id)
         val lastUserMsg = current.messages.lastOrNull { it.fromUser }
         val resumePrompt = prompt.ifBlank {
             current.currentTaskRequest ?: lastUserMsg?.text.orEmpty()
