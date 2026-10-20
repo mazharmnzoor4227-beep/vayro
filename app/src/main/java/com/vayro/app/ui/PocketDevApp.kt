@@ -5544,11 +5544,11 @@ private fun WorkspaceScreen(
 ) {
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
-    // v3.2.42: no IME boolean is read in this screen anymore. The
-    // bottom bar below hides while the chat composer is being
-    // edited; that session state now arrives from ChatTab as field
-    // FOCUS (onInputFocusChange → chatInputFocused), the same
-    // discrete signal that drives the composer's controls row.
+    // v3.2.48: no focus-derived chrome state in this screen anymore.
+    // The bottom bar follows the KEYBOARD itself (see the Scaffold
+    // call below): its visibility is read from the platform's IME
+    // inset in composition, the same clock that drives the
+    // composer's imePadding ride.
     val bindFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { uri -> if (uri != null) onBindFolder(uri) },
@@ -5585,10 +5585,6 @@ private fun WorkspaceScreen(
     // The follow-scroll below pauses then, so the list is exactly where
     // the user left it when the sheet closes.
     var chatOverlayOpen by remember { mutableStateOf(false) }
-    // v3.2.42: true while the chat composer field holds focus
-    // (reported by ChatTab) — the bottom bar hides for the session.
-    var chatInputFocused by remember { mutableStateOf(false) }
-
     // Item count of the chat LazyColumn: messages + the in-flow working
     // row (v3.2.34, U4 — it is a list item now, not a docked bar) + the
     // approval card + the end-of-run changes review card (U6d).
@@ -5899,6 +5895,14 @@ private fun WorkspaceScreen(
             dismissButton = { TextButton(onClick = onTerminalCancel) { Text("Cancel") } },
         )
     }
+    // v3.2.48: read in composition, so this screen recomposes on the
+    // platform's animated IME inset — the bottom bar leaves on the
+    // first inset frame and returns on the frame the inset reaches
+    // zero, in lockstep with the composer's imePadding ride. No
+    // effect lag (the old focus plumbing switched the bar one
+    // LaunchedEffect after the composer started moving, which
+    // double-rendered against it), and no separate animation.
+    val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     Scaffold(
         topBar = {
             if (!voiceCallOverlayActive && selectedTab != WorkspaceTab.PREVIEW && selectedTab != WorkspaceTab.TERMINAL) {
@@ -5974,7 +5978,7 @@ private fun WorkspaceScreen(
             }
         },
         bottomBar = {
-            if (!chatInputFocused && !voiceCallOverlayActive) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            if (!keyboardOpen && !voiceCallOverlayActive) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
                     NavigationBarItem(
                         selected = tab != WorkspaceTab.HOME && selectedTab == tab,
@@ -6145,7 +6149,6 @@ private fun WorkspaceScreen(
                     onKeepChanges = onKeepChanges,
                     onUndoChanges = onUndoChanges,
                     onModalOverlayChange = { chatOverlayOpen = it },
-                    onInputFocusChange = { chatInputFocused = it },
                     executionMode = state.executionMode,
                     onSelectExecutionMode = onSelectExecutionMode,
                     scratchpadItems = state.scratchpadItems,
@@ -6939,10 +6942,6 @@ private fun ChatTab(
     // U8a: tells the workspace when a sheet/dialog covers the chat, so
     // the background list can be gesture-locked and follow-scroll paused.
     onModalOverlayChange: (Boolean) -> Unit = {},
-    // v3.2.42: tells the workspace when the composer field holds
-    // focus (the editing session) — the workspace hides its bottom
-    // bar for the session, replacing its old derived IME boolean.
-    onInputFocusChange: (Boolean) -> Unit = {},
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
@@ -6990,7 +6989,6 @@ private fun ChatTab(
     // v3.2.40 (Scope F): the TXT chip's content + the viewer target.
     var pastedText by rememberSaveable { mutableStateOf<String?>(null) }
     var viewingPasted by remember { mutableStateOf<String?>(null) }
-    var inputFocused by remember { mutableStateOf(false) }
     var inputLineCount by remember { mutableStateOf(1) }
     var inputSectionHeight by remember { mutableStateOf(0.dp) }
     var showWorkspaceControls by rememberSaveable { mutableStateOf(false) }
@@ -7195,10 +7193,6 @@ private fun ChatTab(
     // screen, so the header/bottom bar stop bleeding through the overlay.
     LaunchedEffect(voiceCallActive) { onCallActiveChange(voiceCallActive) }
     DisposableEffect(Unit) { onDispose { onCallActiveChange(false) } }
-    // v3.2.42: report the composer's editing session (field focus)
-    // so the workspace can hide its bottom bar for the session.
-    LaunchedEffect(inputFocused) { onInputFocusChange(inputFocused) }
-    DisposableEffect(Unit) { onDispose { onInputFocusChange(false) } }
 
     fun startVoiceCall() {
         if (!voiceRecognizer.isAvailable()) {
@@ -7546,6 +7540,13 @@ private fun ChatTab(
             color = MaterialTheme.colorScheme.background,
             modifier = Modifier.fillMaxWidth(),
         ) {
+            // v3.2.48: the composer's bottom spacing follows the IME
+            // inset itself — the measured spec is 15 dp above the
+            // keyboard while it is up and 8 dp above the tab bar when
+            // closed. The value is read in composition from the same
+            // platform inset the imePadding below consumes, so it
+            // flips on the inset's own frames and can never desync.
+            val composerImeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -7554,7 +7555,16 @@ private fun ChatTab(
                     // fed by the platform's animated insets — the
                     // composer rides the keyboard's own curve.
                     .imePadding()
-                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                    .padding(
+                        start = ComposerLayout.CardHorizontalMargin,
+                        end = ComposerLayout.CardHorizontalMargin,
+                        top = 6.dp,
+                        bottom = if (composerImeBottom > 0) {
+                            ComposerLayout.WorkspaceBottomSpacingKeyboardOpen
+                        } else {
+                            ComposerLayout.WorkspaceBottomSpacingKeyboardClosed
+                        },
+                    )
             ) {
                 AnimatedVisibility(
                     visible = showWorkspaceControls,
@@ -7741,90 +7751,81 @@ private fun ChatTab(
                         modifier = Modifier.padding(vertical = 4.dp),
                     )
                 } else {
-                // v3.2.40 (Scope F/F2): two-state bottom area, cloned
-                // from the user's Claude reference — the same contract
-                // as the home composer: the text field never changes
-                // parent (focus and the keyboard survive the flip);
-                // empty + keyboard closed shows ONE row (+, field,
-                // mic, voice); editing or content present adds the
-                // controls row (tools +, provider pill, mic,
-                // send/stop) under the field.
-                // v3.2.42 (Architecture A): same single-motion rule
-                // as the home composer — the controls row belongs to
-                // the field's editing session, driven by its FOCUS
-                // (inputFocused, tracked by the field's own
-                // onFocusChanged since Scope F2), not by an IME
-                // inset read. A boolean IME read could only flip
-                // discretely against the keyboard's continuous slide;
-                // focus flips with the tap that opens the keyboard,
-                // and the continuous motion is left entirely to the
-                // one imePadding consumer above.
-                val controlsVisible = inputFocused || prompt.isNotEmpty() || pastedText != null
-                val sendStopButton: @Composable () -> Unit = {
-                    if (isRunning) {
-                        Box(
+                // v3.2.48: ONE composer layout, rebuilt to the
+                // measured Claude spec (kodex-composer-spec). The
+                // field and the controls row (+, agent pill, mic,
+                // right slot) are composed together in EVERY state —
+                // keyboard open or closed, empty or typing. Nothing
+                // swaps and nothing crossfades: the old two-state
+                // design (the idle row in plain `if` branches plus
+                // the controls row in a fade-only AnimatedVisibility)
+                // rendered BOTH states inside this card for the whole
+                // fade, at the tall height — the recorded "double
+                // layer" ghost. The only motion left is the
+                // keyboard's, consumed by the container's imePadding
+                // above; focus now drives nothing here but the cursor.
+                val rightSlot: @Composable () -> Unit = {
+                    when (composerRightSlot(isRunning, canSend)) {
+                        ComposerRightSlot.Stop -> Box(
                             modifier = Modifier
-                                .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+                                .size(ComposerLayout.CircleSize)
+                                .background(
+                                    color = MaterialTheme.colorScheme.error,
+                                    shape = CircleShape,
+                                )
                                 .clickable(onClick = onStop),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.error,
-                                        shape = CircleShape,
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Stop,
-                                    contentDescription = "Stop AI task",
-                                    tint = MaterialTheme.colorScheme.onError,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Stop,
+                                contentDescription = "Stop AI task",
+                                tint = MaterialTheme.colorScheme.onError,
+                                modifier = Modifier.size(18.dp),
+                            )
                         }
-                    } else {
-                        Box(
+                        ComposerRightSlot.Send -> Box(
                             modifier = Modifier
-                                .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
-                                .clickable(
-                                    enabled = true,
-                                    onClick = {
-                                        if (canSend) {
-                                            onSend(prompt, pastedText)
-                                            prompt = ""
-                                            pastedText = null
-                                            mentionQuery = null
-                                        } else {
-                                            onStartVoiceCall()
-                                        }
-                                    },
-                                ),
+                                .size(ComposerLayout.CircleSize)
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = CircleShape,
+                                )
+                                .clickable {
+                                    onSend(prompt, pastedText)
+                                    prompt = ""
+                                    pastedText = null
+                                    mentionQuery = null
+                                },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.primary,
-                                        shape = CircleShape,
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    imageVector = if (canSend) Icons.Default.ArrowUpward else Icons.Default.GraphicEq,
-                                    contentDescription = if (canSend) "Send" else "Voice mode",
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(19.dp),
+                            Icon(
+                                imageVector = Icons.Default.ArrowUpward,
+                                contentDescription = "Send",
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(19.dp),
+                            )
+                        }
+                        ComposerRightSlot.Voice -> Box(
+                            modifier = Modifier
+                                .size(ComposerLayout.CircleSize)
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = CircleShape,
                                 )
-                            }
+                                .clickable(onClick = onStartVoiceCall),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.GraphicEq,
+                                contentDescription = "Voice mode",
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(19.dp),
+                            )
                         }
                     }
                 }
                 Surface(
-                    shape = RoundedCornerShape(26.dp),
+                    shape = RoundedCornerShape(ComposerLayout.CardRadius),
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(
                         width = 1.dp,
@@ -7835,46 +7836,28 @@ private fun ChatTab(
                     // height while the IME inset animation moved the
                     // same space on the platform's curve; two
                     // unsynchronised animations on one surface read
-                    // on screen as a "double layer". The card's
-                    // height now changes only with its CONTENT (a
-                    // discrete state); every continuous motion comes
-                    // from the keyboard via the composer container's
-                    // imePadding.
+                    // on screen as a "double layer". v3.2.48 keeps
+                    // that rule and removes the state swap itself:
+                    // the card's height now changes only when the
+                    // field's line count changes; every continuous
+                    // motion comes from the keyboard via the composer
+                    // container's imePadding.
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column {
+                    Column(Modifier.padding(top = ComposerLayout.CardInnerTopPadding)) {
                         if (pastedText != null) {
                             PastedContentChip(
                                 onOpen = { viewingPasted = pastedText },
                                 onRemove = { pastedText = null },
-                                modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 6.dp),
+                                modifier = Modifier.fillMaxWidth().padding(
+                                    start = ComposerLayout.FieldHorizontalPadding,
+                                    end = ComposerLayout.FieldHorizontalPadding,
+                                    top = 2.dp,
+                                    bottom = 2.dp,
+                                ),
                             )
                         }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 4.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.Bottom,
-                            // v3.2.47: fixed 8dp gaps so the round
-                            // controls never touch or visually merge.
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            if (!controlsVisible) {
-                                ComposerCircleButton(
-                                    contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
-                                    onClick = { toolsOpen = !toolsOpen },
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = null,
-                                        modifier = Modifier
-                                            .size(20.dp)
-                                            .graphicsLayer { rotationZ = plusRotation },
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                            BasicTextField(
+                        BasicTextField(
                                 value = prompt,
                                 onValueChange = { newText ->
                                     // Scope F: a >2000-char paste becomes
@@ -7887,9 +7870,13 @@ private fun ChatTab(
                                 },
                                 onTextLayout = { inputLineCount = it.lineCount },
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 4.dp)
-                                    .onFocusChanged { inputFocused = it.isFocused },
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = ComposerLayout.FieldHorizontalPadding,
+                                        end = ComposerLayout.FieldHorizontalPadding,
+                                        top = ComposerLayout.FieldTopPadding,
+                                        bottom = ComposerLayout.FieldBottomPadding,
+                                    ),
                                 // Scope F2: grows to 8 whole lines in
                                 // EVERY state — the old rule (1 line
                                 // unfocused, unlimited focused, 150dp
@@ -7943,37 +7930,20 @@ private fun ChatTab(
                                 }
                             },
                         )
-                            if (!controlsVisible) {
-                                ComposerCircleButton(contentDescription = "Voice input", onClick = onStartVoiceInput) {
-                                    Icon(
-                                        imageVector = Icons.Default.Mic,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(19.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                sendStopButton()
-                            }
-                        }
-                        AnimatedVisibility(
-                            visible = controlsVisible,
-                            // Fade ONLY — and no size owner remains
-                            // to fight (v3.2.42 removed the Surface's
-                            // animateContentSize entirely); continuous
-                            // motion is the keyboard's alone.
-                            enter = fadeIn(),
-                            exit = fadeOut(),
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    start = ComposerLayout.ControlsHorizontalPadding,
+                                    end = ComposerLayout.ControlsHorizontalPadding,
+                                    top = ComposerLayout.ControlsTopPadding,
+                                    bottom = ComposerLayout.ControlsBottomPadding,
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            // 8dp gaps between + circle, pill, mic
+                            // circle and the right slot (v3.2.47).
+                            horizontalArrangement = Arrangement.spacedBy(ComposerLayout.ControlsGap),
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                // v3.2.47: 8dp gaps between + circle, pill,
-                                // mic circle and send circle (they touched
-                                // and merged into one blob before).
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
                                 ComposerCircleButton(
                                     contentDescription = if (toolsOpen) "Hide tools" else "Show tools",
                                     onClick = { toolsOpen = !toolsOpen },
@@ -7990,10 +7960,10 @@ private fun ChatTab(
                                 Surface(
                                     shape = RoundedCornerShape(999.dp),
                                     color = MaterialTheme.colorScheme.surfaceVariant,
-                                    modifier = Modifier.clickable { showAgentSheet = true },
+                                    modifier = Modifier.height(ComposerLayout.PillHeight).clickable { showAgentSheet = true },
                                 ) {
                                     Row(
-                                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                        Modifier.height(ComposerLayout.PillHeight).padding(horizontal = 10.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Text(
@@ -8019,9 +7989,8 @@ private fun ChatTab(
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                sendStopButton()
+                                rightSlot()
                             }
-                        }
                     }
                 }
                 }

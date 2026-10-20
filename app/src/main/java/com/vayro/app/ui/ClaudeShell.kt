@@ -1491,15 +1491,12 @@ internal fun ChatHomeScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var prompt by rememberSaveable { mutableStateOf("") }
-    // v3.2.42 (Architecture A): the composer's editing-session
-    // state. The controls row belongs to the session — it appears
-    // when the field takes focus (the same gesture that raises the
-    // keyboard) and stays while the session or its content lasts.
-    // No IME inset value is read anywhere in this screen's
-    // composition: the keyboard's motion reaches the screen only
-    // through the composer Column's imePadding (layout phase), so
-    // nothing here can step against the keyboard's own curve.
-    var composerFocused by remember { mutableStateOf(false) }
+    // v3.2.48: the composer has ONE layout in every state (see the
+    // card below) — no focus/session state exists here anymore. No
+    // IME inset value is read anywhere in this screen's composition:
+    // the keyboard's motion reaches the screen only through the
+    // composer Column's imePadding (layout phase), so nothing here
+    // can step against the keyboard's own curve.
     // v3.2.40 (Scope F): the TXT chip's content + the viewer target.
     var pastedText by rememberSaveable { mutableStateOf<String?>(null) }
     var viewingPasted by remember { mutableStateOf<String?>(null) }
@@ -2062,7 +2059,12 @@ internal fun ChatHomeScreen(
                 // animated insets — so the composer rides the
                 // keyboard's curve exactly, with no recomposition.
                 .imePadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(
+                    start = ComposerLayout.CardHorizontalMargin,
+                    end = ComposerLayout.CardHorizontalMargin,
+                    top = 8.dp,
+                    bottom = ComposerLayout.HomeBottomSpacing,
+                ),
         ) {
             if (voiceInputActive) {
                 VoiceInputBar(
@@ -2091,33 +2093,29 @@ internal fun ChatHomeScreen(
                     modifier = Modifier.padding(vertical = 4.dp),
                 )
             } else {
-                // v3.2.40 (Scope F/F2): two-state bottom area, cloned
-                // from the user's Claude reference. The text field
-                // NEVER changes parent — only its row siblings and
-                // the controls row below animate — so focus and the
-                // keyboard survive the state flip.
-                // v3.2.42 (Architecture A): the two states are the
-                // same as v3.2.40/41 — empty + not editing = ONE row
-                // (+, field, mic, voice); editing OR content present
-                // = the field's row plus the controls row under it.
-                // What changed is the signal: v3.2.41 read a derived
-                // IME boolean here. A boolean carries no per-frame
-                // position, so the row could only flip discretely
-                // while the keyboard slid continuously — the two
-                // were never in sync. The row is now driven by the
-                // field's own FOCUS, a discrete session state that
-                // flips with the tap that opens the keyboard, and
-                // the keyboard's continuous motion is left entirely
-                // to the one imePadding consumer. The field never
-                // changes parent, so focus and the keyboard survive
-                // the flip.
-                val controlsVisible = composerFocused || prompt.isNotEmpty() || pastedText != null ||
-                    homePendingDocName.isNotBlank()
+                // v3.2.48: ONE composer layout, rebuilt to the
+                // measured Claude spec (kodex-composer-spec) — the
+                // same rebuild as the workspace composer. The field
+                // and the controls row (+, provider pill, mic, right
+                // slot) are composed together in EVERY state; nothing
+                // swaps and nothing crossfades. The old two-state
+                // design (idle row in plain `if` branches + the
+                // controls row in a fade-only AnimatedVisibility,
+                // keyed to field focus) rendered BOTH states inside
+                // this card during the fade — the same "double
+                // layer" ghost the owner recorded in Work mode. The
+                // field never changes parent, and the only motion
+                // is the keyboard's, via the composer Column's
+                // imePadding. Focus drives nothing here but the
+                // cursor.
                 val sendOrVoice: @Composable () -> Unit = {
-                    if (canSend) {
-                        Box(
+                    // One slot, decided instantly by the shared
+                    // composerRightSlot rule (home never shows Stop:
+                    // its runs are not stopped from the composer).
+                    when (composerRightSlot(isRunning = false, canSend = canSend)) {
+                        ComposerRightSlot.Send -> Box(
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(ComposerLayout.CircleSize)
                                 .background(KodexClay, CircleShape)
                                 .clickable {
                                     val text = prompt
@@ -2130,23 +2128,23 @@ internal fun ChatHomeScreen(
                         ) {
                             Icon(Icons.Outlined.ArrowUpward, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(19.dp))
                         }
-                    } else {
-                        // Waveform button = voice call (unchanged
-                        // behavior); the host presents the call over
-                        // THIS home thread (Part F2 routing).
-                        Box(
+                        ComposerRightSlot.Voice -> Box(
+                            // Waveform button = voice call (unchanged
+                            // behavior); the host presents the call
+                            // over THIS home thread (Part F2 routing).
                             modifier = Modifier
-                                .size(36.dp)
+                                .size(ComposerLayout.CircleSize)
                                 .background(KodexClay, CircleShape)
                                 .clickable(onClick = onVoiceCall),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(Icons.Filled.GraphicEq, contentDescription = "Voice call", tint = Color.White, modifier = Modifier.size(19.dp))
                         }
+                        ComposerRightSlot.Stop -> Unit
                     }
                 }
                 Surface(
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(ComposerLayout.CardRadius),
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     shadowElevation = 2.dp,
@@ -2159,20 +2157,20 @@ internal fun ChatHomeScreen(
                     // same space on the platform's curve — two
                     // unsynchronised animations on one surface,
                     // which is what read on screen as a "double
-                    // layer" sliding against itself. The card's
-                    // height now changes only when its CONTENT
-                    // changes (a discrete state), and every
+                    // layer" sliding against itself. v3.2.48 keeps
+                    // that rule and removes the state swap itself:
+                    // the card's height now changes only when the
+                    // field's line count changes, and every
                     // continuous motion comes from the keyboard via
                     // the composer Column's imePadding.
                     Column(
-                        Modifier
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        Modifier.padding(top = ComposerLayout.CardInnerTopPadding),
                     ) {
                         // v3.2.40 (Scope G): staged images — what you
                         // see here is exactly what will be sent as
                         // vision input with the next message.
                         if (homePendingImages.isNotEmpty() || homeImageNote != null) {
-                            Column(Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
+                            Column(Modifier.padding(horizontal = ComposerLayout.FieldHorizontalPadding, vertical = 2.dp)) {
                                 if (homePendingImages.isNotEmpty()) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         homePendingImages.forEach { path ->
@@ -2214,7 +2212,7 @@ internal fun ChatHomeScreen(
                             PastedContentChip(
                                 onOpen = { viewingPasted = pastedText },
                                 onRemove = { pastedText = null },
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = ComposerLayout.FieldHorizontalPadding, vertical = 2.dp),
                             )
                         }
                         // v3.2.41 (Scope 3): the staged document — the
@@ -2232,7 +2230,7 @@ internal fun ChatHomeScreen(
                                 },
                                 onOpen = { viewingDoc = homePendingDocName to homePendingDocText },
                                 onRemove = onRemoveHomeDoc,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = ComposerLayout.FieldHorizontalPadding, vertical = 2.dp),
                             )
                         }
                         if (homePendingDocName.isNotBlank() || homeDocNote != null) {
@@ -2241,22 +2239,11 @@ internal fun ChatHomeScreen(
                                     note,
                                     fontSize = 11.5.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                    modifier = Modifier.padding(horizontal = ComposerLayout.FieldHorizontalPadding, vertical = 2.dp),
                                 )
                             }
                         }
-                        Row(
-                            verticalAlignment = Alignment.Bottom,
-                            // v3.2.47: fixed 8dp gaps so the round
-                            // controls never touch or visually merge.
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            if (!controlsVisible) {
-                                ComposerCircleButton(contentDescription = "Add to chat", onClick = { sheetOpen = true }) {
-                                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                            BasicTextField(
+                        BasicTextField(
                                 value = prompt,
                                 onValueChange = { newText ->
                                     // Scope F: a >2000-char paste becomes
@@ -2267,11 +2254,13 @@ internal fun ChatHomeScreen(
                                     pastedText = split.chipText
                                 },
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                                    // v3.2.42: focus drives the
-                                    // controls row (see above).
-                                    .onFocusChanged { composerFocused = it.isFocused },
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = ComposerLayout.FieldHorizontalPadding,
+                                        end = ComposerLayout.FieldHorizontalPadding,
+                                        top = ComposerLayout.FieldTopPadding,
+                                        bottom = ComposerLayout.FieldBottomPadding,
+                                    ),
                                 // Scope F2: grows to 8 whole lines, then
                                 // scrolls inside — maxLines keeps the
                                 // height a whole number of line heights,
@@ -2319,31 +2308,19 @@ internal fun ChatHomeScreen(
                                 }
                             },
                             )
-                            if (!controlsVisible) {
-                                ComposerCircleButton(contentDescription = "Voice input", onClick = onStartVoiceInput) {
-                                    Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                sendOrVoice()
-                            }
-                        }
-                        AnimatedVisibility(
-                            visible = controlsVisible,
-                            // Fade ONLY, and there is no size owner
-                            // left to fight: the row's appearance is a
-                            // discrete content change inside the card
-                            // (v3.2.42 removed the animateContentSize
-                            // spring entirely), while all continuous
-                            // motion comes from the keyboard through
-                            // the composer Column's imePadding.
-                            enter = fadeIn(),
-                            exit = fadeOut(),
-                        ) {
                         Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    start = ComposerLayout.ControlsHorizontalPadding,
+                                    end = ComposerLayout.ControlsHorizontalPadding,
+                                    top = ComposerLayout.ControlsTopPadding,
+                                    bottom = ComposerLayout.ControlsBottomPadding,
+                                ),
                             verticalAlignment = Alignment.CenterVertically,
-                            // v3.2.47: 8dp gaps between + circle, pill,
-                            // mic circle and send circle (they touched
-                            // and merged into one blob before).
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            // 8dp gaps between + circle, pill, mic
+                            // circle and send circle (v3.2.47).
+                            horizontalArrangement = Arrangement.spacedBy(ComposerLayout.ControlsGap),
                         ) {
                             ComposerCircleButton(contentDescription = "Add to chat", onClick = { sheetOpen = true }) {
                                 Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2357,10 +2334,10 @@ internal fun ChatHomeScreen(
                             Surface(
                                 shape = RoundedCornerShape(999.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier.clickable { modelPickerOpen = true },
+                                modifier = Modifier.height(ComposerLayout.PillHeight).clickable { modelPickerOpen = true },
                             ) {
                                 Row(
-                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    Modifier.height(ComposerLayout.PillHeight).padding(horizontal = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
@@ -2379,7 +2356,6 @@ internal fun ChatHomeScreen(
                                 Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(19.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             sendOrVoice()
-                        }
                         }
                     }
                 }
