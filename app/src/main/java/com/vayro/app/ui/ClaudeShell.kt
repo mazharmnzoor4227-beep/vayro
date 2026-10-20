@@ -1064,7 +1064,7 @@ internal fun MessageListenRow(
  */
 private fun claudeStrokeIcon(
     name: String,
-    strokeWidth: Float = 1.5f,
+    strokeWidth: Float = 1.3f,
     draw: androidx.compose.ui.graphics.vector.PathBuilder.() -> Unit,
 ): ImageVector = ImageVector.Builder(
     name = name,
@@ -1131,7 +1131,7 @@ private val ClaudePlayIcon: ImageVector by lazy {
 }
 
 private val ClaudePauseIcon: ImageVector by lazy {
-    claudeStrokeIcon("ClaudePause", strokeWidth = 2.4f) {
+    claudeStrokeIcon("ClaudePause", strokeWidth = 2.0f) {
         moveTo(8f, 5.5f)
         lineTo(8f, 18.5f)
         moveTo(16f, 5.5f)
@@ -1152,7 +1152,7 @@ private val ClaudeRegenerateIcon: ImageVector by lazy {
 }
 
 private val ClaudeCheckIcon: ImageVector by lazy {
-    claudeStrokeIcon("ClaudeCheck", strokeWidth = 1.8f) {
+    claudeStrokeIcon("ClaudeCheck", strokeWidth = 1.6f) {
         moveTo(5f, 12.6f)
         lineTo(10f, 17.4f)
         lineTo(19f, 6.8f)
@@ -1175,6 +1175,16 @@ private val ClaudeCheckIcon: ImageVector by lazy {
  * boxes on the measured ~32 dp pitch, quiet onSurface tone instead
  * of filled Material icons in big 40 dp circles. Actions, order and
  * behavior unchanged.
+ *
+ * v3.2.51 (owner's side-by-side verdict): that render read too
+ * small and faint on his phone. Re-measured from his own Claude
+ * screenshot (921 px wide capture): Claude's glyph ink is ~35 px
+ * (~14 dp) on an ~82 px (~34 dp) pitch with a ~3 px (~1.25 dp)
+ * stroke at ~0.60 alpha; ours measured 24 px ink with a ~1.0 dp
+ * stroke at the same gray — same tint, far less ink. Now: 24 dp
+ * icon render (ink ≈ 14 dp), 1.3 dp base stroke, onSurface at
+ * 0.60 alpha, 40 dp hit boxes overlapped to the measured ~34 dp
+ * pitch. Actions, order and behavior unchanged; still no thumbs.
  */
 @Composable
 internal fun MessageActionRow(
@@ -1187,10 +1197,14 @@ internal fun MessageActionRow(
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
     val listeningThis = com.vayro.app.voice.ReadAloudPlayer.playingMessageId == messageId
-    val tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-    Row(modifier = modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    val tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.60f)
+    Row(
+        modifier = modifier.padding(top = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy((-6).dp),
+    ) {
         Box(
-            modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
                 clipboardManager.setText(AnnotatedString(text))
                 copied = true
                 Toast.makeText(context, "Response copied to clipboard", Toast.LENGTH_SHORT).show()
@@ -1201,11 +1215,11 @@ internal fun MessageActionRow(
                 imageVector = if (copied) ClaudeCheckIcon else ClaudeCopyIcon,
                 contentDescription = "Copy response",
                 tint = if (copied) com.vayro.app.ui.theme.PocketGreen else tint,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(24.dp),
             )
         }
         Box(
-            modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, text)
@@ -1218,11 +1232,11 @@ internal fun MessageActionRow(
                 imageVector = ClaudeShareIcon,
                 contentDescription = "Share response",
                 tint = tint,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(24.dp),
             )
         }
         Box(
-            modifier = Modifier.size(32.dp).clip(CircleShape).clickable {
+            modifier = Modifier.size(40.dp).clip(CircleShape).clickable {
                 com.vayro.app.voice.ReadAloudPlayer.toggle(context, messageId, text)
             },
             contentAlignment = Alignment.Center,
@@ -1231,19 +1245,19 @@ internal fun MessageActionRow(
                 imageVector = if (listeningThis) ClaudePauseIcon else ClaudePlayIcon,
                 contentDescription = if (listeningThis) "Stop listening" else "Listen to response",
                 tint = tint,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(24.dp),
             )
         }
         if (onRegenerate != null) {
             Box(
-                modifier = Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onRegenerate),
+                modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onRegenerate),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = ClaudeRegenerateIcon,
                     contentDescription = "Regenerate response",
                     tint = tint,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(24.dp),
                 )
             }
         }

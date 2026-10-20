@@ -1,6 +1,6 @@
 package com.vayro.app.network
 
-import com.vayro.app.data.ProviderProtocol
+import com.vayro.app.model.ProviderProtocol
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,7 +15,7 @@ import org.junit.Test
 class ProviderApiWebToolsTest {
 
     private val client = ProviderApiClient()
-    private val turns = listOf(client.ChatTurn(role = "user", content = "latest news?"))
+    private val turns = listOf(ProviderApiClient.ChatTurn(role = "user", content = "latest news?"))
 
     @Test
     fun `openrouter body declares both server tools`() {

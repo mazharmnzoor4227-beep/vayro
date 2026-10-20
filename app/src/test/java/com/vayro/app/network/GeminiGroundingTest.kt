@@ -12,16 +12,15 @@ import org.junit.Test
 class GeminiGroundingTest {
 
     private val grounding = GeminiGrounding()
-    private val client = ProviderApiClient()
 
     @Test
     fun `grounded body carries both web tools and the system prompt`() {
         val body = grounding.buildGroundedBody(
             "Be helpful.",
             listOf(
-                client.ChatTurn(role = "user", content = "hi"),
-                client.ChatTurn(role = "assistant", content = "hello"),
-                client.ChatTurn(role = "user", content = "what is the score today?"),
+                ProviderApiClient.ChatTurn(role = "user", content = "hi"),
+                ProviderApiClient.ChatTurn(role = "assistant", content = "hello"),
+                ProviderApiClient.ChatTurn(role = "user", content = "what is the score today?"),
             ),
             2048,
         )
