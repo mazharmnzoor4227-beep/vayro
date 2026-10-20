@@ -3,6 +3,7 @@
 package com.vayro.app.agent.team.ui
 
 import androidx.compose.animation.core.RepeatMode
+import com.vayro.app.ui.SheetWindowImeGuard
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition

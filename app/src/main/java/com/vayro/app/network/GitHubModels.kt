@@ -15,6 +15,12 @@ data class GitHubReview(
     val submittedAt: String
 )
 
+data class GitHubWorkflow(
+    val id: Long,
+    val name: String,
+    val path: String,
+    val state: String
+)
 
 data class GitHubWorkflowRun(
     val id: Long,

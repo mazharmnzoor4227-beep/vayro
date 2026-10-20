@@ -1,6 +1,7 @@
 package com.vayro.app.visual.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import com.vayro.app.ui.SheetWindowImeGuard
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border

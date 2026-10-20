@@ -104,6 +104,29 @@ object NotificationCoordinator {
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         .build()
 
+    fun postRemote(
+        context: Context,
+        title: String,
+        detail: String,
+        messageId: String?,
+        route: String?,
+    ) {
+        ensureChannels(context)
+        val notificationId = REMOTE_NOTIFICATION_BASE_ID + stableNotificationOffset(messageId, title, detail)
+        context.getSystemService(NotificationManager::class.java).notify(
+            notificationId,
+            NotificationCompat.Builder(context, REMOTE_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title)
+                .setContentText(detail)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
+                .setContentIntent(openAppIntent(context, route))
+                .setAutoCancel(true)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build(),
+        )
+    }
 
     fun postResult(context: Context, title: String, detail: String, failed: Boolean, route: String? = null) {
         ensureChannels(context)
