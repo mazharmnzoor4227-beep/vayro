@@ -173,19 +173,78 @@ class ScrollFollowGateTest {
         assertFalse(ScrollFollowGate.shouldRestore(true, liveIndex = 12, liveOffset = 30, userScrollInProgress = false))
     }
 
+    // ---- v3.2.43 (D3): the arrow shows after even a small scroll ----
+
     @Test
-    fun `reversed - arrow rule counts items toward the newest`() {
-        // Parked at the newest: first visible index 0 -> no arrow.
-        assertFalse(isFarFromNewest(firstVisibleIndex = 0, visibleCount = 4))
-        // One item toward the newest, screenful is 4 -> not far.
-        assertFalse(isFarFromNewest(firstVisibleIndex = 1, visibleCount = 4))
-        // Exactly a screenful toward the newest -> far.
-        assertTrue(isFarFromNewest(firstVisibleIndex = 4, visibleCount = 4))
-        assertTrue(isFarFromNewest(firstVisibleIndex = 25, visibleCount = 5))
-        // Minimum threshold is 2 regardless of a tiny viewport count.
-        assertFalse(isFarFromNewest(firstVisibleIndex = 1, visibleCount = 1))
-        assertTrue(isFarFromNewest(firstVisibleIndex = 2, visibleCount = 1))
+    fun `arrow hidden only when parked exactly on the newest`() {
+        assertFalse(shouldShowScrollToNewest(firstVisibleIndex = 0, firstVisibleOffsetPx = 0))
+        // Sub-threshold offset is treated as parked (no flicker at rest).
+        assertFalse(
+            shouldShowScrollToNewest(
+                firstVisibleIndex = 0,
+                firstVisibleOffsetPx = NEWEST_ARROW_OFFSET_THRESHOLD_PX,
+            ),
+        )
+    }
+
+    @Test
+    fun `arrow shows when the newest message is only partially scrolled away`() {
+        // Index still 0, but the newest message is part-way out of
+        // view — the v3.2.42 screenful rule kept the arrow hidden
+        // here; the user asked for it to appear.
+        assertTrue(
+            shouldShowScrollToNewest(
+                firstVisibleIndex = 0,
+                firstVisibleOffsetPx = NEWEST_ARROW_OFFSET_THRESHOLD_PX + 1,
+            ),
+        )
+        assertTrue(shouldShowScrollToNewest(firstVisibleIndex = 0, firstVisibleOffsetPx = 240))
+    }
+
+    @Test
+    fun `arrow shows from one full item of scroll upward`() {
+        assertTrue(shouldShowScrollToNewest(firstVisibleIndex = 1, firstVisibleOffsetPx = 0))
+        assertTrue(shouldShowScrollToNewest(firstVisibleIndex = 30, firstVisibleOffsetPx = 0))
         // No items laid out yet.
-        assertFalse(isFarFromNewest(firstVisibleIndex = -1, visibleCount = 4))
+        assertFalse(shouldShowScrollToNewest(firstVisibleIndex = -1, firstVisibleOffsetPx = 0))
+    }
+
+    // ---- v3.2.43 (D4): the glide's two-phase decision ----
+
+    @Test
+    fun `glide animates the whole way when parked or near the newest`() {
+        assertEquals(ScrollGlide.Plan.AnimateOnly, ScrollGlide.plan(distanceItems = 0, visibleCount = 5))
+        assertEquals(ScrollGlide.Plan.AnimateOnly, ScrollGlide.plan(distanceItems = 3, visibleCount = 5))
+        // One past the animated tail still animates (tail + 1 boundary).
+        assertEquals(ScrollGlide.Plan.AnimateOnly, ScrollGlide.plan(distanceItems = 6, visibleCount = 5))
+    }
+
+    @Test
+    fun `glide jumps then animates when far from the newest`() {
+        // 7 items away with a 5-item screenful: jump to 2, animate 5.
+        assertEquals(
+            ScrollGlide.Plan.JumpThenAnimate(jumpToIndex = 2),
+            ScrollGlide.plan(distanceItems = 7, visibleCount = 5),
+        )
+        // A long history: the animated leg is still exactly one screenful.
+        assertEquals(
+            ScrollGlide.Plan.JumpThenAnimate(jumpToIndex = 35),
+            ScrollGlide.plan(distanceItems = 40, visibleCount = 5),
+        )
+        assertEquals(
+            ScrollGlide.Plan.JumpThenAnimate(jumpToIndex = 92),
+            ScrollGlide.plan(distanceItems = 100, visibleCount = 8),
+        )
+    }
+
+    @Test
+    fun `glide tail never drops below the minimum screenful`() {
+        // A tiny/unknown viewport count still keeps a 3-item animated leg.
+        assertEquals(ScrollGlide.Plan.AnimateOnly, ScrollGlide.plan(distanceItems = 4, visibleCount = 1))
+        assertEquals(
+            ScrollGlide.Plan.JumpThenAnimate(jumpToIndex = 2),
+            ScrollGlide.plan(distanceItems = 5, visibleCount = 1),
+        )
+        assertEquals(ScrollGlide.Plan.AnimateOnly, ScrollGlide.plan(distanceItems = 2, visibleCount = 0))
     }
 }

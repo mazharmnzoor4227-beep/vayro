@@ -47,4 +47,44 @@ class ScrollPreservationTest {
         assertNull(ChatScrollStore.get("ws:proj:chat1"))
         ChatScrollStore.clear("home:thread1")
     }
+
+    // ---- v3.2.43 (D1): restores are layout-versioned + range-checked ----
+
+    @Test
+    fun `validated position returns an in-range saved position`() {
+        ChatScrollStore.save("home:t-valid", 4, 120)
+        assertEquals(4 to 120, ChatScrollStore.validatedPosition("home:t-valid", totalItems = 10))
+        // The oldest item itself is a legitimate place to have left off.
+        assertEquals(4 to 120, ChatScrollStore.validatedPosition("home:t-valid", totalItems = 5))
+        ChatScrollStore.clear("home:t-valid")
+    }
+
+    @Test
+    fun `validated position drops an index past the end instead of clamping onto the oldest`() {
+        // A position captured for a longer conversation (e.g. written
+        // under this key by the pre-fix save/restore race): applying
+        // it used to clamp onto the last item — the oldest message.
+        ChatScrollStore.save("home:t-stale", 55, 0)
+        assertNull(ChatScrollStore.validatedPosition("home:t-stale", totalItems = 12))
+        ChatScrollStore.clear("home:t-stale")
+    }
+
+    @Test
+    fun `validated position is null for empty lists and unknown keys`() {
+        ChatScrollStore.save("home:t-empty", 0, 0)
+        assertNull(ChatScrollStore.validatedPosition("home:t-empty", totalItems = 0))
+        assertNull(ChatScrollStore.validatedPosition("home:t-never-saved", totalItems = 9))
+        ChatScrollStore.clear("home:t-empty")
+    }
+
+    @Test
+    fun `positions written under a foreign layout version are invalidated`() {
+        // Layout version 1 = the pre-3.2.42 forward layout: its
+        // indices point at the opposite end of the reversed lists
+        // and must never be applied.
+        ChatScrollStore.saveWithLayoutVersion("home:t-legacy", 3, 40, layoutVersion = 1)
+        assertNull(ChatScrollStore.get("home:t-legacy"))
+        assertNull(ChatScrollStore.validatedPosition("home:t-legacy", totalItems = 10))
+        ChatScrollStore.clear("home:t-legacy")
+    }
 }

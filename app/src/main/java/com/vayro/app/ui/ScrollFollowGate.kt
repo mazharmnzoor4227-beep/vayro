@@ -86,3 +86,48 @@ object ScrollFollowGate {
     /** The list index of the newest message in a reversed chat list. */
     const val NEWEST_INDEX: Int = 0
 }
+
+/**
+ * v3.2.43 (D4): how a programmatic trip back to the newest message
+ * is travelled. A bare `animateScrollToItem(0)` across a long
+ * conversation visibly steps and teleports: the lazy list has to
+ * measure and recycle tall rows all the way down, frame by frame.
+ * The shipped approach is two-phase — the same shape a hand scroll
+ * takes:
+ *
+ *  - NEAR (within about a screenful of the newest): one smooth
+ *    animation the whole way.
+ *  - FAR: an invisible instant jump to a point still
+ *    [ANIMATED_TAIL_ITEMS]-ish short of the newest, then the SAME
+ *    smooth animation for the remaining ~screenful — swift, with
+ *    no jerk and no step-cut, landing exactly on index 0.
+ *
+ * The decision is pure and unit-tested here; the travelling itself
+ * lives in `LazyListState.glideToNewest` (ScrollToBottomButton.kt).
+ */
+object ScrollGlide {
+
+    sealed interface Plan {
+        /** Animate the whole (short) distance. */
+        object AnimateOnly : Plan
+
+        /** Jump instantly to [jumpToIndex], then animate the rest. */
+        data class JumpThenAnimate(val jumpToIndex: Int) : Plan
+    }
+
+    /** Items the animated leg covers at minimum (about a screenful). */
+    const val MIN_ANIMATED_TAIL_ITEMS: Int = 3
+
+    /**
+     * @param distanceItems how many items sit between the viewport
+     *        and the newest message — in a reversed list this is the
+     *        state's firstVisibleItemIndex.
+     * @param visibleCount how many items the viewport currently
+     *        shows (one screenful).
+     */
+    fun plan(distanceItems: Int, visibleCount: Int): Plan {
+        val tail = maxOf(visibleCount, MIN_ANIMATED_TAIL_ITEMS)
+        if (distanceItems <= tail + 1) return Plan.AnimateOnly
+        return Plan.JumpThenAnimate(jumpToIndex = distanceItems - tail)
+    }
+}

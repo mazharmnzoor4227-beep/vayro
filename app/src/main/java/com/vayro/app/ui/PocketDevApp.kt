@@ -5603,19 +5603,32 @@ private fun WorkspaceScreen(
     // only in this screen's `remember` (chatListState above) cannot
     // survive all of them.
     val chatScrollKey = "ws:${state.activeProject?.id ?: ""}:${state.activeChatId ?: ""}"
-    LaunchedEffect(chatListState, chatScrollKey) {
+    // v3.2.43 (D1): true once THIS entry into the chat has run its
+    // restore pass below. The save effect waits for it — before the
+    // restore, the list state can still hold the position of the
+    // chat the user just left, and saving that under this chat's
+    // key is exactly how the store got poisoned (the foreign
+    // position was then restored on a later return and clamped by
+    // the list onto the oldest message — the visual top).
+    var chatScrollRestoreDone by remember(chatScrollKey) { mutableStateOf(false) }
+    LaunchedEffect(chatListState, chatScrollKey, chatScrollRestoreDone) {
+        if (!chatScrollRestoreDone) return@LaunchedEffect
         snapshotFlow {
             chatListState.firstVisibleItemIndex to chatListState.firstVisibleItemScrollOffset
         }
             .collect { (index, offset) -> ChatScrollStore.save(chatScrollKey, index, offset) }
     }
 
-    LaunchedEffect(state.activeChatId) {
+    LaunchedEffect(chatScrollKey) {
         // A saved position for THIS chat wins: returning to the chat
         // (re-entry, background return, Work round trip) restores
         // exactly where the user left it. Only a chat with no saved
         // position starts at its end, as before.
-        val savedScroll = ChatScrollStore.get(chatScrollKey)
+        // v3.2.43 (D1): the read is range-validated
+        // (ChatScrollStore.validatedPosition) — a saved index that
+        // does not exist in THIS chat is untrustworthy and is
+        // dropped instead of being clamped onto the oldest message.
+        val savedScroll = ChatScrollStore.validatedPosition(chatScrollKey, chatItemCount)
         if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0)) {
             chatListState.scrollToItem(savedScroll.first, savedScroll.second)
         } else if (chatItemCount > 0) {
@@ -5625,6 +5638,7 @@ private fun WorkspaceScreen(
             // from another chat.
             chatListState.scrollToItem(ScrollFollowGate.NEWEST_INDEX)
         }
+        chatScrollRestoreDone = true
     }
 
     // Scope I: closing a sheet/dialog over the chat must hand back the
@@ -5638,7 +5652,10 @@ private fun WorkspaceScreen(
     // can reintroduce a mid-read yank by hand-rolling the checks.
     LaunchedEffect(chatOverlayOpen) {
         if (!chatOverlayOpen) {
-            val savedScroll = ChatScrollStore.get(chatScrollKey)
+            // v3.2.43 (D1): same range-validated read as the entry
+            // restore — an out-of-range saved index is dropped here
+            // too, never clamped onto the oldest message.
+            val savedScroll = ChatScrollStore.validatedPosition(chatScrollKey, chatItemCount)
             val storeHasPosition = savedScroll != null &&
                 (savedScroll.first > 0 || savedScroll.second > 0)
             if (savedScroll != null &&
@@ -5666,6 +5683,43 @@ private fun WorkspaceScreen(
     // the bottom, never mid-gesture, never under an overlay — the
     // list is also gesture-locked while an overlay is open, U8a)
     // and by ScrollFollowGate.shouldRestore for position restore.
+
+    // v3.2.43 (D2): the one follow the structure does NOT provide —
+    // the user's OWN send while he is scrolled up reading. The
+    // scroll law has always allowed exactly this move, the home
+    // list does it, and its absence here left the workspace with
+    // no deterministic landing on send at all. Detection is by the
+    // newest message's identity, per chat (never a count, which
+    // went stale across chats on the home side): the first
+    // observation of a chat only initializes the tracker, so
+    // entering a chat never fires this — the restore pass above
+    // owns that landing. Assistant/streaming growth never fires
+    // it (the newest message is not the user's), and the gate
+    // still vetoes mid-gesture and under an overlay. The landing
+    // is the D4 glide, ending exactly on the newest item (the
+    // working row while the run streams, index 0 either way).
+    var lastNewestWorkspaceMessageId by remember(state.activeChatId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.messages.lastOrNull { it.fromUser }?.id) {
+        // Keyed and tracked on the newest USER message: a send
+        // registers even if an assistant streaming row lands in
+        // the same state emission, and assistant growth alone
+        // never re-fires the effect.
+        val newestUser = state.messages.lastOrNull { it.fromUser }
+        val previousNewestId = lastNewestWorkspaceMessageId
+        if (newestUser != null) lastNewestWorkspaceMessageId = newestUser.id
+        if (previousNewestId != null && newestUser != null &&
+            newestUser.id != previousNewestId
+        ) {
+            val follow = ScrollFollowGate.shouldFollow(
+                ownSend = true,
+                atBottom = ScrollFollowGate.isParkedAtNewest(chatListState.canScrollBackward),
+                userScrollInProgress = chatListState.isScrollInProgress,
+                userScrolledUp = false,
+                overlayOpen = chatOverlayOpen,
+            )
+            if (follow) chatListState.glideToNewest()
+        }
+    }
 
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     // v3.2.37 (A2): while the voice call is up, the workspace chrome hides
@@ -7423,22 +7477,22 @@ private fun ChatTab(
                 }
             }
             // v3.2.40 (Scope H): floating scroll-to-bottom arrow — in
-            // the list layer only (under every sheet/dialog), shown
-            // when a screenful or more sits between the user and the
-            // newest message; one tap animates to index 0, the
+            // the list layer only (under every sheet/dialog).
+            // v3.2.43 (D3): shown as soon as the user has scrolled
+            // away from the newest even a little (the shared
+            // shouldShowScrollToNewest rule), not after a screenful;
+            // one tap travels back with the D4 glide (ScrollGlide) —
+            // swift and smooth, landing exactly on index 0, the
             // newest end (working row included). Streaming never
             // auto-yanks: this arrow is the way back.
-            val wsLayoutInfo = listState.layoutInfo
             ScrollToBottomButton(
-                visible = !anyOverlayOpen && isFarFromNewest(
+                visible = !anyOverlayOpen && shouldShowScrollToNewest(
                     firstVisibleIndex = listState.firstVisibleItemIndex,
-                    visibleCount = wsLayoutInfo.visibleItemsInfo.size,
+                    firstVisibleOffsetPx = listState.firstVisibleItemScrollOffset,
                 ),
                 onClick = {
                     chatScope.launch {
-                        if (listState.layoutInfo.totalItemsCount > 0) {
-                            listState.animateScrollToItem(ScrollFollowGate.NEWEST_INDEX)
-                        }
+                        listState.glideToNewest()
                     }
                 },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),

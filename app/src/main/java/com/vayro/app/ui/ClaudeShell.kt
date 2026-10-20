@@ -1669,9 +1669,29 @@ internal fun ChatHomeScreen(
     val hasThread = homeMessages.isNotEmpty()
     // v3.2.38 (Part I): thread scroll survives leaving to Work and back,
     // like every other list in the shell (U8b pattern).
-    val threadListState = rememberSaveable(saver = androidx.compose.foundation.lazy.LazyListState.Saver) {
+    // v3.2.43 (D1): the state is keyed PER THREAD and its saveable
+    // slot carries a layout-version tag ("rv2" = the reversed
+    // layout). The unkeyed v3.2.42 state let one thread's position
+    // (and the send counter below) leak into another thread, and a
+    // pre-reversal (v3.2.41, forward-layout) bundle entry restored
+    // into the reversed list pointed at the OLDEST message — the
+    // "chat jumps to the very top" report. The versioned slot makes
+    // every pre-rv2 entry unreachable: invalidated, never applied.
+    val threadListState = rememberSaveable(
+        homeThreadId,
+        saver = androidx.compose.foundation.lazy.LazyListState.Saver,
+        key = "home-thread-list-rv2",
+    ) {
         androidx.compose.foundation.lazy.LazyListState()
     }
+    // v3.2.43 (D1): true once THIS entry into the thread has run its
+    // restore pass below. The save effect waits for it — before the
+    // restore, the list state can still hold the position of the
+    // thread the user just left, and saving that under this thread's
+    // key is exactly how the store got poisoned (the foreign
+    // position was then restored later and clamped onto the oldest
+    // message).
+    var homeScrollRestoreDone by remember(homeThreadId) { mutableStateOf(false) }
     // v3.2.40 (Scope I/I2): the thread's scroll position belongs to
     // the user. It is captured per thread into the process-level
     // ChatScrollStore; opening or returning to a thread restores its
@@ -1680,7 +1700,17 @@ internal fun ChatHomeScreen(
     // count / sending change — including a reply finishing while the
     // user was reading up-list, and every return to this screen.
     val homeScrollKey = "home:$homeThreadId"
-    LaunchedEffect(threadListState, homeScrollKey) {
+    // v3.2.43 (D1): saving starts only AFTER this thread's restore
+    // pass has run (homeScrollRestoreDone). snapshotFlow emits the
+    // list's current position the moment collection starts; on a
+    // thread switch that first emission used to be the PREVIOUS
+    // thread's position — written under the new thread's key,
+    // restored on the next return, and clamped by the list onto
+    // the oldest message (the visual top). Gating the save on the
+    // restore makes that write impossible: by the time saving
+    // starts, the state holds this thread's own position.
+    LaunchedEffect(threadListState, homeScrollKey, homeScrollRestoreDone) {
+        if (!homeScrollRestoreDone) return@LaunchedEffect
         snapshotFlow {
             threadListState.firstVisibleItemIndex to threadListState.firstVisibleItemScrollOffset
         }.collect { (index, offset) ->
@@ -1688,7 +1718,13 @@ internal fun ChatHomeScreen(
         }
     }
     LaunchedEffect(homeThreadId) {
-        val savedScroll = ChatScrollStore.get(homeScrollKey)
+        // v3.2.43 (D1): the restore read is range-validated
+        // (ChatScrollStore.validatedPosition) — a saved index that
+        // does not exist in THIS thread is untrustworthy and is
+        // dropped instead of being clamped onto the oldest message.
+        // Untrustworthy or absent → land on the NEWEST (index 0).
+        val homeItemCount = homeMessages.size + (if (homeSending) 1 else 0)
+        val savedScroll = ChatScrollStore.validatedPosition(homeScrollKey, homeItemCount)
         if (savedScroll != null && (savedScroll.first > 0 || savedScroll.second > 0)) {
             threadListState.scrollToItem(savedScroll.first, savedScroll.second)
         } else if (homeMessages.isNotEmpty()) {
@@ -1697,9 +1733,20 @@ internal fun ChatHomeScreen(
             // a state carried over from another thread.
             threadListState.scrollToItem(ScrollFollowGate.NEWEST_INDEX)
         }
+        homeScrollRestoreDone = true
     }
-    var lastHomeMessageCount by rememberSaveable { mutableStateOf(0) }
-    LaunchedEffect(homeMessages.size, homeSending) {
+    // v3.2.43 (D2): own-send is detected by the newest message's
+    // IDENTITY, per thread — not by a message count. The v3.2.42
+    // count comparison read an unkeyed rememberSaveable counter
+    // that leaked across threads: after a longer thread, the stored
+    // count stayed >= this thread's size, own-send silently never
+    // registered, and nothing took the user back to his message
+    // (the "send, and the chat stays at the top" report). An id
+    // cannot go stale that way; the first observation of a thread
+    // only initializes the tracker, so re-entering a thread never
+    // fires a follow — the restore pass above owns that landing.
+    var lastNewestHomeMessageId by rememberSaveable(homeThreadId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(homeMessages.lastOrNull()?.id, homeSending) {
         if (hasThread) {
             // v3.2.42: the list is REVERSED (newest = index 0) and
             // anchors itself at the newest message — when the user
@@ -1707,20 +1754,24 @@ internal fun ChatHomeScreen(
             // all. This effect now has exactly one live job left:
             // the user's OWN send while he is scrolled up reading —
             // the gate still decides (never mid-gesture, never
-            // under a sheet), and the target is index 0.
-            val ownSend = homeMessages.size > lastHomeMessageCount &&
-                homeMessages.lastOrNull()?.fromUser == true
-            lastHomeMessageCount = homeMessages.size
-            val follow = ScrollFollowGate.shouldFollow(
-                ownSend = ownSend,
-                atBottom = ScrollFollowGate.isParkedAtNewest(threadListState.canScrollBackward),
-                userScrollInProgress = threadListState.isScrollInProgress,
-                userScrolledUp = false,
-                overlayOpen = sheetOpen || workSheetOpen || agentSheetOpen ||
-                    modelPickerOpen || viewingPasted != null || viewingDoc != null,
-            )
-            if (follow) {
-                threadListState.animateScrollToItem(ScrollFollowGate.NEWEST_INDEX)
+            // under a sheet), and the landing is the D4 glide.
+            val newest = homeMessages.lastOrNull()
+            val previousNewestId = lastNewestHomeMessageId
+            val ownSend = newest != null && previousNewestId != null &&
+                newest.id != previousNewestId && newest.fromUser
+            if (newest != null) lastNewestHomeMessageId = newest.id
+            if (previousNewestId != null) {
+                val follow = ScrollFollowGate.shouldFollow(
+                    ownSend = ownSend,
+                    atBottom = ScrollFollowGate.isParkedAtNewest(threadListState.canScrollBackward),
+                    userScrollInProgress = threadListState.isScrollInProgress,
+                    userScrolledUp = false,
+                    overlayOpen = sheetOpen || workSheetOpen || agentSheetOpen ||
+                        modelPickerOpen || viewingPasted != null || viewingDoc != null,
+                )
+                if (follow) {
+                    threadListState.glideToNewest()
+                }
             }
         }
     }
@@ -1863,21 +1914,20 @@ internal fun ChatHomeScreen(
             }
             // v3.2.40 (Scope H): floating scroll-to-bottom arrow for
             // the home thread — same rule and behaviour as Work chat.
-            // v3.2.42: the reversed-list form of the rule — the items
-            // between the viewport and the newest message are the
-            // ones below the first visible index; one tap animates
-            // to index 0, the newest message at the visual bottom.
-            val homeLayoutInfo = threadListState.layoutInfo
+            // v3.2.43 (D3): the arrow appears as soon as the user
+            // has scrolled away from the newest even a little (the
+            // newest message partially out of view is enough) —
+            // shouldShowScrollToNewest is the shared rule. One tap
+            // travels back with the D4 glide (ScrollGlide): swift
+            // and smooth, landing exactly on the newest message.
             ScrollToBottomButton(
-                visible = isFarFromNewest(
+                visible = shouldShowScrollToNewest(
                     firstVisibleIndex = threadListState.firstVisibleItemIndex,
-                    visibleCount = homeLayoutInfo.visibleItemsInfo.size,
+                    firstVisibleOffsetPx = threadListState.firstVisibleItemScrollOffset,
                 ),
                 onClick = {
                     scope.launch {
-                        if (threadListState.layoutInfo.totalItemsCount > 0) {
-                            threadListState.animateScrollToItem(ScrollFollowGate.NEWEST_INDEX)
-                        }
+                        threadListState.glideToNewest()
                     }
                 },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
