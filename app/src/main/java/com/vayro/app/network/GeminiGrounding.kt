@@ -45,7 +45,7 @@ class GeminiGrounding {
             setRequestProperty("x-goog-api-key", apiKey)
         }
         try {
-            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader(Charsets.UTF_8)?.use { reader ->
