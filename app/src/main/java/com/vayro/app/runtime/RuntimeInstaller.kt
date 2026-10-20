@@ -526,9 +526,6 @@ class RuntimeInstaller(private val context: Context) {
         val claude = async(Dispatchers.IO) {
             runCatching { JSONObject(fetchText("https://registry.npmjs.org/@anthropic-ai/claude-code/latest")).getString("version") }.getOrNull()
         }
-        val deepseek = async(Dispatchers.IO) {
-            runCatching { JSONObject(fetchText("https://registry.npmjs.org/@deepseek-ai/dsh/latest")).getString("version") }.getOrNull()
-        }
         val antigravity = async(Dispatchers.IO) {
             runCatching { fetchAgyManifest().getString("version") }.getOrNull()
         }
@@ -563,7 +560,9 @@ class RuntimeInstaller(private val context: Context) {
 
         buildMap {
             claude.await()?.let { put("claude", it) }
-            deepseek.await()?.let { put("deepseek", it) }
+            // DeepSeek Harness is pinned to this build's verified release:
+            // its "latest" is the pin, never npm latest (see updateDsh).
+            put("deepseek", DSH_VERSION)
             antigravity.await()?.let { put("antigravity", it) }
             codex.await()?.let { put("codex", it) }
             core.await()?.let { put("core", it) }
@@ -783,12 +782,13 @@ class RuntimeInstaller(private val context: Context) {
             }
         }
         installed[com.vayro.app.model.AgentKind.DEEPSEEK_HARNESS]?.let { current ->
-            runCatching {
-                JSONObject(fetchText("https://registry.npmjs.org/@deepseek-ai/dsh/latest")).getString("version")
-            }.onSuccess { latest ->
-                if (isVersionNewer(latest, current)) updates[com.vayro.app.model.AgentKind.DEEPSEEK_HARNESS] = AgentUpdateInfo(current, latest)
-            }.onFailure {
-                failed += com.vayro.app.model.AgentKind.DEEPSEEK_HARNESS
+            // DSH is pinned to this build's verified release (see updateDsh):
+            // the only "update" ever offered is a restore of the pinned
+            // bundle when the installed tree differs from it. npm latest is
+            // deliberately NOT consulted — a newer upstream release is not
+            // runnable by this build until a Kodex update re-pins it.
+            if (current != DSH_VERSION) {
+                updates[com.vayro.app.model.AgentKind.DEEPSEEK_HARNESS] = AgentUpdateInfo(current, DSH_VERSION)
             }
         }
         installed[com.vayro.app.model.AgentKind.ANTIGRAVITY]?.let { current ->
@@ -926,29 +926,23 @@ class RuntimeInstaller(private val context: Context) {
         expectedVersion: String,
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
-        val latest = JSONObject(fetchText("https://registry.npmjs.org/@deepseek-ai/dsh/latest")).getString("version")
-        check(latest == expectedVersion) { "A newer DeepSeek Harness release appeared. Check again before updating." }
-        val quotedVersion = latest.replace(Regex("[^0-9A-Za-z.+-]"), "")
-        check(quotedVersion == latest) { "Invalid DeepSeek Harness version" }
-        runGuestCommand(
-            proot = runtime.proot,
-            command = "set -e; next=/usr/local/lib/dsh.updating; old=/usr/local/lib/dsh.previous; " +
-                "rm -rf \"${'$'}next\" \"${'$'}old\"; mkdir -p \"${'$'}next\"; " +
-                "cd \"${'$'}next\"; npm init -y >/dev/null; " +
-                "npm install --omit=dev --no-audit --no-fund @deepseek-ai/dsh@$quotedVersion; " +
-                "if [ -d /usr/local/lib/dsh ]; then mv /usr/local/lib/dsh \"${'$'}old\"; fi; " +
-                "if mv \"${'$'}next\" /usr/local/lib/dsh; then rm -rf \"${'$'}old\"; " +
-                "else mv \"${'$'}old\" /usr/local/lib/dsh; exit 1; fi",
-            displayCommand = "npm install @deepseek-ai/dsh@$quotedVersion",
-            fraction = 0.55f,
-            timeoutMs = 20 * 60 * 1_000L,
-            onProgress = onProgress,
-            failureMessage = "DeepSeek Harness update failed; the installed version was preserved",
-        )
-        dshMarker.writeText(latest)
-        dshAndroidCompatibilityMarker.delete()
-        ensureDshAndroidCompatibility()
-        verifyGuest(runtime.proot, "/usr/local/bin/dsh --profile headless --help", "DeepSeek Harness update verification failed")
+        // DeepSeek Harness is PINNED to the release this Kodex build is
+        // verified against: the Android compatibility patch rewrites two
+        // exact source files of that release, and the bridge's SDK protocol
+        // is verified against it. "Updating" the harness therefore means
+        // (re)installing the pinned bundle — never chasing npm latest.
+        // (Field failure this prevents: npm latest moved to a refactored
+        // release whose sources no longer match the patch; the old code
+        // installed it, rewrote the version marker, and only then failed
+        // the compatibility check — bricking every Work session with no
+        // update left to offer, because the marker already claimed the
+        // newest release.)
+        check(expectedVersion == DSH_VERSION) {
+            "DeepSeek Harness $expectedVersion is not supported by this Kodex build. " +
+                "This build uses DeepSeek Harness $DSH_VERSION; harness updates arrive with Kodex app updates. " +
+                "The installed version was kept."
+        }
+        reinstallPinnedDsh(runtime.proot, 0.05f, 0.95f, onProgress)
     }
 
     private suspend fun updateCodex(
@@ -1182,7 +1176,15 @@ class RuntimeInstaller(private val context: Context) {
         onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
         if (isAgentInstalled(com.vayro.app.model.AgentKind.DEEPSEEK_HARNESS)) {
-            ensureDshAndroidCompatibility()
+            if (dshCompatibilityAssessment().isReady(DSH_VERSION)) {
+                ensureDshAndroidCompatibility()
+            } else {
+                // A tree is installed but it is not the pinned release this
+                // build is verified with (e.g. an npm-latest install whose
+                // sources the Android patch cannot verify). Restore the
+                // pinned bundle instead of failing every session.
+                reinstallPinnedDsh(proot, fraction, 0.995f, onProgress)
+            }
             return
         }
         installRuntimeOverlay(
@@ -1253,45 +1255,73 @@ class RuntimeInstaller(private val context: Context) {
      */
     fun ensureDshAndroidCompatibility() {
         if (!isAgentInstalled(com.vayro.app.model.AgentKind.DEEPSEEK_HARNESS)) return
-        val persistence = File(
-            rootfs,
-            "usr/local/lib/dsh/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js",
-        )
-        val localFs = File(
-            rootfs,
-            "usr/local/lib/dsh/node_modules/@deepseek-ai/dsh-fs-local/lib/index.js",
-        )
-        patchDshHardLinkPublication(
-            file = persistence,
-            importBefore = "import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from \"node:fs/promises\";",
-            importAfter = "import { copyFile, link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from \"node:fs/promises\";",
-            callBefore = "await link(tmp, finalPath);",
-            callAfter = "await copyFile(tmp, finalPath, 1);",
-        )
-        patchDshHardLinkPublication(
-            file = localFs,
-            importBefore = "import { chmod, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat } from \"node:fs/promises\";",
-            importAfter = "import { chmod, copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat } from \"node:fs/promises\";",
-            callBefore = "await linkFile(tempPath, absolutePath);",
-            callAfter = "await copyFile(tempPath, absolutePath, 1);",
-        )
+        patchDshHardLinkPublication(DshCompatibility.PERSISTENCE_SPEC)
+        patchDshHardLinkPublication(DshCompatibility.FS_LOCAL_SPEC)
         dshAndroidCompatibilityMarker.writeText(DSH_ANDROID_COMPATIBILITY_VERSION)
     }
 
-    private fun patchDshHardLinkPublication(
-        file: File,
-        importBefore: String,
-        importAfter: String,
-        callBefore: String,
-        callAfter: String,
+    /**
+     * Classifies the installed harness tree against the pinned release this
+     * build is verified with (see [DshCompatibility]). Pure file inspection:
+     * no guest process, no network — safe to run before every session launch.
+     */
+    fun dshCompatibilityAssessment(): DshCompatibilityAssessment = DshCompatibility.assess(
+        installedVersion = dshMarker.readTextOrNull(),
+        persistenceSource = File(rootfs, DshCompatibility.PERSISTENCE_SPEC.guestPath).readTextOrNull(),
+        fsLocalSource = File(rootfs, DshCompatibility.FS_LOCAL_SPEC.guestPath).readTextOrNull(),
+    )
+
+    /**
+     * Restores the pinned DeepSeek Harness from its verified bundle,
+     * replacing whatever tree is currently installed (a foreign npm install,
+     * a partial update, a damaged tree). The bundle carries its own version
+     * marker, so a successful repair always lands on the pinned release with
+     * the Android compatibility patch applied. DSH home data (settings,
+     * sessions) lives outside the program tree and is preserved.
+     */
+    suspend fun repairDsh(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
+        val runtime = installedRuntime()
+        reinstallPinnedDsh(runtime.proot, 0.05f, 0.95f, onProgress)
+    }
+
+    private suspend fun reinstallPinnedDsh(
+        proot: File,
+        from: Float,
+        to: Float,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
     ) {
+        // Wipe the old program tree first: a bundle overlay extract alone
+        // would leave foreign files behind (e.g. packages the pinned
+        // release does not ship).
+        File(rootfs, "usr/local/lib/dsh").deleteRecursively()
+        File(rootfs, "usr/local/lib/dsh.updating").deleteRecursively()
+        File(rootfs, "usr/local/lib/dsh.previous").deleteRecursively()
+        installRuntimeOverlay(
+            bundle = DSH_BUNDLE,
+            message = "Restoring DeepSeek Harness $DSH_VERSION",
+            from = from,
+            to = to,
+            onProgress = onProgress,
+        )
+        ensureDshAndroidCompatibility()
+        verifyGuest(proot, "/usr/local/bin/dsh --profile headless --help", "DeepSeek Harness repair verification failed")
+        require(isAgentInstalled(com.vayro.app.model.AgentKind.DEEPSEEK_HARNESS)) {
+            "The DeepSeek Harness repair is incomplete"
+        }
+    }
+
+    private fun patchDshHardLinkPublication(spec: DshFilePatchSpec) {
+        val file = File(rootfs, spec.guestPath)
         check(file.isFile) { "DeepSeek Harness compatibility file is missing: ${file.name}" }
         var source = file.readText()
-        if (callAfter in source && importAfter in source) return
-        check(callBefore in source && importBefore in source) {
-            "DeepSeek Harness $DSH_VERSION is not compatible with this Kodex build"
+        when (DshCompatibility.patchStateOf(source, spec)) {
+            DshPatchState.PATCHED -> return
+            DshPatchState.PATCHABLE -> Unit
+            else -> throw IllegalStateException(
+                "DeepSeek Harness $DSH_VERSION is not compatible with this Kodex build"
+            )
         }
-        source = source.replace(importBefore, importAfter).replace(callBefore, callAfter)
+        source = source.replace(spec.importBefore, spec.importAfter).replace(spec.callBefore, spec.callAfter)
         file.writeText(source)
     }
 

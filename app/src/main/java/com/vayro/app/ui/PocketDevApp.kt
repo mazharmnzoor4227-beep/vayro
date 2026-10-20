@@ -7855,6 +7855,9 @@ private fun ChatTab(
                                 .fillMaxWidth()
                                 .padding(horizontal = 4.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.Bottom,
+                            // v3.2.47: fixed 8dp gaps so the round
+                            // controls never touch or visually merge.
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             if (!controlsVisible) {
                                 ComposerCircleButton(
@@ -7966,6 +7969,10 @@ private fun ChatTab(
                                     .fillMaxWidth()
                                     .padding(horizontal = 4.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
+                                // v3.2.47: 8dp gaps between + circle, pill,
+                                // mic circle and send circle (they touched
+                                // and merged into one blob before).
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 ComposerCircleButton(
                                     contentDescription = if (toolsOpen) "Hide tools" else "Show tools",

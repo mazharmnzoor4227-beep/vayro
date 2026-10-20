@@ -5793,13 +5793,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val finishedAt = System.currentTimeMillis()
                         sessionRecoveryStates.remove(event.sessionId)
                         val scratchpad = deriveScratchpadItems(current.activeRoadmap, emptyList(), false)
-                        attachTaskDuration(
+                        val stoppedState = attachTaskDuration(
                             finishWorkSegment(
                                 appendWorkItem(current, ActivityItem("Task stopped", event.reason)),
                                 finishedAt,
                             ),
                             finishedAt,
-                        ).copy(
+                        )
+                        // A harness-repair failure carries its full plain
+                        // explanation as the reason: show it as a chat
+                        // message too, so the turn never ends on a bare
+                        // "Task stopped" whose cause hides in Activity.
+                        val stoppedWithReason = if (
+                            event.reason.startsWith(com.vayro.app.runtime.DshCompatibility.REPAIR_FAILED_PREFIX)
+                        ) {
+                            stoppedState.copy(
+                                messages = trimMessages(
+                                    stoppedState.messages + ChatMessage(fromUser = false, text = event.reason),
+                                ),
+                            )
+                        } else {
+                            stoppedState
+                        }
+                        stoppedWithReason.copy(
                             isRunning = false,
                             streamingMessageId = null,
                             activeSessionId = null,

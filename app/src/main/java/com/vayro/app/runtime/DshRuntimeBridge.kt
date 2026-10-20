@@ -87,6 +87,43 @@ class DshRuntimeBridge(
             )
             return@withContext sessionId
         }
+        // Compatibility gate — runs BEFORE the launch approval, so the user
+        // is never asked to approve a run that cannot start. The installed
+        // harness tree must be the pinned release this build's Android patch
+        // and SDK protocol are verified against; a foreign or damaged tree
+        // (e.g. an npm-latest install) is restored from the pinned bundle
+        // automatically. Only a repair that still leaves the tree unready
+        // ends the turn, with one plain message in chat.
+        val preApprovalAssessment = installer.dshCompatibilityAssessment()
+        if (DshCompatibility.decideLaunch(preApprovalAssessment, RuntimeInstaller.DSH_VERSION) ==
+            DshLaunchStep.REPAIR_THEN_APPROVAL
+        ) {
+            pushForegroundProgress("Repairing DeepSeek Harness…")
+            runCatching {
+                installer.repairDsh { progress -> pushForegroundProgress(progress.message) }
+            }.onFailure { error ->
+                Log.e("DshBridge", "DeepSeek Harness repair failed", error)
+            }
+            val repairedAssessment = installer.dshCompatibilityAssessment()
+            if (!repairedAssessment.isReady(RuntimeInstaller.DSH_VERSION)) {
+                Log.e(
+                    "DshBridge",
+                    "DeepSeek Harness still not ready after repair: " +
+                        repairedAssessment.technicalDetail(RuntimeInstaller.DSH_VERSION),
+                )
+                eventBus.emit(
+                    RuntimeEvent.SessionFailed(
+                        sessionId,
+                        DshCompatibility.repairFailedMessage(
+                            repairedAssessment.installedVersion,
+                            RuntimeInstaller.DSH_VERSION,
+                        ),
+                    ),
+                )
+                return@withContext sessionId
+            }
+        }
+
         val launchAcknowledged = launchGate.authorizeLaunch(
             agentLabel = "DeepSeek Harness",
             sessionId = sessionId,

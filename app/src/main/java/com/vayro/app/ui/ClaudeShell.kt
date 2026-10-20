@@ -2245,7 +2245,12 @@ internal fun ChatHomeScreen(
                                 )
                             }
                         }
-                        Row(verticalAlignment = Alignment.Bottom) {
+                        Row(
+                            verticalAlignment = Alignment.Bottom,
+                            // v3.2.47: fixed 8dp gaps so the round
+                            // controls never touch or visually merge.
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             if (!controlsVisible) {
                                 ComposerCircleButton(contentDescription = "Add to chat", onClick = { sheetOpen = true }) {
                                     Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2333,7 +2338,13 @@ internal fun ChatHomeScreen(
                             enter = fadeIn(),
                             exit = fadeOut(),
                         ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            // v3.2.47: 8dp gaps between + circle, pill,
+                            // mic circle and send circle (they touched
+                            // and merged into one blob before).
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             ComposerCircleButton(contentDescription = "Add to chat", onClick = { sheetOpen = true }) {
                                 Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
