@@ -3932,26 +3932,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         val mimeType = resolver.getType(uri).orEmpty().ifBlank { "application/octet-stream" }
-        val extension = displayName.substringAfterLast('.', "").lowercase()
-        val supportedTextExtensions = setOf(
-            "txt", "md", "markdown", "json", "jsonl", "csv", "tsv", "xml", "yaml", "yml", "log",
-            "kt", "kts", "java", "py", "js", "mjs", "cjs", "ts", "tsx", "jsx", "html", "htm",
-            "css", "scss", "sass", "less", "c", "cc", "cpp", "h", "hpp", "sh", "bash", "zsh",
-            "gradle", "properties", "toml", "ini", "conf", "sql", "pdf", "out", "err", "env",
-        )
-        val isPdf = mimeType == "application/pdf" || extension == "pdf"
-        // v3.2.40 (Scope G): ZIP archives and videos are attachable —
-        // intake (extraction / frame grabs) runs right after the copy.
-        val isZip = mimeType == "application/zip" || mimeType == "application/x-zip-compressed" || extension == "zip"
-        val isVideo = mimeType.startsWith("video/")
-        val isNoExtension = !displayName.contains('.') || extension.isBlank()
-        val isLogOrText = mimeType.startsWith("text/") || extension in supportedTextExtensions ||
-            isNoExtension || mimeType == "application/octet-stream" || mimeType.contains("log") || extension.contains("log")
-        val supported = mimeType.startsWith("image/") || isPdf || isZip || isVideo ||
-            mimeType.startsWith("text/") || mimeType == "application/json" || mimeType == "application/xml" ||
-            mimeType.endsWith("+json") || mimeType.endsWith("+xml") || isLogOrText
-        require(supported) { "Only images, videos, PDF documents, ZIP archives, and text or log files are supported" }
-        require(declaredSize <= MAX_ATTACHMENT_BYTES || declaredSize < 0) { "$displayName is larger than 25 MB" }
+        // v3.2.53: EVERY file type is attachable (APKs included) — the
+        // file lands in the workspace as-is. Intake (PDF text, ZIP
+        // extraction, video frames) classifies downstream by mime/name
+        // and simply skips types it does not know, so unknown/binary
+        // files flow through as plain attachments.
+        require(declaredSize <= MAX_ATTACHMENT_BYTES || declaredSize < 0) { "$displayName is larger than 200 MB" }
         val safeName = sanitizeAttachmentName(displayName)
         val root = projectWorkspaceRoot(project).canonicalFile
         val folder = File(root, "attachments/$chatId").apply { mkdirs() }.canonicalFile
@@ -3970,7 +3956,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         copied += count
-                        require(copied <= MAX_ATTACHMENT_BYTES) { "$displayName is larger than 25 MB" }
+                        require(copied <= MAX_ATTACHMENT_BYTES) { "$displayName is larger than 200 MB" }
                         output.write(buffer, 0, count)
                     }
                 }
@@ -7984,7 +7970,7 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
         private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5
         private const val MAX_PROCESS_OUTPUT_BYTES = 512 * 1024
-        private const val MAX_ATTACHMENT_BYTES = 25L * 1024L * 1024L
+        private const val MAX_ATTACHMENT_BYTES = 200L * 1024L * 1024L
         /** v3.2.41 (Scope 3): a home PDF/ZIP is read in memory; same 25 MB ceiling as a workspace attachment. */
         private const val MAX_HOME_DOCUMENT_BYTES = 25L * 1024L * 1024L
         private const val MAX_EDITABLE_FILE_CHARS = 512_000
