@@ -8,7 +8,21 @@ import com.vayro.app.agent.team.model.TeamRoleConfig
 import com.vayro.app.agent.team.model.TeamTask
 import com.vayro.app.core.result.OperationResult
 import com.vayro.app.model.AgentKind
+import com.vayro.app.model.ProjectKind
 import java.io.File
+
+/**
+ * Identity of an existing app project a team run is bound to. When present,
+ * role agents execute inside that project's real workspace (its id/slug are
+ * handed to the runtime bridge exactly like a normal project session);
+ * when absent, the run works in a synthetic per-goal team workspace.
+ */
+data class TeamProjectBinding(
+    val projectId: String,
+    val projectSlug: String,
+    val projectName: String,
+    val projectKind: ProjectKind = ProjectKind.PROJECT,
+)
 
 /**
  * Context handed to a real per-role agent executor (Milestone 10).
@@ -20,12 +34,16 @@ import java.io.File
 data class TeamExecutionContext(
     /** Project directory the agent works in; null when the run has no project bound. */
     val projectDir: File?,
+    /** Existing project this run is bound to; null for a synthetic team workspace. */
+    val projectBinding: TeamProjectBinding? = null,
     /** The high-level goal this team run serves. */
     val goal: String,
     /** The role executing this task. */
     val role: TeamRole,
     /** Role configuration (permissions, agent kind, system prompt). */
     val roleConfig: TeamRoleConfig,
+    /** When the task runs as a user-created custom agent, its definition. */
+    val customAgent: com.vayro.app.agent.team.model.CustomTeamAgent? = null,
     /** Coding-agent engine this role is wired to. */
     val agentKind: AgentKind,
     /** Completed dependency outputs, keyed by task id, in dependency order. */

@@ -190,6 +190,7 @@ import com.vayro.app.ui.components.fetchWebPageText
 import com.vayro.app.ui.theme.AppFontStyle
 import com.vayro.app.ui.theme.AppThemeMode
 import com.vayro.app.ui.theme.KodexClay
+import com.vayro.app.ui.theme.PocketGreen
 import com.vayro.app.ui.theme.SourceSerifFontFamily
 import com.vayro.app.ui.voice.VoiceInputBar
 import com.vayro.app.ui.voice.VoiceRecognizer
@@ -238,7 +239,7 @@ internal fun SerifText(
     )
 }
 
-/** iOS-style pill switch, ON = Claude blue, as in the reference app. */
+/** iOS-style pill switch, ON = theme success green, as in the reference app. */
 @Composable
 internal fun ShellSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     Switch(
@@ -246,7 +247,7 @@ internal fun ShellSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
         onCheckedChange = onCheckedChange,
         colors = SwitchDefaults.colors(
             checkedThumbColor = Color.White,
-            checkedTrackColor = KodexClay,
+            checkedTrackColor = PocketGreen,
             checkedBorderColor = Color.Transparent,
             uncheckedThumbColor = Color.White,
             uncheckedTrackColor = MaterialTheme.colorScheme.outlineVariant,
@@ -382,7 +383,7 @@ internal fun ShellRadioPopup(
                                 icon,
                                 contentDescription = null,
                                 modifier = Modifier.size(20.dp),
-                                tint = if (selected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (selected) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(Modifier.width(12.dp))
                         }
@@ -390,7 +391,7 @@ internal fun ShellRadioPopup(
                             label,
                             fontSize = 15.sp,
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                            color = if (selected) KodexClay else MaterialTheme.colorScheme.onSurface,
+                            color = if (selected) PocketGreen else MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f),
                         )
                         if (selected) {
@@ -398,7 +399,7 @@ internal fun ShellRadioPopup(
                                 Icons.Outlined.Check,
                                 contentDescription = "Selected",
                                 modifier = Modifier.size(19.dp),
-                                tint = KodexClay,
+                                tint = PocketGreen,
                             )
                         }
                     }
@@ -669,7 +670,7 @@ internal fun SelectAgentSheet(
                         )
                     }
                     if (agent == selected) {
-                        Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = KodexClay, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Outlined.Check, contentDescription = "Selected", tint = PocketGreen, modifier = Modifier.size(20.dp))
                     }
                 }
             }
@@ -749,7 +750,7 @@ internal fun ProviderPickerRows(
                     )
                 }
                 if (choice.active) {
-                    Icon(Icons.Outlined.Check, contentDescription = "Active", tint = KodexClay, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Outlined.Check, contentDescription = "Active", tint = PocketGreen, modifier = Modifier.size(20.dp))
                 }
                 if (fetchModels != null) {
                     IconButton(onClick = {
@@ -818,7 +819,7 @@ internal fun ProviderPickerRows(
                                 modifier = Modifier.weight(1f),
                             )
                             if (model == choice.model) {
-                                Icon(Icons.Outlined.Check, contentDescription = "Current model", tint = KodexClay, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Outlined.Check, contentDescription = "Current model", tint = PocketGreen, modifier = Modifier.size(16.dp))
                             }
                         }
                     }
@@ -3902,7 +3903,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                                 color = if (isSelected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
                                 border = BorderStroke(
                                     if (isSelected) 2.dp else 1.dp,
-                                    if (isSelected) KodexClay else MaterialTheme.colorScheme.outlineVariant,
+                                    if (isSelected) PocketGreen else MaterialTheme.colorScheme.outlineVariant,
                                 ),
                                 shadowElevation = if (isSelected) 4.dp else 1.dp,
                                 modifier = Modifier
@@ -3922,7 +3923,7 @@ internal fun VoiceSettingsScreen(onBack: () -> Unit) {
                                             Icons.Outlined.PlayArrow,
                                             contentDescription = "Preview",
                                             modifier = Modifier.size(17.dp),
-                                            tint = if (isSelected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            tint = if (isSelected) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                     Spacer(Modifier.weight(1f))
@@ -4116,7 +4117,7 @@ private fun LiveVoicePickerDialog(
                                     name,
                                     fontSize = 15.sp,
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                    color = if (isSelected) KodexClay else MaterialTheme.colorScheme.onSurface,
+                                    color = if (isSelected) PocketGreen else MaterialTheme.colorScheme.onSurface,
                                 )
                                 Text(
                                     style,
@@ -4128,7 +4129,7 @@ private fun LiveVoicePickerDialog(
                                 Icon(
                                     Icons.Filled.Check,
                                     contentDescription = "Selected",
-                                    tint = KodexClay,
+                                    tint = PocketGreen,
                                     modifier = Modifier.size(19.dp),
                                 )
                             }
@@ -4152,7 +4153,7 @@ private fun ElevenLabsSelectionCard(voiceIdMasked: String, selected: Boolean, on
         color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
         border = BorderStroke(
             if (selected) 2.dp else 1.dp,
-            if (selected) KodexClay else MaterialTheme.colorScheme.outlineVariant,
+            if (selected) PocketGreen else MaterialTheme.colorScheme.outlineVariant,
         ),
         shadowElevation = if (selected) 4.dp else 1.dp,
         modifier = Modifier
@@ -4172,7 +4173,7 @@ private fun ElevenLabsSelectionCard(voiceIdMasked: String, selected: Boolean, on
                     Icons.Outlined.PlayArrow,
                     contentDescription = null,
                     modifier = Modifier.size(17.dp),
-                    tint = if (selected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = if (selected) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Spacer(Modifier.weight(1f))
@@ -4186,7 +4187,7 @@ private fun ElevenLabsSelectionCard(voiceIdMasked: String, selected: Boolean, on
             Text(
                 "Connected",
                 fontSize = 11.5.sp,
-                color = if (selected) KodexClay else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (selected) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

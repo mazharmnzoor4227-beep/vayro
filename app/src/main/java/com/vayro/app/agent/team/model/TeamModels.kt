@@ -122,6 +122,8 @@ data class TeamTask(
     val title: String,
     val description: String,
     val assignedRole: TeamRole,
+    /** When set, this task runs as a user-created custom agent specializing [assignedRole]. */
+    val assignedCustomAgentId: String? = null,
     val priority: TeamTaskPriority = TeamTaskPriority.MEDIUM,
     val status: TeamTaskStatus = TeamTaskStatus.PENDING,
     val dependencies: List<String> = emptyList(),

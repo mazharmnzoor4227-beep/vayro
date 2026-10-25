@@ -80,6 +80,54 @@ class EditorCoordinator(
         openFileByPath(entry.path)
     }
 
+    /**
+     * Normalizes a requested editor path to the workspace-relative path of
+     * a real file, or null when no such file exists.
+     *
+     * Chat links may carry a GitHub-style line fragment (path#L12-L34)
+     * and may repeat the workspace folder name itself
+     * (beauty-salon/resources/... when the workspace root already IS that
+     * folder); both used to reach the disk verbatim, fail with ENOENT,
+     * and then have the failure text loaded AS the document content.
+     * Absolute paths from in-editor navigation collapse to
+     * workspace-relative paths when they sit inside the workspace.
+     * Callers must fail cleanly on null instead of opening anything.
+     */
+    private fun resolveWorkspaceFile(root: File, rawPath: String): String? {
+        val withoutFragment = rawPath.substringBefore('#').trim()
+        if (withoutFragment.isBlank()) return null
+        val rootCanon = root.canonicalFile
+        val candidates = mutableListOf<String>()
+        val absolute = File(withoutFragment)
+        if (absolute.isAbsolute) {
+            val absCanon = absolute.canonicalFile
+            if (!absCanon.toPath().startsWith(rootCanon.toPath())) return null
+            candidates += absCanon.relativeTo(rootCanon).invariantSeparatorsPath
+        } else {
+            candidates += withoutFragment
+            // Agent links often repeat the workspace folder name itself.
+            val rootName = rootCanon.name
+            if (withoutFragment.startsWith("$rootName/")) {
+                candidates += withoutFragment.removePrefix("$rootName/")
+            }
+        }
+        for (candidate in candidates) {
+            if (candidate.isBlank()) continue
+            val file = File(rootCanon, candidate).canonicalFile
+            if (file.toPath().startsWith(rootCanon.toPath()) && file.isFile) {
+                return file.relativeTo(rootCanon).invariantSeparatorsPath
+            }
+        }
+        return null
+    }
+
+    /**
+     * Public for the session-restore loader in `MainViewModel`, which must
+     * apply the same normalization to persisted tab paths.
+     */
+    fun resolveEditorPath(project: Project, rawPath: String): String? =
+        resolveWorkspaceFile(workspaceRootFor(project), rawPath)
+
     fun openFileByPath(path: String) {
         // Never fail silently: a tap with no active project used to do nothing
         // at all, which looks exactly like "file does not open".
@@ -88,21 +136,29 @@ class EditorCoordinator(
             host.updateState { it.copy(toastMessage = "No project open. Open a project first, then tap the file again.") }
             return
         }
+        // Normalize before creating any tab: a raw chat link may carry a
+        // #L line fragment or repeat the workspace folder name, and a
+        // missing file must never become a tab showing an error dump.
+        val cleanPath = resolveWorkspaceFile(workspaceRootFor(project), path)
+        if (cleanPath == null) {
+            host.updateState { it.copy(toastMessage = "File not found: ${path.substringBefore('#').substringAfterLast('/')}") }
+            return
+        }
         val currentTabs = host.state().openEditorTabs
-        val updatedTabs = if (path in currentTabs) currentTabs else currentTabs + path
+        val updatedTabs = if (cleanPath in currentTabs) currentTabs else currentTabs + cleanPath
         preferences.setOpenEditorTabs(project.id, updatedTabs)
-        scheduleSessionPersist(project.id, updatedTabs, path)
+        scheduleSessionPersist(project.id, updatedTabs, cleanPath)
         // Milestone 2: a dirty buffer restores unsaved work immediately —
         // no disk read, no lost edits.
-        val dirtyBuffer = bufferManager.getBuffer(path)?.takeIf { it.isDirty }
+        val dirtyBuffer = bufferManager.getBuffer(cleanPath)?.takeIf { it.isDirty }
         if (dirtyBuffer != null) {
             host.updateState {
                 it.copy(
                     openEditorTabs = updatedTabs,
-                    openedFilePath = path,
+                    openedFilePath = cleanPath,
                     openedFileContent = dirtyBuffer.currentContent,
                     fileContentLoading = false,
-                    editorViewStates = it.editorViewStates + (path to dirtyBuffer.viewState),
+                    editorViewStates = it.editorViewStates + (cleanPath to dirtyBuffer.viewState),
                     editorDirtyPaths = bufferManager.dirtyBuffers().map { b -> b.path }.toSet(),
                 )
             }
@@ -111,25 +167,42 @@ class EditorCoordinator(
         host.updateState {
             it.copy(
                 openEditorTabs = updatedTabs,
-                openedFilePath = path,
+                openedFilePath = cleanPath,
                 openedFileContent = null,
                 fileContentLoading = true,
             )
         }
-        loadFileContent(project, path)
+        loadFileContent(project, cleanPath)
     }
 
     fun selectEditorTab(path: String) {
         if (host.state().openedFilePath == path) return
         val project = host.state().activeProject ?: return
+        // A persisted tab may predate fragment stripping ("file#L12-L34")
+        // or point at a file that is gone: heal the id, or drop the tab
+        // with an explanation, instead of loading an error dump.
+        val cleanPath = resolveWorkspaceFile(workspaceRootFor(project), path)
+        if (cleanPath == null) {
+            if (path in host.state().openEditorTabs) closeEditorTab(path)
+            host.updateState { it.copy(toastMessage = "File not found: ${path.substringBefore('#').substringAfterLast('/')}") }
+            return
+        }
+        if (host.state().openedFilePath == cleanPath) return
+        if (cleanPath != path && path in host.state().openEditorTabs) {
+            val tabs = host.state().openEditorTabs
+            val healed = if (cleanPath in tabs) tabs.filter { it != path } else tabs.map { if (it == path) cleanPath else it }
+            preferences.setOpenEditorTabs(project.id, healed)
+            scheduleSessionPersist(project.id, healed, cleanPath)
+            host.updateState { it.copy(openEditorTabs = healed) }
+        }
         host.updateState {
             it.copy(
-                openedFilePath = path,
+                openedFilePath = cleanPath,
                 openedFileContent = null,
                 fileContentLoading = true,
             )
         }
-        loadFileContent(project, path)
+        loadFileContent(project, cleanPath)
     }
 
     fun closeEditorTab(path: String) {
@@ -217,8 +290,33 @@ class EditorCoordinator(
 
     private fun loadFileContent(project: Project, path: String) {
         host.scope.launch {
-            val content = withContext(Dispatchers.IO) {
-                val file = File(workspaceRootFor(project), path)
+            // Resolve again: tab switches can hand in stale ids that
+            // openFileByPath never saw (e.g. persisted "file#L12-L34").
+            val cleanPath = resolveWorkspaceFile(workspaceRootFor(project), path)
+            if (cleanPath == null) {
+                // The file is gone: drop the phantom tab and explain.
+                // The failure text must never become document content —
+                // saving it would overwrite the real file with an error.
+                if (path in host.state().openEditorTabs) closeEditorTab(path)
+                host.updateState {
+                    it.copy(
+                        toastMessage = "File not found: ${path.substringBefore('#').substringAfterLast('/')}",
+                        openedFilePath = if (it.openedFilePath == path) null else it.openedFilePath,
+                        openedFileContent = if (it.openedFilePath == path) null else it.openedFileContent,
+                        fileContentLoading = if (it.openedFilePath == path) false else it.fileContentLoading,
+                    )
+                }
+                return@launch
+            }
+            if (cleanPath != path && path in host.state().openEditorTabs) {
+                val tabs = host.state().openEditorTabs
+                val healed = if (cleanPath in tabs) tabs.filter { it != path } else tabs.map { if (it == path) cleanPath else it }
+                preferences.setOpenEditorTabs(project.id, healed)
+                scheduleSessionPersist(project.id, healed, cleanPath)
+                host.updateState { it.copy(openEditorTabs = healed, openedFilePath = cleanPath) }
+            }
+            val result = withContext(Dispatchers.IO) {
+                val file = File(workspaceRootFor(project), cleanPath)
                 runCatching {
                     if (file.length() > 512_000L) {
                         file.inputStream().use { stream ->
@@ -229,25 +327,39 @@ class EditorCoordinator(
                     } else {
                         file.readText()
                     }
-                }.getOrElse { "Could not read file: ${it.message}" }
-            }
-            if (host.state().openedFilePath == path) {
-                // Milestone 2: register the buffer so edits are tracked.
-                // A dirty buffer always wins over a fresh disk read.
-                val existing = bufferManager.getBuffer(path)
-                val buffer = if (existing?.isDirty == true) {
-                    existing
-                } else {
-                    bufferManager.syncFromDisk(path, content)
-                    bufferManager.getBuffer(path) ?: bufferManager.openBuffer(path, content)
                 }
-                val effectiveContent = buffer.currentContent
+            }
+            result.onSuccess { content ->
+                if (host.state().openedFilePath == cleanPath) {
+                    // Milestone 2: register the buffer so edits are tracked.
+                    // A dirty buffer always wins over a fresh disk read.
+                    val existing = bufferManager.getBuffer(cleanPath)
+                    val buffer = if (existing?.isDirty == true) {
+                        existing
+                    } else {
+                        bufferManager.syncFromDisk(cleanPath, content)
+                        bufferManager.getBuffer(cleanPath) ?: bufferManager.openBuffer(cleanPath, content)
+                    }
+                    val effectiveContent = buffer.currentContent
+                    host.updateState {
+                        it.copy(
+                            openedFileContent = effectiveContent,
+                            fileContentLoading = false,
+                            editorViewStates = it.editorViewStates + (cleanPath to buffer.viewState),
+                            editorDirtyPaths = bufferManager.dirtyBuffers().map { b -> b.path }.toSet(),
+                        )
+                    }
+                }
+            }.onFailure {
+                // Vanished between resolve and read: drop the tab and
+                // explain, never load the failure text as content.
+                if (cleanPath in host.state().openEditorTabs) closeEditorTab(cleanPath)
                 host.updateState {
                     it.copy(
-                        openedFileContent = effectiveContent,
-                        fileContentLoading = false,
-                        editorViewStates = it.editorViewStates + (path to buffer.viewState),
-                        editorDirtyPaths = bufferManager.dirtyBuffers().map { b -> b.path }.toSet(),
+                        toastMessage = "Could not open ${cleanPath.substringAfterLast('/')}",
+                        openedFilePath = if (it.openedFilePath == cleanPath) null else it.openedFilePath,
+                        openedFileContent = if (it.openedFilePath == cleanPath) null else it.openedFileContent,
+                        fileContentLoading = if (it.openedFilePath == cleanPath) false else it.fileContentLoading,
                     )
                 }
             }

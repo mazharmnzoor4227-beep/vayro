@@ -384,8 +384,12 @@ class AntigravityRuntimeBridge(
         conversationHistory: List<ChatMessage>,
         provider: ProviderProfile,
         clientSessionId: String?,
+        chatId: String? = null,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = clientSessionId ?: UUID.randomUUID().toString()
+        // Conversation key for Chat grants: the same chat across task runs
+        // shares it, a new chat or another project never does.
+        val chatKey = com.vayro.app.security.chatGrantKey(projectSlug, chatId)
         val startedAt = System.currentTimeMillis()
         activeSessionId = sessionId
         userStopRequested = false
@@ -395,7 +399,7 @@ class AntigravityRuntimeBridge(
         eventBus.emit(RuntimeEvent.SessionStarted(sessionId))
         val apiConfig = geminiApiConfig()
         if (apiConfig != null) {
-            return@withContext startGeminiApiSession(sessionId, projectId, projectSlug, prompt, conversationHistory, apiConfig)
+            return@withContext startGeminiApiSession(sessionId, projectId, projectSlug, prompt, conversationHistory, apiConfig, chatKey)
         }
         if (!installer.isAgentInstalled(com.vayro.app.model.AgentKind.ANTIGRAVITY)) {
             emitFailure(sessionId, "Antigravity CLI is not installed. Open Settings → Coding agent to install it.")
@@ -415,6 +419,7 @@ class AntigravityRuntimeBridge(
             affectedPaths = listOf("/workspace/$projectSlug"),
             interactive = interactiveApprovals,
             emit = { eventBus.emit(it) },
+            chatId = chatKey,
         )
         if (!launchAcknowledged) {
             return@withContext sessionId
@@ -594,6 +599,7 @@ class AntigravityRuntimeBridge(
         prompt: String,
         conversationHistory: List<ChatMessage>,
         config: GeminiApiConfig,
+        chatKey: String? = null,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         userStopRequested = false
         foregroundResultPosted = false
@@ -617,6 +623,7 @@ class AntigravityRuntimeBridge(
             affectedPaths = listOf("/workspace/$projectSlug"),
             interactive = interactiveApprovals,
             emit = { eventBus.emit(it) },
+            chatId = chatKey,
         )
         if (!launchAcknowledged) {
             activeProcess = null
@@ -706,6 +713,10 @@ class AntigravityRuntimeBridge(
 
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) {
         launchGate.respondToApproval(request.approvalId, approved)
+    }
+
+    override suspend fun respondToApprovalWithLevel(request: ToolRequest, approved: Boolean, level: com.vayro.app.security.PermissionLevel) {
+        launchGate.respondToApproval(request.approvalId, approved, level)
     }
 
     override suspend fun stopSession(sessionId: String) {

@@ -219,7 +219,7 @@ object ReadAloudPlayer {
 
     /**
      * Applies the voice + pace picked on the Voice settings screen
-     * (ClaudeShell VoiceSettingsScreen, prefs "kodex_voice_settings").
+     * (KodexShell VoiceSettingsScreen, prefs "kodex_voice_settings").
      * Runs on every speak so a new choice takes effect immediately;
      * with nothing saved, the previous defaults apply.
      */

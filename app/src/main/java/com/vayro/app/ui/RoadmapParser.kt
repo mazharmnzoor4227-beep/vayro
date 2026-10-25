@@ -1,12 +1,26 @@
 package com.vayro.app.ui
 
 import com.vayro.app.model.ActiveRoadmap
+import com.vayro.app.model.ChatMessage
 import com.vayro.app.model.ExecutionMode
 import com.vayro.app.model.RoadmapStep
 import com.vayro.app.model.StepStatus
 import java.util.UUID
 
 object RoadmapParser {
+
+    /**
+     * Whether streamed text already carries a complete roadmap, even though the
+     * session that produced it has not finished yet. The roadmap's closing
+     * "Approve & Build" line is written last, so its presence means the full
+     * roadmap has arrived. Callers use this to allow a roadmap parse (and its
+     * Approve & Build / Add Note buttons) while the message is still streaming,
+     * instead of waiting for the session to finish, which can lag the visible
+     * text by minutes when the runtime takes time to close the session.
+     */
+    fun isRoadmapTextComplete(text: String): Boolean =
+        text.contains("Approve & Build", ignoreCase = true)
+
 
     private val CHECKLIST_REGEX = Regex(
         """^[\s>*-]*?(?:(\d+)\.\s*)?\[([ xX])]?(.*?)$"""
@@ -165,6 +179,67 @@ object RoadmapParser {
             mode = mode,
             createdAtMillis = System.currentTimeMillis(),
         )
+    }
+
+    fun isTerminal(roadmap: ActiveRoadmap): Boolean =
+        roadmap.isApproved ||
+            (roadmap.steps.isNotEmpty() && roadmap.steps.all { it.status == StepStatus.COMPLETED })
+
+    fun segmentHasTerminalRoadmap(messages: List<ChatMessage>, targetIndex: Int): Boolean {
+        var index = minOf(targetIndex, messages.size) - 1
+        while (index >= 0) {
+            val message = messages[index]
+            if (message.fromUser) return false
+            val roadmap = message.roadmap
+            if (roadmap != null && isTerminal(roadmap)) return true
+            index--
+        }
+        return false
+    }
+
+    fun attachParsedRoadmaps(messages: List<ChatMessage>, mode: ExecutionMode): List<ChatMessage> {
+        val result = ArrayList<ChatMessage>(messages.size)
+        for (message in messages) {
+            if (message.fromUser || message.roadmap != null || message.text.isBlank()) {
+                result.add(message)
+                continue
+            }
+            if (segmentHasTerminalRoadmap(result, result.size)) {
+                result.add(message)
+                continue
+            }
+            val parsed = parseFromText(message.text, mode)
+            result.add(if (parsed != null) message.copy(roadmap = parsed) else message)
+        }
+        return result
+    }
+
+    /**
+     * Whether the roadmap attached to messages[messageIndex] may still show
+     * its action buttons (Approve & Build / Add Note). A roadmap stops being
+     * actionable when its task is over:
+     * - the roadmap itself is terminal (approved, or every step completed);
+     * - a newer user message closed its segment (a later turn has begun);
+     * - the session recorded a task outcome at or after the roadmap message
+     *   was created (the task that produced it already finished).
+     * Without the last two checks the buttons resurface forever on the
+     * persisted transcript of a finished task.
+     */
+    fun roadmapActionsEnabled(
+        messages: List<ChatMessage>,
+        messageIndex: Int,
+        outcomeFinishedAtMillis: Long?,
+    ): Boolean {
+        val message = messages.getOrNull(messageIndex) ?: return false
+        val roadmap = message.roadmap ?: return false
+        if (isTerminal(roadmap)) return false
+        for (i in messageIndex + 1 until messages.size) {
+            if (messages[i].fromUser) return false
+        }
+        if (outcomeFinishedAtMillis != null &&
+            message.createdAt.toEpochMilli() <= outcomeFinishedAtMillis
+        ) return false
+        return true
     }
 
     private fun cleanTitle(raw: String): String {

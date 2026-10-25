@@ -61,8 +61,9 @@ class DshRuntimeBridge(
     @Volatile private var foregroundResultPosted: Boolean = false
     @Volatile private var lastThinkingUpdateAt: Long = 0L
 
-    override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile, clientSessionId: String?): String = withContext(Dispatchers.IO + NonCancellable) {
+    override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile, clientSessionId: String?, chatId: String? = null): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = clientSessionId ?: UUID.randomUUID().toString()
+        val chatKey = com.vayro.app.security.chatGrantKey(projectSlug, chatId)
         finishedSessions.remove(sessionId)
         activeSessionId = sessionId
         userStopRequested = false
@@ -135,6 +136,7 @@ class DshRuntimeBridge(
             explanation = "DeepSeek Harness runs with full access (DSH_PERMISSION_MODE=danger-full-access): " +
                 "it can run any shell command and read, write or delete any file in the project workspace " +
                 "without asking again. Approve only if you trust this task.",
+            chatId = chatKey,
             affectedPaths = listOf("/workspace/$projectSlug"),
             interactive = interactiveApprovals,
             emit = { eventBus.emit(it) },
@@ -406,6 +408,10 @@ class DshRuntimeBridge(
 
     override suspend fun respondToApproval(request: ToolRequest, approved: Boolean) {
         launchGate.respondToApproval(request.approvalId, approved)
+    }
+
+    override suspend fun respondToApprovalWithLevel(request: ToolRequest, approved: Boolean, level: com.vayro.app.security.PermissionLevel) {
+        launchGate.respondToApproval(request.approvalId, approved, level)
     }
 
     override suspend fun stopSession(sessionId: String) = withContext(Dispatchers.IO) {

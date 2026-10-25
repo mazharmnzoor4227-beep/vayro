@@ -523,7 +523,7 @@ fun SkillsScreen(
                         }
                     }
                 } else {
-                    items(mcpServers, key = { it.id }) { server ->
+                    items(mcpServers, key = { "installed:${it.id}" }) { server ->
                         McpServerCard(
                             server = server,
                             tools = mcpTools.filter { it.serverId == server.id },
@@ -553,7 +553,7 @@ fun SkillsScreen(
                     )
                 }
 
-                items(mcpCatalog, key = { it.id }) { template ->
+                items(mcpCatalog, key = { "catalog:${it.id}" }) { template ->
                     val isInstalled = mcpServers.any { it.id == template.id }
                     McpCatalogCard(
                         template = template,
@@ -581,7 +581,7 @@ fun SkillsScreen(
                         }
                     }
 
-                    items(mcpAuditLogs.take(20), key = { it.id }) { entry ->
+                    items(mcpAuditLogs.take(20), key = { "audit:${it.id}" }) { entry ->
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),

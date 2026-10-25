@@ -147,12 +147,7 @@ class ProviderApiClient {
                 response.code,
                 modelError = true,
             )
-            response.code == 404 -> ConnectionValidation.Failure(
-                "The provider could not find that endpoint. If you changed the Base URL in Advanced, check it there.",
-                providerMessage,
-                "Endpoint error",
-                response.code,
-            )
+            response.code == 404 -> classifyNotFound(model, discoveredModels, response.body, response.code)
             response.code == 429 -> ConnectionValidation.Failure(
                 "Rate limited — wait a moment, then try again.",
                 providerMessage,
@@ -651,6 +646,43 @@ class ProviderApiClient {
         429 -> "The provider rate limit was reached. Wait a moment and try again."
         in 500..599 -> "The provider is temporarily unavailable (HTTP $code)."
         else -> "The provider returned HTTP $code. Check the URL and account access."
+    }
+
+    /**
+     * Splits the old single 404 message into two specific ones (upstream a2b5ec61).
+     * A model already seen in discovery cannot be the missing piece, so a
+     * 404 for it means the request path is not served for the selected
+     * gateway protocol. A 404 whose provider body complains about the model,
+     * for a model never seen in discovery, means the model itself is unknown
+     * to the provider. Any other 404 (generic body, no discovery data) is
+     * treated as a path problem, because a wrong path is the failure that
+     * used to hide behind this code.
+     */
+    internal fun classifyNotFound(
+        model: String,
+        discoveredModels: List<DiscoveredModel>,
+        responseBody: String,
+        httpCode: Int = 0,
+    ): ConnectionValidation.Failure {
+        val providerMessage = providerErrorMessage(responseBody)
+        val modelDiscovered = discoveredModels.any { it.id == model }
+        val bodyMentionsModel = responseBody.contains("model", ignoreCase = true)
+        return if (!modelDiscovered && bodyMentionsModel) {
+            ConnectionValidation.Failure(
+                "That model was not found on this provider. Select a model from the available models list.",
+                providerMessage,
+                "Model error",
+                httpCode,
+                modelError = true,
+            )
+        } else {
+            ConnectionValidation.Failure(
+                "This endpoint path is not served for the selected gateway protocol. Change the gateway protocol (OpenAI-compatible endpoints use openai-completions).",
+                providerMessage,
+                "Endpoint error",
+                httpCode,
+            )
+        }
     }
 
     private fun providerErrorMessage(body: String): String? {

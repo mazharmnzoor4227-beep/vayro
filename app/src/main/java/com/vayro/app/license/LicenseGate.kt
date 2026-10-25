@@ -45,7 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vayro.app.ui.theme.JetBrainsMonoFontFamily
-import com.vayro.app.ui.theme.KodexClay
+import com.vayro.app.ui.theme.PocketGreen
 import com.vayro.app.ui.theme.SourceSerifFontFamily
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -257,7 +257,7 @@ private fun GateShell(content: @Composable () -> Unit) {
 }
 
 /**
- * The shell's verifying/waiting mark for the gate: a ring of Clay dots
+ * The shell's verifying/waiting mark for the gate: a ring of success-green dots
  * breathing in sequence — the same orb language as the chat's thinking
  * orb, never a raw platform spinner.
  */
@@ -281,7 +281,7 @@ private fun GateOrb(sizeDp: Int = 54) {
             val angle = (i / 12f) * (2.0 * PI).toFloat()
             val pulse = 0.5f + 0.5f * sin(t + i * 0.75f).toFloat()
             drawCircle(
-                color = KodexClay.copy(alpha = 0.3f + pulse * 0.7f),
+                color = PocketGreen.copy(alpha = 0.3f + pulse * 0.7f),
                 radius = (1.3f + pulse * 1.6f).dp.toPx(),
                 center = Offset(cx + ring * cos(angle), cy + ring * sin(angle)),
             )

@@ -4,7 +4,9 @@ import com.vayro.app.agent.team.blackboard.TeamBlackboard
 import com.vayro.app.agent.team.budget.TeamBudgetTracker
 import com.vayro.app.agent.team.comm.TeamCommunicationBus
 import com.vayro.app.agent.team.model.ArtifactType
+import com.vayro.app.agent.team.model.BuiltinAgentOverride
 import com.vayro.app.agent.team.model.ConflictDetectionResult
+import com.vayro.app.agent.team.model.CustomTeamAgent
 import com.vayro.app.agent.team.model.ReviewRecord
 import com.vayro.app.agent.team.model.ReviewVerdict
 import com.vayro.app.agent.team.model.RoleBudgetUsage
@@ -100,6 +102,39 @@ class AgentTeamOrchestrator(
     private val roleConfigs = ConcurrentHashMap<TeamRole, TeamRoleConfig>()
 
     /**
+     * Resolves custom agent ids to definitions. Set by MainViewModel from
+     * CustomTeamAgentStore; the dispatcher consults it per task.
+     */
+    var customAgentResolver: ((String) -> CustomTeamAgent?)? = null
+
+    /**
+     * Existing project the next runs are bound to; null means runs work in a
+     * synthetic per-goal team workspace. Set via [bindProject] before planning.
+     */
+    @Volatile
+    var boundProject: com.vayro.app.agent.team.runtime.TeamProjectBinding? = null
+        private set
+
+    /** Binds subsequent runs to an existing project (null unbinds). */
+    fun bindProject(binding: com.vayro.app.agent.team.runtime.TeamProjectBinding?) {
+        boundProject = binding
+    }
+
+    /**
+     * Applies user customizations of built-in agents (instructions and
+     * permission overrides) on top of the default role configs.
+     */
+    fun applyBuiltinOverrides(overrides: Map<TeamRole, BuiltinAgentOverride>) {
+        overrides.forEach { (role, override) ->
+            val base = roleConfigs[role] ?: TeamRoleConfig(role)
+            roleConfigs[role] = base.copy(
+                systemPrompt = override.systemPrompt.ifBlank { base.systemPrompt },
+                permissions = override.permissions ?: base.permissions
+            )
+        }
+    }
+
+    /**
      * Live per-agent execution snapshots from the real executor (Antigravity-style
      * observability). Empty when no real executor is wired.
      */
@@ -127,225 +162,52 @@ class AgentTeamOrchestrator(
     fun shutdown() {
         observerScope.cancel()
         (teamExecutor as? RealTeamAgentExecutor)?.shutdown()
-        if (realDispatcherLazy.isInitialized()) {
-            realDispatcherLazy.value?.shutdown()
-        }
+        synchronized(dispatcherLock) { dispatcherCache?.second }?.shutdown()
     }
+
+    private val dispatcherLock = Any()
+    private var dispatcherCache: Pair<Pair<com.vayro.app.agent.team.runtime.TeamProjectBinding?, String>, ConcurrentTeamDispatcher>? = null
 
     /**
-     * Lazily-built real dispatcher (Milestone 10). Null until a [teamExecutor]
-     * is wired; [requireRealExecution] guarantees real mode never runs without it.
+     * Real dispatcher (Milestone 10), rebuilt whenever the bound project or
+     * the active goal changes so a run never inherits a previous run's
+     * binding or goal. Null until a [teamExecutor] is wired;
+     * [requireRealExecution] guarantees real mode never runs without it.
      */
-    private val realDispatcherLazy = lazy {
-        val executor = teamExecutor ?: return@lazy null
-        ConcurrentTeamDispatcher(
-            scheduler = scheduler,
-            blackboard = blackboard,
-            commBus = commBus,
-            gatekeeper = gatekeeper,
-            budgetTracker = budgetTracker,
-            executor = executor,
-            validator = teamValidator,
-            roleConfigs = roleConfigs.toMap(),
-            roleAgents = roleInstances.toMap(),
-            projectDir = projectDir,
-            goal = _sessionState.value.activeGoal,
-            // Hardware baseline caps the configured maximum; dynamic pressure
-            // throttles it further per stage inside the dispatcher.
-            maxConcurrentAgents = minOf(
-                maxConcurrentAgents,
-                concurrencyController?.baselineMaxAgents ?: maxConcurrentAgents
-            ),
-            concurrencyController = concurrencyController,
-        )
-    }
-
-    /**
-     * Enforces the real-execution contract: the orchestrator only runs with a
-     * real [TeamAgentExecutor] wired. Without one it fails loudly instead of
-     * simulating output.
-     */
-    fun requireRealExecution() {
-        if (teamExecutor == null) {
-            throw IllegalStateException(
-                "Multi-agent mode requires a TeamAgentExecutor: no real executor is wired. " +
-                    "Pass a real executor; simulated execution does not exist."
-            )
-        }
-    }
-
-    init {
-        // Register default agent engines and configurations for all 10 roles
-        TeamRole.entries.forEach { role ->
-            val kind = when (role) {
-                TeamRole.MANAGER, TeamRole.ARCHITECT, TeamRole.CODE_REVIEWER -> AgentKind.CLAUDE_CODE
-                TeamRole.SECURITY_REVIEWER, TeamRole.DEVOPS_ENGINEER -> AgentKind.ANTIGRAVITY
-                else -> AgentKind.ANTIGRAVITY
-            }
-            roleInstances[role] = kind
-            roleConfigs[role] = TeamRoleConfig(
-                role = role,
-                defaultAgentKind = kind,
-                permissions = TeamRolePermissions.forRole(role)
-            )
-        }
-
-        // Synchronize Blackboard changes into session state
-        blackboard.subscribe { _ ->
-            syncState()
-        }
-
-        // Synchronize CommBus messages into session state
-        commBus.subscribe { _ ->
-            syncState()
-        }
-
-        // Mirror live parallel-execution state into the session: the UI reads
-        // activeTaskCount to show "N agents running".
-        observerScope.launch {
-            liveTasks.collect { tasks ->
-                val running = tasks.count { it.value.status == LiveTaskStatus.RUNNING }
-                _sessionState.update { it.copy(activeTaskCount = running) }
+    private fun realDispatcher(): ConcurrentTeamDispatcher? {
+        val executor = teamExecutor ?: return null
+        val key = boundProject to _sessionState.value.activeGoal
+        return synchronized(dispatcherLock) {
+            val cached = dispatcherCache
+            if (cached != null && cached.first == key) {
+                cached.second
+            } else {
+                val built = ConcurrentTeamDispatcher(
+                    scheduler = scheduler,
+                    blackboard = blackboard,
+                    commBus = commBus,
+                    gatekeeper = gatekeeper,
+                    budgetTracker = budgetTracker,
+                    executor = executor,
+                    validator = teamValidator,
+                    roleConfigs = roleConfigs.toMap(),
+                    roleAgents = roleInstances.toMap(),
+                    projectDir = projectDir,
+                    projectBinding = key.first,
+                    goal = key.second,
+                    customAgentResolver = customAgentResolver,
+                    // Hardware baseline caps the configured maximum; dynamic pressure
+                    // throttles it further per stage inside the dispatcher.
+                    maxConcurrentAgents = minOf(
+                        maxConcurrentAgents,
+                        concurrencyController?.baselineMaxAgents ?: maxConcurrentAgents
+                    ),
+                    concurrencyController = concurrencyController,
+                )
+                dispatcherCache = key to built
+                built
             }
         }
-    }
-
-    /**
-     * Decomposes a user goal into an interconnected 10-role engineering DAG.
-     */
-    fun planProject(userGoal: String): List<TeamTask> {
-        blackboard.clear()
-        commBus.clear()
-        gatekeeper.clear()
-        budgetTracker.reset()
-
-        val managerTaskId = UUID.randomUUID().toString()
-        val architectTaskId = UUID.randomUUID().toString()
-        val dbTaskId = UUID.randomUUID().toString()
-        val backendTaskId = UUID.randomUUID().toString()
-        val uiTaskId = UUID.randomUUID().toString()
-        val devTaskId = UUID.randomUUID().toString()
-        val testerTaskId = UUID.randomUUID().toString()
-        val secTaskId = UUID.randomUUID().toString()
-        val codeReviewTaskId = UUID.randomUUID().toString()
-        val devopsTaskId = UUID.randomUUID().toString()
-
-        val tasks = listOf(
-            TeamTask(
-                id = managerTaskId,
-                title = "Sprint Planning & Goal Decomposition",
-                description = "Define scope, milestones, and deliverable targets for: $userGoal",
-                assignedRole = TeamRole.MANAGER,
-                priority = TeamTaskPriority.CRITICAL,
-                dependencies = emptyList(),
-                affectedFiles = listOf("docs/sprint_plan.md")
-            ),
-            TeamTask(
-                id = architectTaskId,
-                title = "System Architecture & API Contracts",
-                description = "Produce system blueprint, module boundaries, and interface contracts.",
-                assignedRole = TeamRole.ARCHITECT,
-                priority = TeamTaskPriority.CRITICAL,
-                dependencies = listOf(managerTaskId),
-                affectedFiles = listOf("docs/adr_001.md", "core/contract.kt")
-            ),
-            TeamTask(
-                id = dbTaskId,
-                title = "Database Schemas & Data Model Design",
-                description = "Construct database schemas, Room entities, and migration definitions.",
-                assignedRole = TeamRole.DATABASE_ENGINEER,
-                priority = TeamTaskPriority.HIGH,
-                dependencies = listOf(architectTaskId),
-                affectedFiles = listOf("db/schema.sql", "db/entity.kt")
-            ),
-            TeamTask(
-                id = backendTaskId,
-                title = "Backend Service & Data Pipeline Logic",
-                description = "Develop business endpoints, repository layer, and network services.",
-                assignedRole = TeamRole.BACKEND_ENGINEER,
-                priority = TeamTaskPriority.HIGH,
-                dependencies = listOf(architectTaskId, dbTaskId),
-                affectedFiles = listOf("backend/service.kt", "backend/repository.kt")
-            ),
-            TeamTask(
-                id = uiTaskId,
-                title = "Compose Screen UI & Responsive Layouts",
-                description = "Build Material 3 user interfaces, design tokens, and state bindings.",
-                assignedRole = TeamRole.UI_ENGINEER,
-                priority = TeamTaskPriority.HIGH,
-                dependencies = listOf(architectTaskId),
-                affectedFiles = listOf("ui/screen.kt", "ui/components.kt")
-            ),
-            TeamTask(
-                id = devTaskId,
-                title = "Fullstack Integration & Feature Implementation",
-                description = "Integrate UI components with backend repositories and state models.",
-                assignedRole = TeamRole.DEVELOPER,
-                priority = TeamTaskPriority.HIGH,
-                dependencies = listOf(backendTaskId, uiTaskId),
-                affectedFiles = listOf("app/feature.kt", "app/viewmodel.kt")
-            ),
-            TeamTask(
-                id = testerTaskId,
-                title = "Automated Unit & Integration Test Suite",
-                description = "Author test cases covering happy paths, error states, and edge conditions.",
-                assignedRole = TeamRole.TESTER,
-                priority = TeamTaskPriority.HIGH,
-                dependencies = listOf(devTaskId),
-                affectedFiles = listOf("test/FeatureUnitTest.kt")
-            ),
-            TeamTask(
-                id = secTaskId,
-                title = "Security Audit & Risk Assessment",
-                description = "Scan source code for leaks, unsafe inputs, and permission flaws.",
-                assignedRole = TeamRole.SECURITY_REVIEWER,
-                priority = TeamTaskPriority.HIGH,
-                dependencies = listOf(devTaskId),
-                affectedFiles = listOf("docs/security_audit.md")
-            ),
-            TeamTask(
-                id = codeReviewTaskId,
-                title = "Code Quality & Architectural Review Gate",
-                description = "Perform comprehensive code review, SOLID enforcement, and peer sign-off.",
-                assignedRole = TeamRole.CODE_REVIEWER,
-                priority = TeamTaskPriority.CRITICAL,
-                dependencies = listOf(testerTaskId, secTaskId),
-                affectedFiles = listOf("docs/code_review.md")
-            ),
-            TeamTask(
-                id = devopsTaskId,
-                title = "CI/CD & Release Build Packaging",
-                description = "Configure build sanity scripts, verify Gradle tasks, and package artifact.",
-                assignedRole = TeamRole.DEVOPS_ENGINEER,
-                priority = TeamTaskPriority.MEDIUM,
-                dependencies = listOf(codeReviewTaskId),
-                affectedFiles = listOf("build.gradle.kts", ".github/workflows/ci.yml")
-            )
-        )
-
-        scheduler.setTasks(tasks)
-
-        // Publish project blueprint into Shared Blackboard
-        blackboard.publishArtifact(
-            TeamArtifact(
-                title = "System Architecture Blueprint: $userGoal",
-                type = ArtifactType.ADR,
-                authorRole = TeamRole.MANAGER,
-                content = "High-level architectural blueprint decomposing '$userGoal' into 10 synchronized roles.",
-                tags = setOf("architecture", "init", "sprint-1")
-            )
-        )
-
-        // Publish kickoff announcement into Communication Bus
-        commBus.sendMessage(
-            fromRole = TeamRole.MANAGER,
-            toRole = null,
-            type = TeamMessageType.BROADCAST,
-            content = "Project goal accepted: '$userGoal'. Initialized 10 engineering tasks across team DAG."
-        )
-
-        syncState(userGoal = userGoal, isRunning = true, activeRole = TeamRole.MANAGER, lastError = null)
-        return tasks
     }
 
     /**
@@ -359,7 +221,7 @@ class AgentTeamOrchestrator(
      */
     suspend fun executeNextReadyTask(): TeamTask? {
         requireRealExecution()
-        val dispatcher = realDispatcherLazy.value
+        val dispatcher = realDispatcher()
             ?: throw IllegalStateException("Real dispatcher unavailable without a TeamAgentExecutor.")
         if (budgetTracker.isQuotaExceeded()) {
             commBus.escalateToManager(
@@ -401,7 +263,7 @@ class AgentTeamOrchestrator(
      */
     suspend fun autoRunAllReal(): TeamRunReport {
         requireRealExecution()
-        val dispatcher = realDispatcherLazy.value
+        val dispatcher = realDispatcher()
             ?: throw IllegalStateException("Real dispatcher unavailable without a TeamAgentExecutor.")
         _sessionState.update { it.copy(isRunning = true) }
         val report = dispatcher.runAll()
@@ -447,7 +309,7 @@ class AgentTeamOrchestrator(
 
     /** Requests cancellation of a real run; in-flight agent runs finish rather than being killed. */
     fun cancelRealRun() {
-        realDispatcherLazy.value?.cancel()
+        synchronized(dispatcherLock) { dispatcherCache?.second }?.cancel()
         _sessionState.value = _sessionState.value.copy(isRunning = false, activeRole = null)
     }
 

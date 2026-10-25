@@ -17,6 +17,8 @@ internal class FullAccessLaunchGate(
         val operation: SafetyOperation,
         val sessionId: String,
         val projectId: String?,
+        /** Conversation key (project slug + chat id) or null when unknown. */
+        val chatId: String?,
         val gate: CompletableDeferred<Boolean>,
     )
 
@@ -31,8 +33,9 @@ internal class FullAccessLaunchGate(
         affectedPaths: List<String>,
         interactive: Boolean,
         emit: suspend (RuntimeEvent) -> Unit,
+        chatId: String? = null,
     ): Boolean {
-        val decision = safetyGateway.authorize(operation, sessionId = sessionId, projectId = projectId)
+        val decision = safetyGateway.authorize(operation, sessionId = sessionId, projectId = projectId, chatId = chatId)
         if (decision.verdict == SafetyVerdict.DENY) {
             emit(RuntimeEvent.SessionFailed(sessionId, "$agentLabel launch refused: ${decision.reason}"))
             return false
@@ -58,7 +61,7 @@ internal class FullAccessLaunchGate(
             risk = RiskLevel.HIGH,
         )
         val gate = CompletableDeferred<Boolean>()
-        pending[request.approvalId] = PendingLaunch(operation, sessionId, projectId, gate)
+        pending[request.approvalId] = PendingLaunch(operation, sessionId, projectId, chatId, gate)
         emit(RuntimeEvent.ToolRequested(sessionId, request))
         val approved = try {
             gate.await()
@@ -75,14 +78,22 @@ internal class FullAccessLaunchGate(
         return approved
     }
 
-    fun respondToApproval(approvalId: String, approved: Boolean): Boolean {
+    /**
+     * Completes a pending launch. The recorded grant keeps the level the
+     * user actually picked: a Chat approval records a CHAT grant (it must
+     * NOT be downgraded to a plain SESSION grant, or the next task run in
+     * the same conversation would prompt again). Defaults to SESSION for
+     * callers that do not carry a level (e.g. other bridges' tool paths).
+     */
+    fun respondToApproval(approvalId: String, approved: Boolean, level: PermissionLevel = PermissionLevel.SESSION): Boolean {
         val launch = pending.remove(approvalId) ?: return false
         if (approved) {
             safetyGateway.recordGrant(
                 launch.operation,
-                PermissionLevel.SESSION,
+                level,
                 sessionId = launch.sessionId,
                 projectId = launch.projectId,
+                chatId = launch.chatId,
             )
         }
         launch.gate.complete(approved)

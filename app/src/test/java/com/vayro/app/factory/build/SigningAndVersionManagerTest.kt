@@ -1,5 +1,6 @@
 package com.vayro.app.factory.build
 
+import com.vayro.app.factory.model.VersionBumpType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -78,5 +79,15 @@ class SigningAndVersionManagerTest {
         assertTrue(config.keystoreFile.isFile)
         assertEquals("releaseKey", config.keyAlias)
         assertEquals(10000, config.validityDays)
+    }
+
+    @Test
+    fun `bumpVersion creates missing project folder instead of crashing with ENOENT`() {
+        val projectDir = File(temp.root, "deleted-or-never-created-project")
+        assertTrue(!projectDir.exists())
+        val (newCode, newName) = SigningAndVersionManager.bumpVersion(projectDir, VersionBumpType.PATCH)
+        assertEquals(2, newCode)
+        assertEquals("1.0.1", newName)
+        assertTrue(File(projectDir, "app-version.properties").isFile)
     }
 }

@@ -21,6 +21,10 @@ class AgentChatController {
 
     companion object {
         const val MAX_ATTACHMENTS_PER_MESSAGE = 10
+        const val MAX_FAILURE_OUTPUT_CHARS = 600
+        const val MAX_SYSTEM_MESSAGE_BLOCKS = 8
+        val TASK_RESULT_MARKER: Regex =
+            Regex("""Task id "([^"]+)" finished with result: Command exited with code (-?\d+)""")
 
         /**
          * Kodex delivery contract: appended to every enriched chat prompt
@@ -346,6 +350,83 @@ CRITICAL INSTRUCTIONS FOR UNIFIED MODE PHASE 1:
             }
         }
         return items
+    }
+
+    fun compactSystemMessageText(text: String): String {
+        var result = text
+        repeat(MAX_SYSTEM_MESSAGE_BLOCKS) {
+            val compacted = compactFirstSystemMessageBlock(result) ?: return result
+            result = compacted
+        }
+        return result
+    }
+
+    private fun compactFirstSystemMessageBlock(text: String): String? {
+        val marker = TASK_RESULT_MARKER.find(text) ?: return null
+        val taskId = marker.groupValues[1]
+        val exitCode = marker.groupValues[2].toIntOrNull() ?: return null
+        val messageHeader = text.lastIndexOf("[Message]", marker.range.first)
+        var blockStart = if (messageHeader >= 0) {
+            text.lastIndexOf('\n', messageHeader - 1) + 1
+        } else {
+            text.lastIndexOf('\n', marker.range.first - 1) + 1
+        }
+        if (blockStart > 0) {
+            val previousLineStart = text.lastIndexOf('\n', blockStart - 2) + 1
+            val previousLine = text.substring(previousLineStart, blockStart).trim()
+            if (previousLine.contains("SYSTEM_MESSAGE")) {
+                blockStart = previousLineStart
+            }
+        }
+        val nextHeader = text.indexOf("\n[Message]", marker.range.last)
+        val blockEnd = if (nextHeader >= 0) nextHeader else text.length
+        val outputLabel = text.indexOf("Command output:", marker.range.last)
+        val rawOutput = if (outputLabel >= 0 && outputLabel < blockEnd) {
+            text.substring(outputLabel + "Command output:".length, blockEnd).trim()
+        } else {
+            ""
+        }
+        val shortId = taskId.substringAfterLast('/').ifBlank { taskId.takeLast(8) }
+        val replacement = buildString {
+            if (exitCode == 0) {
+                append("Background task $shortId finished (exit code 0).")
+            } else {
+                append("Background task $shortId failed (exit code $exitCode).")
+                if (rawOutput.isNotBlank()) {
+                    append('\n')
+                    append(rawOutput.takeLast(MAX_FAILURE_OUTPUT_CHARS))
+                }
+            }
+        }
+        val prefix = text.substring(0, blockStart).trimEnd()
+        val suffix = text.substring(blockEnd).trimStart('\n')
+        return buildString {
+            if (prefix.isNotBlank()) {
+                append(prefix)
+                append("\n\n")
+            }
+            append(replacement)
+            if (suffix.isNotBlank()) {
+                append("\n\n")
+                append(suffix)
+            }
+        }
+    }
+
+    fun compactSystemMessageDumps(messages: List<ChatMessage>): List<ChatMessage> =
+        messages.map { message ->
+            if (message.fromUser) {
+                message
+            } else {
+                val compacted = compactSystemMessageText(message.text)
+                if (compacted == message.text) message else message.copy(text = compacted)
+            }
+        }
+
+    fun roadmapForMessage(text: String, mode: ExecutionMode): ActiveRoadmap? {
+        val parsed = RoadmapParser.parseFromText(text, mode) ?: return null
+        if (mode != ExecutionMode.BUILD) return parsed
+        return if (parsed.isApproved || text.contains("Approve & Build", ignoreCase = true)) parsed else null
     }
 
     /**

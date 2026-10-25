@@ -124,7 +124,7 @@ class ClaudeRuntimeBridge(
     private var lastThinkingUpdateAt = 0L
     private var currentThinkingBlockId = 0L
 
-    override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile, clientSessionId: String?): String = withContext(Dispatchers.IO + NonCancellable) {
+    override suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile, clientSessionId: String?, chatId: String? = null): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = clientSessionId ?: UUID.randomUUID().toString()
         finishedSessions.remove(sessionId)
         activeSessionId = sessionId

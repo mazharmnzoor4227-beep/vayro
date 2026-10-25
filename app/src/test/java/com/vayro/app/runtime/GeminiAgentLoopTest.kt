@@ -179,4 +179,95 @@ class GeminiAgentLoopTest {
             }
         }
     }
+
+    // Token bounds (2026-10-24): the model gets a bounded view of tool
+    // output; the UI still shows the full output via onToolCompleted.
+
+    @Test
+    fun `short tool output passes through untouched`() {
+        assertEquals("hello", boundToolOutputForModel("hello"))
+        assertEquals("x".repeat(1000), boundToolOutputForModel("x".repeat(1000)))
+    }
+
+    @Test
+    fun `huge tool output is bounded with head and tail preserved`() {
+        val head = "HEAD-".repeat(2000)
+        val tail = "-TAIL".repeat(2000)
+        val huge = head + "M".repeat(20000) + tail
+        val bounded = boundToolOutputForModel(huge)
+        assertTrue(bounded.length < MAX_TOOL_OUTPUT_CHARS_FOR_MODEL + 200)
+        assertTrue(bounded.startsWith(head.take(TOOL_OUTPUT_HEAD_CHARS)))
+        assertTrue(bounded.endsWith(tail.takeLast(TOOL_OUTPUT_TAIL_CHARS)))
+        assertTrue(bounded.contains("omitted"))
+    }
+
+    @Test
+    fun `loop request body carries bounded tool output`() = runBlocking {
+        val huge = "z".repeat(40000)
+        val loop = GeminiAgentLoop(fakeExecutor(mapOf("list_dir" to huge)))
+        val bodies = mutableListOf<JSONObject>()
+        var turns = 0
+        loop.run(
+            generateTurn = { body, _ ->
+                bodies.add(body)
+                turns++
+                if (turns == 1) GeminiAgentTurn("", listOf(GeminiFunctionCall("list_dir", JSONObject())))
+                else GeminiAgentTurn("found it", emptyList())
+            },
+            systemPrompt = "sys",
+            contents = buildGeminiContents(emptyList(), "list files"),
+            onTextDelta = {},
+            onToolStarted = { _, _ -> },
+            onToolCompleted = { _, _ -> },
+            isCancelled = { false },
+        )
+        val response = bodies[1].getJSONArray("contents").getJSONObject(2)
+            .getJSONArray("parts").getJSONObject(0).getJSONObject("functionResponse")
+        val sent = response.getJSONObject("response").getString("output")
+        assertTrue(sent.length < MAX_TOOL_OUTPUT_CHARS_FOR_MODEL + 200)
+        assertTrue(sent.contains("omitted"))
+    }
+
+    @Test
+    fun `loop compacts contents under threshold keeping seed and latest pair`() = runBlocking {
+        val loop = GeminiAgentLoop(fakeExecutor(mapOf("list_dir" to "y".repeat(20000))))
+        val bodies = mutableListOf<JSONObject>()
+        var turns = 0
+        loop.run(
+            generateTurn = { body, _ ->
+                bodies.add(body)
+                turns++
+                if (turns < 12) GeminiAgentTurn("", listOf(GeminiFunctionCall("list_dir", JSONObject())))
+                else GeminiAgentTurn("done", emptyList())
+            },
+            systemPrompt = "sys",
+            contents = buildGeminiContents(listOf("user" to "x".repeat(5000)), "go"),
+            onTextDelta = {},
+            onToolStarted = { _, _ -> },
+            onToolCompleted = { _, _ -> },
+            isCancelled = { false },
+        )
+        val last = bodies.last()
+        assertTrue(estimateContentsChars(last.getJSONArray("contents")) <= MAX_LOOP_CONTENTS_CHARS)
+        val text = last.toString()
+        assertTrue(text.contains("go"))
+        // The newest tool result is still present (latest pair kept).
+        assertTrue(text.contains("y".repeat(100)))
+    }
+
+    @Test
+    fun `boundSeedHistory keeps newest turns within limits`() {
+        val history = (0 until 100).map { "user" to "turn-$it ".repeat(500) }
+        val bounded = boundSeedHistory(history)
+        assertTrue(bounded.size <= MAX_SEED_HISTORY_TURNS)
+        assertTrue(bounded.sumOf { it.second.length } <= MAX_SEED_HISTORY_CHARS)
+        assertEquals(history.last(), bounded.last())
+        assertEquals(history[history.size - bounded.size], bounded.first())
+    }
+
+    @Test
+    fun `boundSeedHistory keeps a single oversized turn`() {
+        val history = listOf("user" to "q".repeat(100000))
+        assertEquals(1, boundSeedHistory(history).size)
+    }
 }

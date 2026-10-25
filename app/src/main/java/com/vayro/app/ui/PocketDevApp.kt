@@ -250,6 +250,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -332,6 +333,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 
@@ -361,7 +363,6 @@ private enum class RootScreen(val label: String, val icon: ImageVector) {
     CONNECTORS("Connectors", Icons.Default.Hub),
     MARKETPLACE("Marketplace", Icons.Default.Storefront),
     SETTINGS("Settings", Icons.Default.Settings),
-    LEGACY_SETTINGS("All settings", Icons.Default.Settings),
     CAPABILITIES("Capabilities", Icons.Default.Tune),
     VOICE_SETTINGS("Voice", Icons.Default.Mic),
     PROFILE("Profile", Icons.Default.Person),
@@ -546,10 +547,30 @@ fun PocketDevApp(
         return
     }
 
+    if (navigator.showAllProjectsScreen) {
+        BackHandler(onBack = { navigator.closeOverlay() })
+        AllProjectsScreen(
+            projects = state.projects,
+            isRunning = state.isRunning,
+            activeProjectId = state.activeProject?.id,
+            projectTerminalRunning = state.projectTerminalRunning,
+            onOpen = { project ->
+                navigator.closeOverlay()
+                viewModel.openProject(project)
+            },
+            onRename = { id, name -> viewModel.renameProject(id, name) },
+            onDelete = { id -> viewModel.deleteProject(id) },
+            onBack = { navigator.closeOverlay() },
+        )
+        return
+    }
+
     if (navigator.showTeamStudioScreen) {
         BackHandler(onBack = { navigator.closeOverlay() })
         com.vayro.app.agent.team.ui.TeamStudioScreen(
             orchestrator = viewModel.teamOrchestrator,
+            agentStore = viewModel.customTeamAgentStore,
+            projects = viewModel.state.value.projects,
             onClose = { navigator.closeOverlay() }
         )
         return
@@ -602,6 +623,14 @@ fun PocketDevApp(
             onCreateIssue = { title, body -> viewModel.createGitHubIssue(title, body) },
             onMergePullRequest = { number, method -> viewModel.mergeGitHubPullRequest(number, method) },
             onStartAutonomousWorkflow = { issue -> viewModel.startAutonomousIssueWorkflow(issue) },
+        )
+        return
+    }
+
+    if (navigator.showDiagnosticsScreen) {
+        BackHandler(onBack = { navigator.closeOverlay() })
+        com.vayro.app.diagnostics.ui.DiagnosticsLogScreen(
+            onBack = { navigator.closeOverlay() },
         )
         return
     }
@@ -2605,7 +2634,7 @@ private fun RootScreenHost(
         when {
             origin != null -> screen = origin
             screen == RootScreen.CAPABILITIES || screen == RootScreen.VOICE_SETTINGS ||
-                screen == RootScreen.LEGACY_SETTINGS || screen == RootScreen.PROFILE ||
+                screen == RootScreen.PROFILE ||
                 screen == RootScreen.LICENSE_PAGE || screen == RootScreen.NOTIFICATIONS_PAGE ||
                 screen == RootScreen.SECTION_PAGE -> screen = RootScreen.SETTINGS
             screen != RootScreen.CHAT_HOME -> {
@@ -2915,6 +2944,7 @@ private fun RootScreenHost(
                     onOpenTeamStudio = onOpenTeamStudio,
                     onOpenCloudHybrid = onOpenCloudHybrid,
                     onOpenChatHome = { screen = RootScreen.CHAT_HOME },
+                    onOpenAllProjects = { navigator.openAllProjects() },
                 )
                 RootScreen.AGENT -> AgentScreen(
                     listState = providersListState,
@@ -3160,15 +3190,6 @@ private fun RootScreenHost(
                 )
                 RootScreen.LICENSE_PAGE -> LicensePage(onBack = { screen = RootScreen.SETTINGS })
                 RootScreen.NOTIFICATIONS_PAGE -> NotificationsPage(onBack = { screen = RootScreen.SETTINGS })
-                // v3.2.38 (Part K): the classic Settings monolith no
-                // longer exists as a destination — every legacy function
-                // group has its own page in the new Settings. This branch
-                // only catches a navigation state saved by an older
-                // version and lands it safely on the new Settings home.
-                RootScreen.LEGACY_SETTINGS -> {
-                    LaunchedEffect(Unit) { screen = RootScreen.SETTINGS }
-                    Box(Modifier.fillMaxSize())
-                }
                 RootScreen.SECTION_PAGE -> SettingsScreen(
                     focusListState = settingsFocusListState,
                     state = state,
@@ -3214,6 +3235,7 @@ private fun RootScreenHost(
                     onToggleFreeMode = viewModel::setFreeModeEnabled,
                     onUpdateAllToolsAndSkills = { viewModel.autoUpdateToolsAndSkills(force = true) },
                     onOpenPrivacyPolicy = { showPrivacyPolicy = true },
+                    onOpenDiagnostics = { navigator.openDiagnostics() },
                     authViewModel = authViewModel,
                     onNavigateToAuth = onNavigateToAuth,
                     onBackupWorkspaces = { viewModel.backupAllWorkspaces() },
@@ -3413,12 +3435,17 @@ private fun ProviderSetupScreen(
     freeModeEnabled: Boolean = false,
 ) {
     val context = LocalContext.current
-    var step by rememberSaveable { mutableIntStateOf(initialStep) }
-    var selected by rememberSaveable { mutableStateOf(initial.kind) }
-    var baseUrl by rememberSaveable { mutableStateOf(initial.baseUrl.ifBlank { initial.kind.defaultBaseUrl }) }
-    var model by rememberSaveable { mutableStateOf(initial.model.ifBlank { initial.kind.defaultModel }) }
-    var dshApi by rememberSaveable { mutableStateOf(initial.dshApi.ifBlank { "anthropic-messages" }) }
-    var apiKey by rememberSaveable { mutableStateOf("") }
+    // All step state is keyed on the agent: switching agents ("Use another
+    // coding agent") re-renders this screen for the new agent WITHOUT
+    // recreating it, so unkeyed state used to keep the previous agent's
+    // provider, URL, model, and typed key — and Continue could advance
+    // with a provider that the new agent does not offer at all.
+    var step by rememberSaveable(agentKind) { mutableIntStateOf(initialStep) }
+    var selected by rememberSaveable(agentKind) { mutableStateOf(initial.kind) }
+    var baseUrl by rememberSaveable(agentKind) { mutableStateOf(initial.baseUrl.ifBlank { initial.kind.defaultBaseUrl }) }
+    var model by rememberSaveable(agentKind) { mutableStateOf(initial.model.ifBlank { initial.kind.defaultModel }) }
+    var dshApi by rememberSaveable(agentKind) { mutableStateOf(initial.dshApi.ifBlank { "anthropic-messages" }) }
+    var apiKey by rememberSaveable(agentKind) { mutableStateOf("") }
     var showAgentPicker by rememberSaveable { mutableStateOf(false) }
 
     if (showAgentPicker) {
@@ -3501,7 +3528,11 @@ private fun ProviderSetupScreen(
                     apiKey = apiKey,
                     onBaseUrl = {
                         baseUrl = it
-                        if (agentKind == AgentKind.DEEPSEEK_HARNESS && selected == ProviderKind.CUSTOM) {
+                        // upstream a2b5ec61: infer the gateway protocol from the URL
+                        // for Custom API on every agent, not just DeepSeek
+                        // Harness. An OpenAI-compatible URL must not keep
+                        // defaulting to anthropic-messages.
+                        if (selected == ProviderKind.CUSTOM) {
                             dshApi = inferredDshApiForUrl(it)
                         }
                     },
@@ -3559,7 +3590,7 @@ private fun DshApiProtocolPicker(selected: String, onSelected: (String) -> Unit)
             }
         }
         Text(
-            "Pick the protocol your gateway speaks; DeepSeek Harness routes it directly.",
+            "Pick the protocol your gateway speaks. OpenAI-compatible endpoints use openai-completions.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 11.sp,
         )
@@ -3666,23 +3697,41 @@ private fun ProviderChoiceStep(
         Spacer(Modifier.height(12.dp))
 
         Surface(
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            // Bounded by content, never by weight: this step lives inside
+            // the screen's scrolling Column, where a weight(1f) list has
+            // no bounded space to distribute and can collapse to nothing
+            // (the empty provider box in the bug report). At most seven
+            // providers exist, so the cap never clips a real list.
+            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 420.dp),
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         ) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                itemsIndexed(visibleProviders) { index, provider ->
-                    ProviderChoiceRow(
-                        provider = provider,
-                        selected = selected == provider,
-                        onClick = { onSelected(provider) },
+            if (visibleProviders.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "No providers available for this agent.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
                     )
-                    if (index != visibleProviders.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 68.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    itemsIndexed(visibleProviders) { index, provider ->
+                        ProviderChoiceRow(
+                            provider = provider,
+                            selected = selected == provider,
+                            onClick = { onSelected(provider) },
                         )
+                        if (index != visibleProviders.lastIndex) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 68.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                            )
+                        }
                     }
                 }
             }
@@ -3702,6 +3751,12 @@ private fun ProviderChoiceStep(
         }
         Button(
             onClick = onContinue,
+            // Continue used to fire unconditionally, even when the
+            // selection did not belong to this agent's list (stale
+            // selection after an agent switch, or an empty list): it
+            // advanced to credentials for a provider the agent does not
+            // offer. The user must pick a listed provider first.
+            enabled = selected in visibleProviders,
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp).height(52.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
@@ -3867,6 +3922,11 @@ private fun ProviderCredentialsStep(
     var statusDetails by remember { mutableStateOf<String?>(null) }
     var statusOk by remember { mutableStateOf(false) }
     var showModels by rememberSaveable { mutableStateOf(false) }
+    // upstream a2b5ec61: Custom API verifies first, then picks from a dropdown.
+    // customVerified resets whenever the provider changes; the URL, key,
+    // and protocol fields reset it on edit below.
+    var customVerified by remember(provider) { mutableStateOf(false) }
+    var customDropdownExpanded by remember { mutableStateOf(false) }
     var modelSearch by rememberSaveable { mutableStateOf("") }
     val modelSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val hasKey = apiKey.isNotBlank() || hasStoredSecret
@@ -3888,7 +3948,7 @@ private fun ProviderCredentialsStep(
         return
     }
 
-    fun discoverModels(openWhenReady: Boolean = true) {
+    fun discoverModels(openWhenReady: Boolean = true, onDone: ((Boolean) -> Unit)? = null) {
         scope.launch {
             isDiscovering = true
             status = null
@@ -3900,14 +3960,32 @@ private fun ProviderCredentialsStep(
                     status = "Found ${result.models.size} available model${if (result.models.size == 1) "" else "s"}."
                     if (model.isBlank() && result.models.isNotEmpty()) onModel(result.models.first().id)
                     if (openWhenReady && result.models.isNotEmpty()) showModels = true
+                    onDone?.invoke(true)
                 }
                 is ModelDiscoveryResult.Failure -> {
                     statusOk = false
                     status = result.message
                     statusDetails = result.providerMessage
+                    onDone?.invoke(false)
                 }
             }
             isDiscovering = false
+        }
+    }
+
+    // upstream a2b5ec61: Verify first for Custom API. Discovery against the models
+    // endpoint proves the base URL and the selected gateway protocol
+    // before any model step; only a verified endpoint unlocks the model
+    // dropdown and the Continue button below.
+    fun verifyCustom() {
+        discoverModels(openWhenReady = false) { ok ->
+            customVerified = ok
+            if (ok) {
+                statusOk = true
+                status = "Verified. Select a model from the dropdown below."
+                statusDetails = null
+                customDropdownExpanded = true
+            }
         }
     }
 
@@ -3998,12 +4076,10 @@ private fun ProviderCredentialsStep(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().imePadding(),
-        contentPadding = PaddingValues(bottom = 24.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth().imePadding().padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(13.dp),
     ) {
-        item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("STEP 3 OF 3", color = PocketOrange, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Spacer(Modifier.weight(1f))
@@ -4026,8 +4102,6 @@ private fun ProviderCredentialsStep(
                 },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-        item {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(20.dp),
@@ -4036,7 +4110,7 @@ private fun ProviderCredentialsStep(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     OutlinedTextField(
                         baseUrl,
-                        { onBaseUrl(it); status = null; statusDetails = null; models = emptyList() },
+                        { onBaseUrl(it); status = null; statusDetails = null; models = emptyList(); customVerified = false },
                         label = { Text("Base URL") },
                         supportingText = {
                             if (provider.fixedBaseUrl) Text("Fixed by ${provider.title}")
@@ -4046,12 +4120,17 @@ private fun ProviderCredentialsStep(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (agentKind == AgentKind.DEEPSEEK_HARNESS && provider in DSH_PROTOCOL_PROVIDERS && !provider.fixedProtocol) {
-                        DshApiProtocolPicker(selected = dshApi, onSelected = { onDshApi(it); status = null })
+                    // upstream a2b5ec61: the gateway protocol picker renders for
+                    // Custom API on every agent, not just DeepSeek Harness.
+                    // A Claude Code Custom profile pointed at an
+                    // OpenAI-compatible endpoint previously had no picker
+                    // at all, so it always validated as anthropic-messages.
+                    if ((provider == ProviderKind.CUSTOM || (agentKind == AgentKind.DEEPSEEK_HARNESS && provider in DSH_PROTOCOL_PROVIDERS)) && !provider.fixedProtocol) {
+                        DshApiProtocolPicker(selected = dshApi, onSelected = { onDshApi(it); status = null; customVerified = false })
                     }
                     OutlinedTextField(
                         apiKey,
-                        { onApiKey(it); status = null; statusDetails = null },
+                        { onApiKey(it); status = null; statusDetails = null; customVerified = false },
                         label = { Text("API key") },
                         placeholder = { Text(if (hasStoredSecret) "Saved securely — leave blank to keep it" else "Enter your API key") },
                         supportingText = {
@@ -4072,8 +4151,6 @@ private fun ProviderCredentialsStep(
                     )
                 }
             }
-        }
-        item {
             OutlinedButton(
                 onClick = {
                     if (models.isEmpty()) discoverModels() else showModels = true
@@ -4089,26 +4166,74 @@ private fun ProviderCredentialsStep(
                 Spacer(Modifier.width(8.dp))
                 Text(if (models.isEmpty()) "Find available models" else "Available models (${models.size})")
             }
-        }
-        if (status != null) {
-            item {
-                Text(
-                    status.orEmpty(),
-                    color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-                    fontSize = 13.sp,
-                )
-                statusDetails?.takeIf(String::isNotBlank)?.let { details ->
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        details,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp,
-                    )
+            // upstream a2b5ec61: Verify comes first for Custom API. It checks the
+            // base URL and the selected gateway protocol against the
+            // provider's models endpoint before any model step.
+            if (provider == ProviderKind.CUSTOM) {
+                Button(
+                    onClick = { verifyCustom() },
+                    enabled = baseUrl.isNotBlank() && hasKey && !isDiscovering && !isValidating,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) {
+                    if (isDiscovering) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (isDiscovering) "Verifying" else "Verify")
                 }
             }
+            // upstream a2b5ec61: after a successful Verify, the Custom API models
+            // appear as a dropdown on this screen. The selected model is
+            // the one the Continue button validates and saves.
+            if (provider == ProviderKind.CUSTOM && customVerified && models.isNotEmpty()) {
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = model,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Select model") },
+                        supportingText = { Text("Verified models for this custom API. Pick one from the list.") },
+                        trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, null) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Box(
+                        Modifier.matchParentSize().clickable { customDropdownExpanded = true },
+                    )
+                    DropdownMenu(
+                        expanded = customDropdownExpanded,
+                        onDismissRequest = { customDropdownExpanded = false },
+                    ) {
+                        models.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.displayName) },
+                                onClick = {
+                                    onModel(option.id)
+                                    customDropdownExpanded = false
+                                    status = null
+                                    statusDetails = null
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        if (status != null) {
+            Text(
+                status.orEmpty(),
+                color = if (statusOk) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                fontSize = 13.sp,
+            )
+            statusDetails?.takeIf(String::isNotBlank)?.let { details ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    details,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                )
+            }
         }
-        item {
             Button(
                     onClick = {
                         scope.launch {
@@ -4116,22 +4241,37 @@ private fun ProviderCredentialsStep(
                             status = "Checking API key, model, and Claude Code settings…"
                             statusDetails = null
                             statusOk = true
-                            when (val result = onValidate(models)) {
-                                is ConnectionValidation.Success -> {
-                                    status = result.message
-                                    statusOk = true
-                                    onSave()
+                            try {
+                                when (val result = onValidate(models)) {
+                                    is ConnectionValidation.Success -> {
+                                        status = result.message
+                                        statusOk = true
+                                        onSave()
+                                    }
+                                    is ConnectionValidation.Failure -> {
+                                        status = result.message
+                                        statusDetails = result.providerMessage
+                                        statusOk = false
+                                    }
                                 }
-                                is ConnectionValidation.Failure -> {
-                                    status = result.message
-                                    statusDetails = result.providerMessage
-                                    statusOk = false
-                                }
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                // Saving must never force-stop setup: surface
+                                // the failure on this screen so the user can
+                                // retry (issues #6, #7).
+                                status = "Could not save this provider: ${error.message?.take(120) ?: "unknown error"}. Please try again."
+                                statusDetails = null
+                                statusOk = false
+                            } finally {
+                                isValidating = false
                             }
-                            isValidating = false
                         }
                     },
-                    enabled = baseUrl.isNotBlank() && model.isNotBlank() && hasKey && !isDiscovering && !isValidating,
+                    // upstream a2b5ec61: Custom API continues only after a
+                    // successful Verify in this session, so the model
+                    // being validated is one picked from the verified list.
+                    enabled = baseUrl.isNotBlank() && model.isNotBlank() && hasKey && !isDiscovering && !isValidating && (provider != ProviderKind.CUSTOM || customVerified),
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
                     if (isValidating) {
@@ -4140,15 +4280,12 @@ private fun ProviderCredentialsStep(
                     }
                     Text(if (isValidating) "Checking" else "Continue")
             }
-        }
-        item {
             TextButton(
                 onClick = onChangeAgent,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Use another coding agent", fontSize = 12.sp)
             }
-        }
     }
 }
 
@@ -4163,12 +4300,10 @@ private fun ClaudeSubscriptionCredentialsStep(
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
     val hasToken = token.isNotBlank() || hasStoredToken
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().imePadding(),
-        contentPadding = PaddingValues(bottom = 24.dp),
+    Column(
+        modifier = Modifier.fillMaxWidth().imePadding().padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("STEP 3 OF 3", color = PocketOrange, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                 Spacer(Modifier.weight(1f))
@@ -4187,8 +4322,6 @@ private fun ClaudeSubscriptionCredentialsStep(
                 "Connect a Claude Pro, Max, Team, or Enterprise subscription to Claude Code.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-        item {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 shape = RoundedCornerShape(20.dp),
@@ -4223,8 +4356,6 @@ private fun ClaudeSubscriptionCredentialsStep(
                     )
                 }
             }
-        }
-        item {
             Button(
                 onClick = onSave,
                 enabled = hasToken,
@@ -4232,12 +4363,9 @@ private fun ClaudeSubscriptionCredentialsStep(
             ) {
                 Text("Save and continue")
             }
-        }
-        item {
             TextButton(onClick = onChangeAgent, modifier = Modifier.fillMaxWidth()) {
                 Text("Use another coding agent", fontSize = 12.sp)
             }
-        }
     }
 }
 
@@ -4505,6 +4633,7 @@ private fun ProjectsScreen(
     onOpenCloudHybrid: () -> Unit = {},
     // v3.2.38 (Part I): the shared Chat | Work switcher's Chat side.
     onOpenChatHome: () -> Unit = {},
+    onOpenAllProjects: () -> Unit = {},
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var showGitDialog by rememberSaveable { mutableStateOf(false) }
@@ -4743,7 +4872,20 @@ private fun ProjectsScreen(
                     }
                 }
             }
-            item { Text("Your projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Your projects", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (projects.size > 3) {
+                        TextButton(onClick = { onOpenAllProjects() }) {
+                            Text("View All", color = PocketOrange, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
             if (projects.isEmpty()) {
                 item {
                     Card(
@@ -4792,7 +4934,7 @@ private fun ProjectsScreen(
                     }
                 }
             } else {
-                items(projects, key = { it.id }) { project ->
+                items(projects.take(3), key = { it.id }) { project ->
                     ProjectCard(
                         project = project,
                         taskRunning = state.isRunning && state.activeProject?.id == project.id,
@@ -4801,6 +4943,19 @@ private fun ProjectsScreen(
                         onRename = { onRenameProject(project.id, it) },
                         onDelete = { onDeleteProject(project.id) },
                     )
+                }
+                if (projects.size > 3) {
+                    item {
+                        OutlinedButton(
+                            onClick = { onOpenAllProjects() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            shape = RoundedCornerShape(14.dp),
+                        ) {
+                            Text("View All ${projects.size} Projects", color = PocketOrange)
+                        }
+                    }
                 }
             }
             item {
@@ -6160,11 +6315,16 @@ private fun WorkspaceScreen(
                     onToggleScratchpad = onToggleScratchpad,
                     onAddRoadmapComment = onAddRoadmapComment,
                     onApproveAndBuildRoadmap = onApproveAndBuildRoadmap,
+                    onEnsureMessageRoadmap = viewModel::ensureMessageRoadmap,
                     orchestratorSnapshot = state.orchestratorSnapshot,
+                    lastTaskOutcome = state.lastTaskOutcome,
+                    acknowledgedBannerEventKeys = state.acknowledgedBannerEventKeys,
+                    onDismissTaskOutcome = viewModel::dismissTaskOutcome,
                     onRollbackToBaseline = onRollbackToBaseline,
                     emergencyKillSwitchActive = state.emergencyKillSwitchActive,
                     onResetEmergencyKillSwitch = onResetEmergencyKillSwitch,
                     onApprovalWithLevel = onApprovalWithLevel,
+                    onOpenFileByPath = onOpenFileByPath,
                     onAttachUris = onAddAttachments,
                     onSelectAgent = { kind -> viewModel?.selectAgent(kind) },
                     // v3.2.38 (Part P): the workspace pill's sheet also
@@ -6334,7 +6494,7 @@ private fun WorkspaceCommandPalette(
                 )
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
                     contentPadding = PaddingValues(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
@@ -6933,6 +7093,7 @@ private fun ChatTab(
     onOpenAttachment: (ChatAttachment) -> Unit,
     onSaveAttachment: (ChatAttachment) -> Unit = {},
     onRunInTerminal: (String) -> Unit,
+    onOpenFileByPath: (String) -> Unit = {},
     onOpenLink: ((String) -> Unit)? = null,
     onInstallApkPath: (String) -> Unit = {},
     onShareApkPath: (String) -> Unit = {},
@@ -6957,7 +7118,11 @@ private fun ChatTab(
     onToggleScratchpad: () -> Unit = {},
     onAddRoadmapComment: (roadmapId: String, text: String, stepId: String?) -> Unit = { _, _, _ -> },
     onApproveAndBuildRoadmap: (roadmap: ActiveRoadmap, additionalInstructions: String?) -> Unit = { _, _ -> },
+    onEnsureMessageRoadmap: (String) -> Unit = {},
     orchestratorSnapshot: com.vayro.app.session.OrchestratorSnapshot? = null,
+    lastTaskOutcome: TaskOutcome? = null,
+    acknowledgedBannerEventKeys: Set<String> = emptySet(),
+    onDismissTaskOutcome: () -> Unit = {},
     onRollbackToBaseline: () -> Unit = {},
     emergencyKillSwitchActive: Boolean = false,
     onResetEmergencyKillSwitch: () -> Unit = {},
@@ -7286,15 +7451,40 @@ private fun ChatTab(
                 }
             }
         }
-        if (orchestratorSnapshot != null && orchestratorSnapshot.state != com.vayro.app.session.EngineeringState.IDLE) {
+        val bannerSnapshot = bannerSnapshotFor(
+            live = orchestratorSnapshot,
+            outcome = lastTaskOutcome,
+            taskFinishedAtMillis = taskFinishedAtMillis,
+            acknowledgedEventKeys = acknowledgedBannerEventKeys,
+        )
+        // The banner is a completion event whenever it renders a terminal
+        // state for a finished task — regardless of whether the snapshot came
+        // from the stored outcome or from the orchestrator snapshot latched
+        // at COMPLETED/FAILED. (An earlier version keyed this off the outcome
+        // only, and the latched live snapshot shadowed the outcome in exactly
+        // that case, so the timer and the dismiss button never applied to the
+        // banner the user actually saw — it stayed pinned forever.)
+        val bannerEventKeys = completionEventKeys(orchestratorSnapshot, lastTaskOutcome, taskFinishedAtMillis)
+        val bannerIsCompletion = bannerSnapshot != null && bannerEventKeys.isNotEmpty() &&
+            bannerSnapshot.state.isTerminalBannerState()
+        LaunchedEffect(bannerEventKeys) {
+            if (bannerIsCompletion && bannerSnapshot?.state == com.vayro.app.session.EngineeringState.COMPLETED) {
+                delay(3_000)
+                onDismissTaskOutcome()
+            }
+        }
+        if (bannerSnapshot != null && bannerSnapshot.state != com.vayro.app.session.EngineeringState.IDLE) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 2.dp),
             ) {
                 EngineeringStateBanner(
-                    snapshot = orchestratorSnapshot,
-                    onRollbackToBaseline = onRollbackToBaseline,
+                    snapshot = bannerSnapshot,
+                    onRollbackToBaseline = if (bannerIsCompletion &&
+                        bannerSnapshot.state != com.vayro.app.session.EngineeringState.FAILED
+                    ) null else onRollbackToBaseline,
+                    onDismiss = if (bannerIsCompletion) onDismissTaskOutcome else null,
                 )
             }
         }
@@ -7428,13 +7618,15 @@ private fun ChatTab(
                             else -> "assistant"
                         }
                     },
-                ) { _, rawMessage ->
-                    val message = remember(rawMessage.id, rawMessage.text) {
-                        if (!isRunning && rawMessage.roadmap == null && !rawMessage.fromUser && rawMessage.text.length <= 30000 && rawMessage.text.contains("### Implementation Roadmap", ignoreCase = true)) {
-                            val parsed = RoadmapParser.parseFromText(rawMessage.text, executionMode)
-                            if (parsed != null) rawMessage.copy(roadmap = parsed) else rawMessage
-                        } else {
-                            rawMessage
+                ) { revIndex, rawMessage ->
+                    val messageIndex = messages.size - 1 - revIndex
+                    val message = rawMessage
+                    LaunchedEffect(rawMessage.id, rawMessage.text, rawMessage.roadmap) {
+                        if (!rawMessage.fromUser && rawMessage.roadmap == null &&
+                            rawMessage.id != streamingMessageId && rawMessage.workItems.isEmpty() &&
+                            rawMessage.text.isNotBlank() && rawMessage.text.length <= 30000
+                        ) {
+                            onEnsureMessageRoadmap(rawMessage.id)
                         }
                     }
                     if (message.workItems.isNotEmpty()) {
@@ -7447,12 +7639,18 @@ private fun ChatTab(
                             onOpenAttachment = onOpenAttachment,
                             onSaveAttachment = onSaveAttachment,
                             onOpenLink = onOpenLink,
+                            onOpenFileLink = onOpenFileByPath,
                             onInstallApkPath = onInstallApkPath,
                             onShareApkPath = onShareApkPath,
                             onSaveApkPath = onSaveApkPath,
                             onLoadDeliveredApk = onLoadDeliveredApk,
                             onPreviewDelivered = onPreviewDelivered,
                             onLocateApk = onLocateApk,
+                            roadmapActionsEnabled = RoadmapParser.roadmapActionsEnabled(
+                                messages,
+                                messageIndex,
+                                lastTaskOutcome?.finishedAtMillis,
+                            ),
                             onAddRoadmapComment = { stepId ->
                                 val stepTitle = message.roadmap?.steps?.firstOrNull { it.id == stepId }?.title ?: ""
                                 message.roadmap?.let { r ->
@@ -9538,6 +9736,8 @@ private fun MessageBubble(
     onOpenLink: ((String) -> Unit)? = null,
     onAddRoadmapComment: (stepId: String?) -> Unit = {},
     onApproveAndBuildRoadmap: () -> Unit = {},
+    onOpenFileLink: (String) -> Unit = {},
+    roadmapActionsEnabled: Boolean = true,
     onInstallApkPath: (String) -> Unit = {},
     onShareApkPath: (String) -> Unit = {},
     onSaveApkPath: (String) -> Unit = {},
@@ -9545,6 +9745,53 @@ private fun MessageBubble(
     onPreviewDelivered: (String, String) -> Unit = { _, _ -> },
     onLocateApk: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+    val fileLinkHandler: (String) -> Unit = remember(onOpenFileLink, uriHandler, context) {
+        { rawUrl: String ->
+            val path = when {
+                rawUrl.startsWith("file://") -> rawUrl.removePrefix("file://")
+                rawUrl.startsWith("/workspace/") || rawUrl.startsWith("/root/") -> rawUrl
+                else -> null
+            }
+            if (path != null) {
+                val lower = path.lowercase()
+                val isArchive = lower.endsWith(".zip") || lower.endsWith(".apk") ||
+                    lower.endsWith(".tar") || lower.endsWith(".gz") ||
+                    lower.endsWith(".rar") || lower.endsWith(".7z") ||
+                    lower.endsWith(".txc")
+                val isCodeFile = !isArchive && (lower.endsWith(".php") ||
+                    lower.endsWith(".js") || lower.endsWith(".jsx") ||
+                    lower.endsWith(".ts") || lower.endsWith(".tsx") ||
+                    lower.endsWith(".kt") || lower.endsWith(".java") ||
+                    lower.endsWith(".py") || lower.endsWith(".css") ||
+                    lower.endsWith(".html") || lower.endsWith(".htm") ||
+                    lower.endsWith(".json") || lower.endsWith(".xml") ||
+                    lower.endsWith(".md") || lower.endsWith(".txt") ||
+                    lower.endsWith(".yml") || lower.endsWith(".yaml") ||
+                    lower.endsWith(".sh") || lower.endsWith(".sql") ||
+                    lower.endsWith(".vue") || lower.endsWith(".c") ||
+                    lower.endsWith(".cpp") || lower.endsWith(".h") ||
+                    lower.endsWith(".go") || lower.endsWith(".rs") ||
+                    lower.endsWith(".rb") || lower.endsWith(".swift"))
+                when {
+                    isCodeFile -> onOpenFileLink(path)
+                    isArchive -> { }
+                    else -> try { uriHandler.openUri(rawUrl) } catch (_: Throwable) { }
+                }
+            } else {
+                try { uriHandler.openUri(rawUrl) } catch (_: Throwable) {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(rawUrl)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    } catch (_: Throwable) { }
+                }
+            }
+        }
+    }
+
     // Links in agent replies get Copy/Open cards under the bubble (max 3).
     val messageLinks = remember(message.id, message.text, message.fromUser) {
         if (message.fromUser) emptyList() else ChatLinkExtractor.extract(message.text).take(3)
@@ -9583,6 +9830,7 @@ private fun MessageBubble(
                         modifier = Modifier.padding(start = 14.dp, end = 44.dp),
                         color = if (message.fromUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                         fontFamily = if (message.fromUser) null else com.vayro.app.ui.theme.SourceSerifFontFamily,
+                        onOpenUri = fileLinkHandler,
                     )
                 } else SelectionContainer {
                     if (message.fromUser) {
@@ -9590,6 +9838,7 @@ private fun MessageBubble(
                             markdown = message.text,
                             modifier = Modifier.padding(start = 14.dp, end = 44.dp),
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            onOpenUri = fileLinkHandler,
                         )
                     } else if (isStreaming) {
                         val streamDisplayText = if (message.text.length > MAX_STREAMING_DISPLAY_CHARS) {
@@ -9610,6 +9859,7 @@ private fun MessageBubble(
                             color = MaterialTheme.colorScheme.onSurface,
                             onRunCode = onRunInTerminal,
                             fontFamily = com.vayro.app.ui.theme.SourceSerifFontFamily,
+                            onOpenUri = fileLinkHandler,
                         )
                     }
                 }
@@ -9634,6 +9884,7 @@ private fun MessageBubble(
                         onAddComment = onAddRoadmapComment,
                         onApproveAndBuild = onApproveAndBuildRoadmap,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        actionsEnabled = roadmapActionsEnabled,
                     )
                 }
                 if (message.attachments.isNotEmpty()) {
@@ -9903,6 +10154,20 @@ private fun ApprovalCard(
                 ) {
                     Text("Allow for session", fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
+                // Chat: same approval, but the grant is scoped to this
+                // conversation (project + chat), so later task runs in the
+                // same chat do not prompt again, while a new chat does.
+                // Mirrors Session: only the leveled approval runs, the
+                // pending launch completes through it.
+                OutlinedButton(
+                    onClick = {
+                        onApprovalWithLevel(com.vayro.app.security.PermissionLevel.CHAT, true)
+                    },
+                    modifier = Modifier.weight(1f).height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                ) {
+                    Text("Chat", fontSize = 12.sp, maxLines = 1, softWrap = false)
+                }
                 Button(
                     onClick = {
                         onApproval(true)
@@ -10160,7 +10425,7 @@ private fun BrandMark(modifier: Modifier = Modifier, compact: Boolean = false) {
 
 
 // ---------------------------------------------------------------------------
-// Kodex side drawer: replaced in v3.2.32 by KodexSidebar (ClaudeShell.kt).
+// Kodex side drawer: replaced in v3.2.32 by KodexSidebar (KodexShell.kt).
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -10442,6 +10707,50 @@ private fun AttachMenuRow(
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun AllProjectsScreen(
+    projects: List<Project>,
+    isRunning: Boolean,
+    activeProjectId: String?,
+    projectTerminalRunning: Boolean,
+    onOpen: (Project) -> Unit,
+    onRename: (String, String) -> Unit,
+    onDelete: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("All Projects (${projects.size})", fontWeight = FontWeight.SemiBold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(projects, key = { it.id }) { project ->
+                ProjectCard(
+                    project = project,
+                    taskRunning = isRunning && activeProjectId == project.id,
+                    terminalRunning = projectTerminalRunning && activeProjectId == project.id,
+                    onOpen = { onOpen(project) },
+                    onRename = { onRename(project.id, it) },
+                    onDelete = { onDelete(project.id) },
+                )
+            }
         }
     }
 }

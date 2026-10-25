@@ -52,6 +52,14 @@ class PocketDevNavigator {
         openOverlay = OverlayScreen.GITHUB_STUDIO
     }
 
+    fun openDiagnostics() {
+        openOverlay = OverlayScreen.DIAGNOSTICS
+    }
+
+    fun openAllProjects() {
+        openOverlay = OverlayScreen.ALL_PROJECTS
+    }
+
     fun closeOverlay() {
         openOverlay = null
     }
@@ -62,6 +70,8 @@ class PocketDevNavigator {
     val showCloudHybridScreen: Boolean get() = openOverlay == OverlayScreen.CLOUD_HYBRID
     val showMarketplaceScreen: Boolean get() = openOverlay == OverlayScreen.MARKETPLACE
     val showGitHubStudioScreen: Boolean get() = openOverlay == OverlayScreen.GITHUB_STUDIO
+    val showDiagnosticsScreen: Boolean get() = openOverlay == OverlayScreen.DIAGNOSTICS
+    val showAllProjectsScreen: Boolean get() = openOverlay == OverlayScreen.ALL_PROJECTS
 }
 
 /** The full-screen overlay destinations reachable from PocketDev. */
@@ -71,4 +81,6 @@ enum class OverlayScreen {
     CLOUD_HYBRID,
     MARKETPLACE,
     GITHUB_STUDIO,
+    DIAGNOSTICS,
+    ALL_PROJECTS,
 }

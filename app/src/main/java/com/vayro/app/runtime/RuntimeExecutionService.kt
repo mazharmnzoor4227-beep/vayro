@@ -29,6 +29,13 @@ class RuntimeExecutionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
     private var canStop: Boolean = true
+    // Crashlytics fix: tracks whether the FGS deadline is already satisfied.
+    // startForeground used to live only in refreshForegroundNotification, so a
+    // cold start or a non-START delivery could miss the ~5s
+    // ForegroundServiceDidNotStartInTime deadline. Foregrounding in onCreate
+    // (same pattern as KeepAliveService) plus the onStartCommand safety net
+    // below closes that window.
+    private var foregrounded: Boolean = false
 
     private data class SessionNotification(
         var projectName: String,
@@ -48,6 +55,23 @@ class RuntimeExecutionService : Service() {
     override fun onCreate() {
         super.onCreate()
         NotificationCoordinator.ensureChannels(this)
+        // Foreground immediately with a placeholder; the real per-session
+        // notification replaces it via refreshForegroundNotification().
+        try {
+            startForeground(
+                NotificationCoordinator.RUNNING_NOTIFICATION_ID,
+                NotificationCoordinator.running(
+                    context = this,
+                    title = "Kodex is working",
+                    detail = "Starting…",
+                    canStop = false,
+                    sessionId = null,
+                ),
+            )
+            foregrounded = true
+        } catch (e: Exception) {
+            stopSelf()
+        }
     }
 
     private fun notificationManager(): android.app.NotificationManager =
@@ -75,6 +99,7 @@ class RuntimeExecutionService : Service() {
             )
         }
         startForeground(NotificationCoordinator.RUNNING_NOTIFICATION_ID, summary)
+        foregrounded = true
     }
 
     private fun stopIfIdle() {
@@ -125,6 +150,28 @@ class RuntimeExecutionService : Service() {
             }
             stopSelf()
             return START_NOT_STICKY
+        }
+        // Safety net for the case where onCreate did not foreground (e.g. an
+        // exception while building the placeholder): satisfy the FGS deadline
+        // before any branch dispatch. Placed after the keep-working OFF gate
+        // above, so it never foregrounds when the user disabled background work.
+        if (!foregrounded) {
+            try {
+                startForeground(
+                    NotificationCoordinator.RUNNING_NOTIFICATION_ID,
+                    NotificationCoordinator.running(
+                        context = this,
+                        title = "Kodex is working",
+                        detail = "Starting…",
+                        canStop = false,
+                        sessionId = null,
+                    ),
+                )
+                foregrounded = true
+            } catch (e: Exception) {
+                stopSelf()
+                return START_STICKY
+            }
         }
         if (intent?.hasExtra(EXTRA_CAN_STOP) == true) canStop = intent.getBooleanExtra(EXTRA_CAN_STOP, true)
         when (intent?.action ?: ACTION_START) {

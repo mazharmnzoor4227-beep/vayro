@@ -45,7 +45,8 @@ class SafetyGateway(
     fun authorize(
         operation: SafetyOperation,
         sessionId: String? = null,
-        projectId: String? = null
+        projectId: String? = null,
+        chatId: String? = null
     ): SafetyDecision {
         // 1. Kill switch denies everything, including prompts.
         if (policyEngine.isEmergencyKillSwitchEngaged()) {
@@ -116,7 +117,7 @@ class SafetyGateway(
 
         // 4. Policy engine evaluation.
         val category = categoryOf(operation)
-        val request = toPermissionRequest(operation, sessionId, projectId)
+        val request = toPermissionRequest(operation, sessionId, projectId, chatId)
         val policyDecision = policyEngine.evaluatePermission(request)
         val auditDecision = when {
             policyDecision.allowed -> AuditDecision.ALLOWED
@@ -144,9 +145,10 @@ class SafetyGateway(
     fun requireAllowed(
         operation: SafetyOperation,
         sessionId: String? = null,
-        projectId: String? = null
+        projectId: String? = null,
+        chatId: String? = null
     ): SafetyDecision {
-        val decision = authorize(operation, sessionId, projectId)
+        val decision = authorize(operation, sessionId, projectId, chatId)
         if (decision.verdict == SafetyVerdict.DENY) {
             throw SafetyDeniedException(operation, decision.reason)
         }
@@ -159,19 +161,29 @@ class SafetyGateway(
      * persisted to disk by [PermissionPolicyEngine]; SESSION and ONCE live for
      * the session only — by design, not by accident.
      */
+    /**
+     * Records a user grant that resulted from an [AuthorizationPrompt]. The
+     * grant persists according to its intended scope: PROJECT, ALWAYS and
+     * CHAT are persisted to disk by [PermissionPolicyEngine]; SESSION and
+     * ONCE live for the session only — by design, not by accident. A CHAT
+     * grant is keyed by conversation (project slug + chat id) and never
+     * applies to another conversation or project.
+     */
     fun recordGrant(
         operation: SafetyOperation,
         level: PermissionLevel,
         sessionId: String? = null,
         projectId: String? = null,
-        targetPattern: String = "*"
+        targetPattern: String = "*",
+        chatId: String? = null
     ) {
         policyEngine.grantPermission(
             category = categoryOf(operation),
             level = level,
             targetPattern = targetPattern,
             projectId = projectId,
-            sessionId = sessionId
+            sessionId = sessionId,
+            chatId = chatId
         )
         // MCP tool grants persist through the MCP permission manager as well.
         if (operation is SafetyOperation.McpToolCall && mcpPermissionManager != null) {
@@ -224,7 +236,8 @@ class SafetyGateway(
     private fun toPermissionRequest(
         operation: SafetyOperation,
         sessionId: String?,
-        projectId: String?
+        projectId: String?,
+        chatId: String? = null
     ): PermissionRequest {
         val category = categoryOf(operation)
         val target = when (operation) {
@@ -246,7 +259,8 @@ class SafetyGateway(
             target = target,
             command = command,
             sessionId = sessionId,
-            projectId = projectId
+            projectId = projectId,
+            chatId = chatId
         )
     }
 

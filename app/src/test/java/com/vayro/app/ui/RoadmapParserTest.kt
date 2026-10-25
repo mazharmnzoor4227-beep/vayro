@@ -107,4 +107,24 @@ class RoadmapParserTest {
         assertNull(RoadmapParser.parseFromText(""))
         assertNull(RoadmapParser.parseFromText("   \n\n  "))
     }
+
+    @Test
+    fun testIsRoadmapTextComplete() {
+        // Partial roadmap text (steps present, closing line not yet streamed):
+        // not complete, so no buttons while streaming.
+        assertFalse(
+            RoadmapParser.isRoadmapTextComplete(
+                "1. [ ] Step one: do the thing\n2. [ ] Step two: verify it\n",
+            ),
+        )
+        // Full roadmap text (closing line present): complete, buttons may render
+        // together with the text even before the session finishes.
+        assertTrue(
+            RoadmapParser.isRoadmapTextComplete(
+                "1. [ ] Step one: do the thing\n" +
+                    "Please review the roadmap, or click Approve & Build to proceed.",
+            ),
+        )
+        assertFalse(RoadmapParser.isRoadmapTextComplete(""))
+    }
 }

@@ -71,6 +71,93 @@ fun buildModelFunctionCallTurn(calls: List<GeminiFunctionCall>): JSONObject {
     return JSONObject().put("role", "model").put("parts", parts)
 }
 
+/**
+ * Token bounds for the Gemini API agent loop (2026-10-24, token optimization).
+ *
+ * Without bounds, every iteration re-sent the ENTIRE accumulated contents:
+ * full chat history plus every prior tool call and its full (up to 32 KB)
+ * output, so input tokens grew with every step of a long task. These bounds
+ * cap the steady-state request size while preserving agent quality:
+ * - each tool output fed back to the model is head+tail bounded
+ *   ([MAX_TOOL_OUTPUT_CHARS_FOR_MODEL]); the full output is untouched
+ *   everywhere else (executor logs, UI summaries, stored records).
+ * - total loop contents are compacted by dropping the OLDEST complete
+ *   model-call + function-response pairs once over
+ *   [MAX_LOOP_CONTENTS_CHARS]. The seed turns (chat history + latest user
+ *   request) and the latest pair are never dropped, the system prompt is
+ *   sent separately on every request, and tool declarations are untouched.
+ * Iteration count, temperature and model defaults are unchanged.
+ */
+fun boundToolOutputForModel(output: String): String {
+    if (output.length <= MAX_TOOL_OUTPUT_CHARS_FOR_MODEL) return output
+    val head = output.take(TOOL_OUTPUT_HEAD_CHARS)
+    val tail = output.takeLast(TOOL_OUTPUT_TAIL_CHARS)
+    val omitted = output.length - TOOL_OUTPUT_HEAD_CHARS - TOOL_OUTPUT_TAIL_CHARS
+    return head + "\n... [output truncated for context: $omitted chars omitted] ...\n" + tail
+}
+
+/** Estimated input size of a loop contents array, in characters. */
+fun estimateContentsChars(contents: JSONArray): Int {
+    var total = 0
+    for (i in 0 until contents.length()) {
+        val parts = contents.optJSONObject(i)?.optJSONArray("parts") ?: continue
+        for (j in 0 until parts.length()) {
+            val part = parts.optJSONObject(j) ?: continue
+            total += part.optString("text").length
+            total += part.optJSONObject("functionCall")?.toString()?.length ?: 0
+            total += part.optJSONObject("functionResponse")?.optJSONObject("response")?.optString("output")?.length ?: 0
+        }
+    }
+    return total
+}
+
+/**
+ * Drops the oldest complete model-call + function-response pairs from
+ * [contents] until it fits [MAX_LOOP_CONTENTS_CHARS]. Turns before
+ * [seedTurnCount] (chat history + latest user request) are never touched,
+ * and the newest pair is always kept so the model never loses the latest
+ * tool results. Pairs are removed two entries at a time so every remaining
+ * functionCall still has its functionResponse.
+ */
+fun compactLoopContents(contents: JSONArray, seedTurnCount: Int) {
+    while (estimateContentsChars(contents) > MAX_LOOP_CONTENTS_CHARS &&
+        contents.length() > seedTurnCount + 2
+    ) {
+        // Oldest pair sits directly after the seed turns.
+        contents.remove(seedTurnCount)
+        contents.remove(seedTurnCount)
+    }
+}
+
+const val MAX_TOOL_OUTPUT_CHARS_FOR_MODEL = 16 * 1024
+const val TOOL_OUTPUT_HEAD_CHARS = 4 * 1024
+const val TOOL_OUTPUT_TAIL_CHARS = 12 * 1024
+const val MAX_LOOP_CONTENTS_CHARS = 120_000
+
+/**
+ * Bounds the seed chat history fed into a loop run: newest turns first,
+ * keeping at most [MAX_SEED_HISTORY_TURNS] turns and [MAX_SEED_HISTORY_CHARS]
+ * characters, in original order. The latest user request is passed
+ * separately (the loop prompt) and is never part of this bound.
+ */
+const val MAX_SEED_HISTORY_TURNS = 40
+const val MAX_SEED_HISTORY_CHARS = 60_000
+
+fun boundSeedHistory(history: List<Pair<String, String>>): List<Pair<String, String>> {
+    var chars = 0
+    var turns = 0
+    val kept = ArrayDeque<Pair<String, String>>()
+    for (entry in history.asReversed()) {
+        if (turns >= MAX_SEED_HISTORY_TURNS) break
+        val size = entry.second.length
+        if (kept.isNotEmpty() && chars + size > MAX_SEED_HISTORY_CHARS) break
+        kept.addFirst(entry)
+        chars += size
+        turns++
+    }
+    return kept.toList()
+}
+
 fun buildFunctionResponseTurn(results: List<Pair<String, String>>): JSONObject {
     val parts = JSONArray()
     results.forEach { (name, output) ->
@@ -100,10 +187,12 @@ class GeminiAgentLoop(
         isCancelled: () -> Boolean,
     ): String {
         val fullText = StringBuilder()
+        val seedTurnCount = contents.length()
         var iteration = 0
         while (iteration < maxIterations) {
             if (isCancelled()) throw CancellationException("Stopped by user")
             iteration++
+            compactLoopContents(contents, seedTurnCount)
             val body = buildAgentRequestBody(systemPrompt, contents)
             val turn = generateTurn(body, onTextDelta)
             if (turn.text.isNotEmpty()) fullText.append(turn.text)
@@ -116,7 +205,7 @@ class GeminiAgentLoop(
                 onToolStarted(call.name, detail.ifBlank { call.name })
                 val output = tools.execute(call.name, call.args)
                 onToolCompleted(call.name, redactGeminiToolText(output.take(200)))
-                results.add(call.name to output)
+                results.add(call.name to boundToolOutputForModel(output))
             }
             contents.put(buildFunctionResponseTurn(results))
         }

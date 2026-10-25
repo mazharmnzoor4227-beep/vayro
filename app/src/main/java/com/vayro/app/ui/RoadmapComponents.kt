@@ -401,6 +401,7 @@ fun RoadmapCard(
     onAddComment: (stepId: String?) -> Unit,
     onApproveAndBuild: () -> Unit,
     modifier: Modifier = Modifier,
+    actionsEnabled: Boolean = true,
 ) {
     var isExpanded by remember { mutableStateOf(true) }
     val isAllCompleted = roadmap.steps.isNotEmpty() && roadmap.steps.all { it.status == StepStatus.COMPLETED }
@@ -537,7 +538,7 @@ fun RoadmapCard(
                         color = PocketGreen,
                     )
                 }
-            } else {
+            } else if (!roadmap.isApproved && actionsEnabled) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -558,44 +559,22 @@ fun RoadmapCard(
                         Text("Add Note", fontSize = 11.sp, maxLines = 1)
                     }
 
-                    if (!roadmap.isApproved) {
-                        Button(
-                            onClick = onApproveAndBuild,
-                            modifier = Modifier.heightIn(min = 48.dp).weight(1f),
-                            contentPadding = PaddingValues(horizontal = 12.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Approve & Build", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                        }
-                    } else {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = PocketGreen,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                "Approved & Building",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = PocketGreen,
-                            )
-                        }
+                    Button(
+                        onClick = onApproveAndBuild,
+                        modifier = Modifier.heightIn(min = 48.dp).weight(1f),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Approve & Build", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
             }
@@ -814,6 +793,7 @@ fun EngineeringStateBanner(
     snapshot: OrchestratorSnapshot?,
     onRollbackToBaseline: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    onDismiss: (() -> Unit)? = null,
 ) {
     // The Analyzing status pill is removed by user order: no "Analyzing Requirements"
     // banner while the agent is analyzing. Other states (plan, build, fix, failure)
@@ -878,6 +858,20 @@ fun EngineeringStateBanner(
                         modifier = Modifier
                             .background(PocketOrange.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
                             .padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+            }
+
+            if (onDismiss != null) {
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

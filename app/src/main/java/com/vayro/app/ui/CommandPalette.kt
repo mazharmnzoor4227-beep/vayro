@@ -209,7 +209,7 @@ fun CommandPalette(
             Spacer(Modifier.height(10.dp))
 
             LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
                 contentPadding = PaddingValues(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {

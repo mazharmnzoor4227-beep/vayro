@@ -404,7 +404,7 @@ fun GlobalSearchDialog(
                 )
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 620.dp),
                     contentPadding = PaddingValues(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {

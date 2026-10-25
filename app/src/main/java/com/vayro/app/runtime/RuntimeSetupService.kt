@@ -243,6 +243,10 @@ class RuntimeSetupService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Crashlytics fix: foreground FIRST, then handle STOP. A stop delivery
+        // to a dead service used to return before startForeground, so the FGS
+        // deadline could fire before stopSelf() destroyed the service.
+        startForeground(NOTIFICATION_ID, setupNotification(RuntimeSetupController.snapshot.value))
         if (intent?.action == ACTION_STOP) {
             installJob?.cancel(CancellationException("Stopped by user"))
             RuntimeSetupController.cancelled(this)
@@ -250,7 +254,6 @@ class RuntimeSetupService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(NOTIFICATION_ID, setupNotification(RuntimeSetupController.snapshot.value))
         acquireWakeLock()
         if (installJob?.isActive != true) {
             val stacks = intent?.getStringExtra(EXTRA_STACKS).orEmpty().split(',')

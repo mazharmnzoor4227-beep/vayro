@@ -428,6 +428,8 @@ data class AppUiState(
     val scratchpadItems: List<ScratchpadItem> = emptyList(),
     val scratchpadExpanded: Boolean = false,
     val orchestratorSnapshot: com.vayro.app.session.OrchestratorSnapshot? = null,
+    val lastTaskOutcome: TaskOutcome? = null,
+    val acknowledgedBannerEventKeys: Set<String> = emptySet(),
     val emergencyKillSwitchActive: Boolean = false,
     val allowShellExec: Boolean = true,
     val allowNetworkAccess: Boolean = true,
@@ -587,7 +589,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val agentChatController = com.vayro.app.agent.AgentChatController()
     val gitDomainController = com.vayro.app.workspace.GitDomainController { args, workingDir, guestPath ->
         if (!installer.isInstalled()) return@GitDomainController 1 to "Linux runtime is not ready."
-        val installed = installer.installedRuntime()
+        // Crashlytics fix: close the check-then-use gap; the throwing call
+        // sat outside the try below, so a core that vanished mid-call crashed.
+        val installed = installer.installedRuntimeOrNull()
+            ?: return@GitDomainController 1 to "Linux runtime is not ready."
         val outputFile = File(getApplication<Application>().cacheDir, "git-op-${System.nanoTime()}.log")
         try {
             val process = installer.process(
@@ -660,6 +665,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
     val marketplaceInstallManager = com.vayro.app.marketplace.MarketplaceInstallManager(application)
     val marketplacePublishedItemsStore = com.vayro.app.marketplace.MarketplacePublishedItemsStore(application)
+    val customTeamAgentStore = com.vayro.app.data.CustomTeamAgentStore(application)
     val teamConcurrencyController = com.vayro.app.agent.team.runtime.AdaptiveConcurrencyController(application)
     val teamOrchestrator = com.vayro.app.agent.team.AgentTeamOrchestrator(
         teamExecutor = com.vayro.app.agent.team.runtime.RealTeamAgentExecutor(
@@ -711,7 +717,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isKillSwitchEngaged = { permissionPolicyEngine.isEmergencyKillSwitchEngaged() },
         ),
         concurrencyController = teamConcurrencyController,
-    )
+    ).also { orchestrator ->
+        orchestrator.customAgentResolver = { id -> customTeamAgentStore.getById(id) }
+        orchestrator.applyBuiltinOverrides(customTeamAgentStore.overrides.value)
+    }
     private val projectIndex = ProjectIndex(application.filesDir)
     private val contextEngine = ContextEngine(projectIndex, projectMemoryStore)
     private val runtimeRetryPolicy = RuntimeRetryPolicy()
@@ -722,6 +731,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private data class SessionRecoveryState(var job: Job? = null, var attempt: Int = 0, var startedAtMillis: Long? = null)
     private val sessionRecoveryStates = ConcurrentHashMap<String, SessionRecoveryState>()
     private val pendingAssistantDeltas = ConcurrentHashMap<String, StringBuilder>()
+    private val roadmapParseAttempts = ConcurrentHashMap.newKeySet<String>()
     private val assistantDeltaFlushJobs = ConcurrentHashMap<String, Job>()
     private val lastAssistantDeltaPersistAtMillis = ConcurrentHashMap<String, Long>()
     // v3.2.44 (Task Completion Gate): per-session facts the gate needs at
@@ -826,18 +836,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         (initialChats.firstOrNull { it.id == lastChatId } ?: initialChats.firstOrNull())?.id
     }
     private val initialMessages = (if (initialActiveProject != null && initialActiveChatId != null) {
-        preferences.loadMessages(initialActiveProject.id, initialActiveChatId).ifEmpty {
+        agentChatController.compactSystemMessageDumps(
+            preferences.loadMessages(initialActiveProject.id, initialActiveChatId),
+        ).ifEmpty {
             listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change."))
         }
     } else {
         listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change."))
-    }).map { msg ->
-        if (!msg.fromUser && msg.roadmap == null && msg.text.isNotBlank()) {
-            val parsed = RoadmapParser.parseFromText(msg.text, ExecutionMode.fromStored(preferences.executionMode))
-            if (parsed != null) msg.copy(roadmap = parsed) else msg
-        } else {
-            msg
-        }
+    }).let { loaded ->
+        RoadmapParser.attachParsedRoadmaps(loaded, ExecutionMode.fromStored(preferences.executionMode))
     }
     private val initialActiveRoadmap = initialMessages.mapNotNull { it.roadmap }.lastOrNull()
     private val initialScratchpad = deriveScratchpadItems(initialActiveRoadmap, emptyList(), false)
@@ -881,6 +888,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             projectChats = initialChats,
             activeChatId = initialActiveChatId,
             messages = initialMessages,
+            acknowledgedBannerEventKeys = preferences.acknowledgedBannerEventKeys,
             activeRoadmap = initialActiveRoadmap,
             scratchpadItems = initialScratchpad,
             githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
@@ -966,6 +974,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // the retired custom OAuth implementation and discover the real CLI status.
         runCatching { vault.remove(LEGACY_GITHUB_TOKEN_KEY) }
         viewModelScope.launch { refreshGitHubConnection() }
+        viewModelScope.launch {
+            customTeamAgentStore.overrides.collect { overrides ->
+                teamOrchestrator.applyBuiltinOverrides(overrides)
+            }
+        }
         viewModelScope.launch {
             gitWorkflowEngine.state.collect { wfState ->
                 _state.update { it.copy(gitWorkflowState = wfState) }
@@ -1695,12 +1708,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (selectingInitialAgent) preferences.primaryAgentKind = kind.stableId
         _state.update { current ->
             preferences.saveProvider(current.provider, current.agentKind)
-            val provider = preferences.loadProvider(vault, kind)
+            // The provider reload must never kill the agent switch: it
+            // reads the secure vault on the UI thread, and a keystore
+            // throw here used to force-stop the app on the agent tap
+            // (the "Use another coding agent" path). On failure the
+            // previous provider is kept and the choice step lets the user
+            // pick a valid provider for the new agent (its Continue stays
+            // disabled until the selection belongs to that agent's list).
+            val provider = runCatching { preferences.loadProvider(vault, kind) }.getOrElse { current.provider }
             current.copy(
                 agentKind = kind,
                 primaryAgentKind = if (selectingInitialAgent) kind else current.primaryAgentKind,
                 provider = provider,
-                activeApiKeyName = vault.list(provider.kind.name).firstOrNull(ApiKeyInfo::isActive)?.name,
+                // vault.list runs on the UI thread inside this state
+                // update; a keystore throw here used to crash the agent
+                // tap outright. A failed lookup only clears the active
+                // key name; the agent switch itself still applies.
+                activeApiKeyName = runCatching {
+                    vault.list(provider.kind.name).firstOrNull(ApiKeyInfo::isActive)?.name
+                }.getOrNull(),
                 // Ping results belong to the previous agent; never leak them across.
                 apiPingStatus = ApiPingStatus.IDLE,
                 apiPingMessage = null,
@@ -2104,34 +2130,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.apiPingStatus == ApiPingStatus.PINGING) return
         _state.update { it.copy(apiPingStatus = ApiPingStatus.PINGING, apiPingMessage = "Sending a minimal test request…") }
         viewModelScope.launch {
-            val key = vault.get(profile.kind.name).orEmpty()
-            val result = providerApi.validate(
-                profile.baseUrl,
-                profile.model,
-                key,
-                providerProtocolForAgent(profile, _state.value.agentKind),
-                emptyList(),
-                profile.openRouterProviderOrder,
-                profile.openRouterAllowFallbacks,
-            )
-            when (result) {
-                is ConnectionValidation.Success -> {
-                    _state.update {
-                        it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = "API responded successfully")
+            // This coroutine runs on EVERY configure-AI Continue tap
+            // (finishOnboarding) and every warm boot (initializeRuntime).
+            // It used to be unguarded: a vault throw here (keystore failure
+            // on the device, e.g. the legacy-migration path in ApiKeyVault)
+            // escaped the coroutine and killed the app process right after
+            // Continue. A failed ping must never kill setup; it only marks
+            // the ping failed and the user can retry from the main screen.
+            try {
+                val key = vault.get(profile.kind.name).orEmpty()
+                val result = providerApi.validate(
+                    profile.baseUrl,
+                    profile.model,
+                    key,
+                    providerProtocolForAgent(profile, _state.value.agentKind),
+                    emptyList(),
+                    profile.openRouterProviderOrder,
+                    profile.openRouterAllowFallbacks,
+                )
+                when (result) {
+                    is ConnectionValidation.Success -> {
+                        _state.update {
+                            it.copy(apiPingStatus = ApiPingStatus.OK, apiPingMessage = "API responded successfully")
+                        }
+                        recordAgentConnection(
+                            _state.value.agentKind,
+                            AgentConnectionState.Outcome.TEST_CONNECTED,
+                        )
                     }
-                    recordAgentConnection(
-                        _state.value.agentKind,
-                        AgentConnectionState.Outcome.TEST_CONNECTED,
-                    )
+                    is ConnectionValidation.Failure -> {
+                        _state.update {
+                            it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = result.message)
+                        }
+                        recordAgentConnection(
+                            _state.value.agentKind,
+                            AgentConnectionState.Outcome.TEST_FAILED,
+                            result.message,
+                        )
+                    }
                 }
-                is ConnectionValidation.Failure -> {
-                    _state.update {
-                        it.copy(apiPingStatus = ApiPingStatus.FAILED, apiPingMessage = result.message)
-                    }
-                    recordAgentConnection(
-                        _state.value.agentKind,
-                        AgentConnectionState.Outcome.TEST_FAILED,
-                        result.message,
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                _state.update {
+                    it.copy(
+                        apiPingStatus = ApiPingStatus.FAILED,
+                        apiPingMessage = "API check failed: ${error.message?.take(120) ?: "Unknown error"}",
                     )
                 }
             }
@@ -2377,7 +2421,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val activeChat = chats.firstOrNull { it.id == lastChatId } ?: chats.first()
         preferences.setLastActiveChatId(project.id, activeChat.id)
         val saved = preferences.loadMessages(project.id, activeChat.id)
-        val msgs = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
+        val msgs = agentChatController.compactSystemMessageDumps(saved)
+            .ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
         val loadedRoadmap = msgs.mapNotNull { it.roadmap }.lastOrNull()
         val loadedScratchpad = deriveScratchpadItems(loadedRoadmap, emptyList(), false)
         val slice = projectSessionStates.value[project.id]
@@ -2411,6 +2456,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 runtimeRecoveryStatus = slice?.runtimeRecoveryStatus,
                 runtimeRecoveryAttempt = slice?.runtimeRecoveryAttempt ?: 0,
                 runtimeRecoveryCanResume = slice?.runtimeRecoveryCanResume ?: false,
+                lastTaskOutcome = slice?.lastTaskOutcome,
                 workspaceFiles = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
@@ -3359,6 +3405,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sendPrompt(prompt)
     }
 
+    fun ensureMessageRoadmap(messageId: String) {
+        val current = _state.value
+        val message = current.messages.firstOrNull { it.id == messageId } ?: return
+        if (message.fromUser || message.roadmap != null || message.workItems.isNotEmpty()) return
+        // Streaming relaxation (roadmap-streaming fix): allow the parse while
+        // the message streams once its closing line has arrived; partial
+        // streamed text is still refused.
+        val isStreaming = message.id == current.streamingMessageId
+        val roadmapComplete = RoadmapParser.isRoadmapTextComplete(message.text)
+        if ((isStreaming && !roadmapComplete) || message.text.isBlank() || message.text.length > 30000) return
+        if (current.lastTaskOutcome != null) return
+        val messageIndex = current.messages.indexOfFirst { it.id == messageId }
+        if (messageIndex < 0 || RoadmapParser.segmentHasTerminalRoadmap(current.messages, messageIndex)) return
+        val attemptKey = message.id + ":" + message.text.hashCode()
+        if (roadmapParseAttempts.size > 4000) roadmapParseAttempts.clear()
+        if (!roadmapParseAttempts.add(attemptKey)) return
+        val parsed = agentChatController.roadmapForMessage(message.text, current.executionMode) ?: return
+        _state.update { state ->
+            val target = state.messages.firstOrNull { it.id == messageId } ?: return@update state
+            if (target.roadmap != null || target.text != message.text) return@update state
+            state.copy(
+                messages = state.messages.map { msg ->
+                    if (msg.id == messageId) msg.copy(roadmap = parsed) else msg
+                },
+            )
+        }
+        persistMessages()
+    }
+
+    fun dismissTaskOutcome() {
+        // Acknowledge EVERY identity key of the completion event currently on
+        // display (stored outcome, finish timestamp, latched live snapshot)
+        // and persist them. The banner is derived from state on every
+        // recomposition, and the orchestrator snapshot stays latched at its
+        // terminal state after a task finishes — clearing only the outcome
+        // (the earlier behaviour) let the same event resurface through the
+        // live snapshot forever. With all keys acknowledged and persisted,
+        // the event can never render again for this finished task.
+        val current = _state.value
+        val eventKeys = completionEventKeys(
+            current.orchestratorSnapshot,
+            current.lastTaskOutcome,
+            current.taskFinishedAtMillis,
+        )
+        if (eventKeys.isNotEmpty()) {
+            val acknowledged = (current.acknowledgedBannerEventKeys + eventKeys).toSet()
+            preferences.acknowledgedBannerEventKeys = acknowledged
+            _state.update { it.copy(lastTaskOutcome = null, acknowledgedBannerEventKeys = acknowledged) }
+        } else {
+            _state.update { it.copy(lastTaskOutcome = null) }
+        }
+        val projectId = _state.value.activeProject?.id ?: return
+        projectSessionStates.update { states ->
+            val slice = states[projectId] ?: return@update states
+            if (slice.lastTaskOutcome == null) states else states + (projectId to slice.copy(lastTaskOutcome = null))
+        }
+    }
+
     fun rollbackToBaseline(): Boolean {
         val proj = state.value.activeProject ?: return false
         val workspaceDir = File(getApplication<Application>().filesDir, "projects/${proj.id}")
@@ -3756,8 +3860,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadFileContent(project: Project, path: String) {
         viewModelScope.launch {
-            val content = withContext(Dispatchers.IO) {
-                val file = File(projectWorkspaceRoot(project), path)
+            // Same normalization as the editor coordinator: a restored tab
+            // may carry a #L fragment or a stale folder prefix, and a
+            // missing file must never load its error text as content.
+            val cleanPath = editorCoordinator.resolveEditorPath(project, path)
+            if (cleanPath == null) {
+                _state.update {
+                    it.copy(
+                        openedFilePath = if (it.openedFilePath == path) null else it.openedFilePath,
+                        openedFileContent = if (it.openedFilePath == path) null else it.openedFileContent,
+                        fileContentLoading = if (it.openedFilePath == path) false else it.fileContentLoading,
+                        toastMessage = "File not found: ${path.substringBefore('#').substringAfterLast('/')}",
+                    )
+                }
+                return@launch
+            }
+            val result = withContext(Dispatchers.IO) {
+                val file = File(projectWorkspaceRoot(project), cleanPath)
                 runCatching {
                     if (file.length() > 512_000L) {
                         file.inputStream().use { stream ->
@@ -3768,10 +3887,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         file.readText()
                     }
-                }.getOrElse { "Could not read file: ${it.message}" }
+                }
             }
-            if (_state.value.openedFilePath == path) {
-                _state.update { it.copy(openedFileContent = content, fileContentLoading = false) }
+            result.onSuccess { text ->
+                if (_state.value.openedFilePath == path || _state.value.openedFilePath == cleanPath) {
+                    _state.update {
+                        it.copy(
+                            openedFilePath = cleanPath,
+                            openEditorTabs = if (path in it.openEditorTabs && cleanPath != path) {
+                                if (cleanPath in it.openEditorTabs) it.openEditorTabs.filter { tab -> tab != path }
+                                else it.openEditorTabs.map { tab -> if (tab == path) cleanPath else tab }
+                            } else it.openEditorTabs,
+                            openedFileContent = text,
+                            fileContentLoading = false,
+                        )
+                    }
+                }
+            }.onFailure {
+                _state.update {
+                    val isActive = it.openedFilePath == path || it.openedFilePath == cleanPath
+                    it.copy(
+                        openedFilePath = if (isActive) null else it.openedFilePath,
+                        openedFileContent = if (isActive) null else it.openedFileContent,
+                        fileContentLoading = if (isActive) false else it.fileContentLoading,
+                        toastMessage = "Could not open ${cleanPath.substringAfterLast('/')}",
+                    )
+                }
             }
         }
     }
@@ -5345,6 +5486,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskFinishedAtMillis = null,
                 workSegmentStartedAtMillis = startedAt,
                 currentTaskRequest = requestText,
+                lastTaskOutcome = null,
             )
         }
         val activeProj = state.value.activeProject
@@ -5368,7 +5510,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         touchProject(project.id)
         persistMessages()
-        val history = state.value.messages
+        val history = agentChatController.compactSystemMessageDumps(state.value.messages)
         // v3.2.40 (Scope G): point the agent at the intake products
         // (extracted PDF text, extracted ZIP tree, video frames,
         // rendered PDF pages) — all produced at attach time.
@@ -5454,6 +5596,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     enriched.history,
                     enriched.provider,
                     sessionId,
+                    chatId = sessionChatId(sessionId),
                 )
             }.onFailure { error ->
                 val failureReason = RuntimeFailureClassifier.friendlyNetworkErrorMessage(error.message.orEmpty())
@@ -5482,6 +5625,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         answerApprovalWithLevel(com.vayro.app.security.PermissionLevel.ONCE, approved)
     }
 
+    /**
+     * The chat that owns a run's session: the session controller records
+     * the chat id at session creation; falls back to the active chat.
+     * (Upstream's sessionChats map equivalent in this tree.)
+     */
+    private fun sessionChatId(sessionId: String?): String? {
+        val recorded = sessionId?.let { agentSessionController.state.value.activeSessions[it]?.chatId?.takeIf { c -> c.isNotBlank() } }
+        return recorded ?: _state.value.activeChatId
+    }
+
     fun answerApprovalWithLevel(level: com.vayro.app.security.PermissionLevel, approved: Boolean) {
         val request = state.value.pendingApproval ?: return
         val project = _state.value.activeProject
@@ -5490,20 +5643,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             request.toolName.contains("bash", true) || request.toolName.contains("exec", true) -> com.vayro.app.security.PermissionCategory.SHELL_EXEC
             request.toolName.contains("write", true) || request.toolName.contains("edit", true) -> com.vayro.app.security.PermissionCategory.FILE_WRITE
             request.toolName.contains("delete", true) || request.toolName.contains("remove", true) -> com.vayro.app.security.PermissionCategory.FILE_DELETE
+            // Launch-gate cards carry the agent label ("Antigravity CLI",
+            // "DeepSeek Harness") as the tool name; they authorize a shell
+            // launch, so a Chat grant for them must be SHELL_EXEC, or the
+            // gate's next authorize call would never match it.
+            request.toolName.contains("antigravity", true) || request.toolName.contains("deepseek", true) -> com.vayro.app.security.PermissionCategory.SHELL_EXEC
             else -> com.vayro.app.security.PermissionCategory.FILE_READ
         }
+        // The chat that owns this approval: the run's session maps to its
+        // chat, falling back to the active chat. Null when unknown, in
+        // which case a Chat grant safely records nothing.
+        val chatKey = com.vayro.app.security.chatGrantKey(
+            project?.slug ?: project?.id,
+            sessionChatId(request.sessionId),
+        )
         if (approved) {
             permissionPolicyEngine.grantPermission(
                 category = category,
                 level = level,
                 targetPattern = target,
                 projectId = project?.slug ?: project?.id,
-                sessionId = _state.value.activeSessionId
+                sessionId = _state.value.activeSessionId,
+                chatId = chatKey
             )
         }
         _state.update { it.copy(pendingApproval = null) }
         MobileHarnessApplication.appScope.launch {
-            project?.let { sessionBridge(it.id).respondToApproval(request, approved) }
+            project?.let { sessionBridge(it.id).respondToApprovalWithLevel(request, approved, level) }
         }
     }
 
@@ -5688,6 +5854,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runtimeRecoveryCanResume = slice.runtimeRecoveryCanResume,
         activeRoadmap = slice.activeRoadmap,
         scratchpadItems = slice.scratchpadItems,
+        lastTaskOutcome = slice.lastTaskOutcome,
     )
 
     private fun sliceFromState(
@@ -5721,6 +5888,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeRoadmap = state.activeRoadmap,
         scratchpadItems = state.scratchpadItems,
         pendingOrchestratorTransition = previous?.pendingOrchestratorTransition,
+        lastTaskOutcome = state.lastTaskOutcome,
     )
 
     private fun sessionScopeFor(projectId: String): AppUiState {
@@ -5822,6 +5990,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun trimMessages(messages: List<ChatMessage>): List<ChatMessage> =
         if (messages.size > maxInMemoryMessages) messages.takeLast(maxInMemoryMessages) else messages
+
+    /**
+     * Roadmap completion on task finish (roadmap-status fix).
+     *
+     * The badge in RoadmapCard shows "Completed" only when every step is
+     * COMPLETED. Previously the SessionCompleted/SessionFailed paths marked
+     * steps COMPLETED only when the roadmap was already approved
+     * (rm.isApproved), so a roadmap that a finished session actually
+     * executed stayed "Awaiting Approval" forever whenever the displayed
+     * roadmap was a fresh parse of the execution report (its steps are
+     * unchecked, isApproved=false) rather than the approved plan itself.
+     * The card renders message.roadmap, so the stale badge sat on the final
+     * message even though the work was done.
+     *
+     * A roadmap counts as executed when the finishing segment either ran
+     * under an approved plan (the user approved the build) or changed
+     * workspace files (a "Files changed" entry in this segment's live
+     * process — FilesChanged events only fire when files really change, and
+     * liveProcess is per-segment, cleared by finishWorkSegment). A
+     * proposal-only segment changes no files and carries no approval, so
+     * genuinely unapproved/unbuilt roadmaps keep showing "Awaiting
+     * Approval". SKIPPED steps are never forced to COMPLETED, and
+     * isApproved is never touched: completion is derived from step
+     * statuses alone, so no approval gate is bypassed. Returns the same
+     * instance when nothing changes.
+     */
+    private fun completeExecutedRoadmap(
+        roadmap: ActiveRoadmap?,
+        wasApproved: Boolean,
+        liveProcess: List<ActivityItem>,
+    ): ActiveRoadmap? {
+        if (roadmap == null || roadmap.steps.isEmpty()) return roadmap
+        if (!wasApproved && liveProcess.none { it.title == "Files changed" }) return roadmap
+        if (roadmap.steps.all { it.status == StepStatus.COMPLETED || it.status == StepStatus.SKIPPED }) return roadmap
+        return roadmap.copy(
+            steps = roadmap.steps.map { step ->
+                if (step.status != StepStatus.SKIPPED) step.copy(status = StepStatus.COMPLETED) else step
+            },
+        )
+    }
 
     private fun processRuntimeEvent(projectId: String, event: RuntimeEvent) {
         val scoped = sessionScopeFor(projectId)
@@ -6044,13 +6252,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             rm
                         }
                     }
-                    val messagesWithRoadmap = stateWithResponse.messages.mapIndexed { index, msg ->
-                        val isRecent = index >= stateWithResponse.messages.size - 20
+                    val compactedMessages = agentChatController.compactSystemMessageDumps(stateWithResponse.messages)
+                    val segmentStartIndex = compactedMessages.indexOfLast { it.fromUser }
+                    val allowFreshRoadmapParse = current.activeRoadmap?.isApproved != true
+                    val messagesWithRoadmap = compactedMessages.mapIndexed { index, msg ->
+                        val isRecent = index >= compactedMessages.size - 20
                         if (msg.roadmap?.id == current.activeRoadmap?.id && completedActiveRoadmap != null) {
                             msg.copy(roadmap = completedActiveRoadmap)
-                        } else if (isRecent && !msg.fromUser && msg.roadmap == null && msg.text.isNotBlank() &&
-                            msg.text.length <= 30000 && current.executionMode != ExecutionMode.BUILD) {
-                            val parsed = RoadmapParser.parseFromText(msg.text, stateWithResponse.executionMode)
+                        } else if (allowFreshRoadmapParse && index > segmentStartIndex && isRecent && !msg.fromUser && msg.roadmap == null && msg.text.isNotBlank() &&
+                            msg.text.length <= 30000) {
+                            val parsed = agentChatController.roadmapForMessage(msg.text, stateWithResponse.executionMode)
                             if (parsed != null) msg.copy(roadmap = parsed) else msg
                         } else {
                             msg
@@ -6062,7 +6273,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         completedActiveRoadmap ?: newlyParsedRoadmap ?: current.activeRoadmap
                     }
-                    val scratchpad = deriveScratchpadItems(latestRoadmap, emptyList(), false)
+                    // Roadmap-status fix: the displayed roadmap may be a fresh
+                    // parse of this segment's execution report (unchecked
+                    // steps, unapproved) rather than the approved plan. When
+                    // this segment executed the work, mark it COMPLETED so
+                    // the card stops saying "Awaiting Approval". The card
+                    // renders message.roadmap, so rewrite the carrying
+                    // messages too, not just activeRoadmap.
+                    val executedRoadmap = completeExecutedRoadmap(
+                        latestRoadmap,
+                        wasApproved = current.activeRoadmap?.isApproved == true,
+                        liveProcess = current.liveProcess,
+                    )
+                    val completedMessages = if (executedRoadmap != null && executedRoadmap !== latestRoadmap && latestRoadmap != null) {
+                        messagesWithRoadmap.map { msg ->
+                            if (msg.roadmap?.id == latestRoadmap.id) msg.copy(roadmap = executedRoadmap) else msg
+                        }
+                    } else {
+                        messagesWithRoadmap
+                    }
+                    val scratchpad = deriveScratchpadItems(executedRoadmap, emptyList(), false)
                     agentSessionController.completeSession(event.sessionId, "Task completed successfully")
                     if (isActiveProject) {
                         agentOrchestrator.transition(com.vayro.app.session.EngineeringState.COMPLETED, "Task completed successfully")
@@ -6072,11 +6302,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "Task completed successfully",
                         )
                     }
-                    attachTaskDuration(stateWithResponse.copy(messages = trimMessages(messagesWithRoadmap)), finishedAt).copy(
+                    attachTaskDuration(stateWithResponse.copy(messages = trimMessages(completedMessages)), finishedAt).copy(
                         isRunning = false,
                         streamingMessageId = null,
                         activeSessionId = null,
-                        activeRoadmap = latestRoadmap,
+                        activeRoadmap = executedRoadmap,
                         scratchpadItems = scratchpad,
                         activity = listOf(ActivityItem("Task completed", "${current.agentKind.title} finished successfully in $totalDurationText")) +
                             current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
@@ -6085,6 +6315,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         runtimeRecoveryStatus = null,
                         runtimeRecoveryAttempt = 0,
                         runtimeRecoveryCanResume = false,
+                        lastTaskOutcome = TaskOutcome(
+                            state = com.vayro.app.session.EngineeringState.COMPLETED,
+                            title = "Task completed successfully",
+                            finishedAtMillis = finishedAt,
+                        ),
                     )
                 }
                 is RuntimeEvent.SessionFailed -> {
@@ -6118,13 +6353,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 rm
                             }
                         }
-                        val messagesWithRoadmap = segmentFinishedState.messages.mapIndexed { index, msg ->
-                            val isRecent = index >= segmentFinishedState.messages.size - 20
+                        val compactedMessages = agentChatController.compactSystemMessageDumps(segmentFinishedState.messages)
+                        val segmentStartIndex = compactedMessages.indexOfLast { it.fromUser }
+                        val allowFreshRoadmapParse = current.activeRoadmap?.isApproved != true
+                        val messagesWithRoadmap = compactedMessages.mapIndexed { index, msg ->
+                            val isRecent = index >= compactedMessages.size - 20
                             if (msg.roadmap?.id == current.activeRoadmap?.id && completedActiveRoadmap != null) {
                                 msg.copy(roadmap = completedActiveRoadmap)
-                            } else if (isRecent && !msg.fromUser && msg.roadmap == null && msg.text.isNotBlank() &&
-                                msg.text.length <= 30000 && current.executionMode != ExecutionMode.BUILD) {
-                                val parsed = RoadmapParser.parseFromText(msg.text, segmentFinishedState.executionMode)
+                            } else if (allowFreshRoadmapParse && index > segmentStartIndex && isRecent && !msg.fromUser && msg.roadmap == null && msg.text.isNotBlank() &&
+                                msg.text.length <= 30000) {
+                                val parsed = agentChatController.roadmapForMessage(msg.text, segmentFinishedState.executionMode)
                                 if (parsed != null) msg.copy(roadmap = parsed) else msg
                             } else {
                                 msg
@@ -6136,12 +6374,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         } else {
                             completedActiveRoadmap ?: failedNewlyParsedRoadmap ?: current.activeRoadmap
                         }
-                        val scratchpad = deriveScratchpadItems(latestRoadmap, emptyList(), false)
-                        attachTaskDuration(segmentFinishedState.copy(messages = trimMessages(messagesWithRoadmap)), finishedAt).copy(
+                        // Roadmap-status fix, mirrored from SessionCompleted:
+                        // a trailing failure after the response was already
+                        // delivered is still a finished task, so its
+                        // executed roadmap must not stay "Awaiting Approval".
+                        val executedRoadmap = completeExecutedRoadmap(
+                            latestRoadmap,
+                            wasApproved = current.activeRoadmap?.isApproved == true,
+                            liveProcess = current.liveProcess,
+                        )
+                        val completedMessages = if (executedRoadmap != null && executedRoadmap !== latestRoadmap && latestRoadmap != null) {
+                            messagesWithRoadmap.map { msg ->
+                                if (msg.roadmap?.id == latestRoadmap.id) msg.copy(roadmap = executedRoadmap) else msg
+                            }
+                        } else {
+                            messagesWithRoadmap
+                        }
+                        val scratchpad = deriveScratchpadItems(executedRoadmap, emptyList(), false)
+                        attachTaskDuration(segmentFinishedState.copy(messages = trimMessages(completedMessages)), finishedAt).copy(
                             isRunning = false,
                             streamingMessageId = null,
                             activeSessionId = null,
-                            activeRoadmap = latestRoadmap,
+                            activeRoadmap = executedRoadmap,
                             scratchpadItems = scratchpad,
                             activity = listOf(ActivityItem("Task completed", "${current.agentKind.title} finished successfully in $totalDurationText")) +
                                 current.activity.map { if (!it.isComplete) it.copy(isComplete = true) else it },
@@ -6150,6 +6404,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             runtimeRecoveryStatus = null,
                             runtimeRecoveryAttempt = 0,
                             runtimeRecoveryCanResume = false,
+                            lastTaskOutcome = TaskOutcome(
+                                state = com.vayro.app.session.EngineeringState.COMPLETED,
+                                title = "Task completed successfully",
+                                finishedAtMillis = finishedAt,
+                            ),
                         )
                     } else {
                         val finishedAt = System.currentTimeMillis()
@@ -6202,6 +6461,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             runtimeRecoveryStatus = null,
                             runtimeRecoveryAttempt = 0,
                             runtimeRecoveryCanResume = false,
+                            lastTaskOutcome = TaskOutcome(
+                                state = com.vayro.app.session.EngineeringState.FAILED,
+                                title = "Task failed",
+                                finishedAtMillis = finishedAt,
+                            ),
                         )
                     }
                 }
@@ -6522,6 +6786,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     enriched.history,
                     enriched.provider,
                     newSessionId,
+                    chatId = sessionChatId(newSessionId),
                 )
             }.onFailure { error ->
                 val failureReason = RuntimeFailureClassifier.friendlyNetworkErrorMessage(error.message.orEmpty())
@@ -6725,7 +6990,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 liveProcess = it.liveProcess + ActivityItem("Reconnecting", "Attempting to re-establish connection…"),
             ) }
             runCatching {
-                request.runtime.startSession(request.project.id, request.project.slug, request.project.kind, request.prompt, request.history, request.provider)
+                request.runtime.startSession(request.project.id, request.project.slug, request.project.kind, request.prompt, request.history, request.provider, chatId = sessionChatId(event.sessionId))
             }.onFailure { error ->
                 val failureReason = RuntimeFailureClassifier.friendlyNetworkErrorMessage(error.message.orEmpty())
                 onRuntimeEvent(projectId, RuntimeEvent.SessionFailed(event.sessionId, failureReason))
@@ -6762,9 +7027,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (resumePrompt.isBlank()) return
 
         // Strip trailing stopped/error messages so chat resumes cleanly
-        val cleanedMessages = current.messages.filterNot { msg ->
-            !msg.fromUser && msg.text.contains("Task stopped", ignoreCase = true)
-        }
+        val cleanedMessages = agentChatController.compactSystemMessageDumps(
+            current.messages.filterNot { msg ->
+                !msg.fromUser && msg.text.contains("Task stopped", ignoreCase = true)
+            },
+        )
 
         val targetRoadmap = roadmap ?: current.activeRoadmap
         val isRoadmapBuild = targetRoadmap != null && targetRoadmap.isApproved &&
@@ -6819,6 +7086,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskFinishedAtMillis = null,
                 workSegmentStartedAtMillis = startedAt,
                 currentTaskRequest = effectivePrompt,
+                lastTaskOutcome = null,
                 activity = listOf(ActivityItem("Resuming task", "Reconnecting and continuing work…", false)) + state.activity,
             )
         }
@@ -6954,6 +7222,7 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
                     cleanedMessages,
                     _state.value.provider,
                     resumeSessionId,
+                    chatId = sessionChatId(resumeSessionId),
                 )
             }.onFailure { error ->
                 val failureReason = RuntimeFailureClassifier.friendlyNetworkErrorMessage(error.message.orEmpty())
@@ -7025,6 +7294,7 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
                 request.history,
                 request.provider,
                 newSessionId,
+                chatId = sessionChatId(newSessionId),
             )
         }
         return true
@@ -7147,6 +7417,7 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
                 request.history,
                 request.provider,
                 newSessionId,
+                chatId = sessionChatId(newSessionId),
             )
         }
         return true
@@ -7826,7 +8097,14 @@ Your objective: Analyze the request and workspace, formulate the plan, and provi
                 error = "No Android Gradle project found under ${workingDir.path}; cannot validate build/test.",
                 startedAt = startedAt,
             )
-        val installed = installer.installedRuntime()
+        // Crashlytics fix: the pre-check above leaves a check-then-use gap,
+        // and installedRuntime() threw outside the try below. Return a graceful
+        // not-configured result instead of crashing.
+        val installed = installer.installedRuntimeOrNull()
+            ?: return@withContext OperationResult.notConfigured(
+                "Linux runtime is not installed; cannot run Gradle build/test. " +
+                    "Missing: ${installer.missingCoreChecks().firstOrNull() ?: "setup incomplete"}"
+            )
         val outputFile = File(
             getApplication<Application>().cacheDir,
             "workflow-build-${System.nanoTime()}.log"

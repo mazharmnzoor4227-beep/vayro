@@ -603,7 +603,10 @@ class TerminalCoordinator(
         sessionId: String,
     ): ProjectTerminalResult {
         if (!installer.isInstalled()) return ProjectTerminalResult("Linux environment is not ready yet.", 1, cwd)
-        val installed = installer.installedRuntime()
+        // Crashlytics fix: close the check-then-use gap; a core that vanished
+        // after the pre-check used to throw out of this call uncaught.
+        val installed = installer.installedRuntimeOrNull()
+            ?: return ProjectTerminalResult("Linux environment is not ready yet.", 1, cwd)
         val project = host.state().projects.firstOrNull { it.id == projectId }
             ?: host.state().activeProject?.takeIf { it.id == projectId }
             ?: return ProjectTerminalResult("Project is no longer available.", 1, cwd)

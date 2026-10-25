@@ -401,7 +401,11 @@ class GitHubAuthCoordinator(
     /** Runs the official gh CLI inside the Linux runtime; public for the autonomous workflow's token resolution. */
     fun runGitHubCli(arguments: List<String>): Pair<Int, String> {
         check(installer.isGitHubCliInstalled()) { "GitHub CLI is not installed" }
-        val runtime = installer.installedRuntime()
+        // Crashlytics fix: this call sat outside the try below, so a core
+        // that vanished after the check threw out of this public call. Return
+        // a graceful failure instead, matching the setup guidance elsewhere.
+        val runtime = installer.installedRuntimeOrNull()
+            ?: return 1 to "Linux runtime is not set up yet. Open the terminal once so setup can finish, then try again."
         val outputFile = File(host.appContext.cacheDir, "github-cli-${System.nanoTime()}.log")
         val workspace = File(host.appContext.filesDir, "workspaces/github-auth").apply { mkdirs() }
         return try {

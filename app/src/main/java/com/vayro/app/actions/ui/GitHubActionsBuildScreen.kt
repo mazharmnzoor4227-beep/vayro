@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import com.vayro.app.ui.theme.PocketGreen
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -112,7 +113,7 @@ fun GitHubActionsBuildScreen(
                         onBuildLocal()
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = com.vayro.app.ui.theme.KodexClay)
+                    colors = ButtonDefaults.buttonColors(containerColor = PocketGreen)
                 ) {
                     Text("Build on Device", color = Color.White, fontWeight = FontWeight.SemiBold)
                 }
@@ -169,7 +170,7 @@ fun GitHubActionsBuildScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !state.isDispatching,
-                            colors = ButtonDefaults.buttonColors(containerColor = com.vayro.app.ui.theme.KodexClay)
+                            colors = ButtonDefaults.buttonColors(containerColor = PocketGreen)
                         ) {
                             if (state.isDispatching) {
                                 CircularProgressIndicator(

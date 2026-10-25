@@ -27,8 +27,16 @@ object RolePromptRenderer {
 
     fun render(context: TeamExecutionContext, taskTitle: String, taskDescription: String): String {
         val sb = StringBuilder()
-        val systemPrompt = context.roleConfig.systemPrompt.ifBlank {
-            "You are the ${context.role.title} on an autonomous engineering team. ${context.role.description}"
+        val customAgent = context.customAgent
+        val systemPrompt = when {
+            customAgent != null && customAgent.systemPrompt.isNotBlank() -> customAgent.systemPrompt
+            else -> context.roleConfig.systemPrompt.ifBlank {
+                "You are the ${context.role.title} on an autonomous engineering team. ${context.role.description}"
+            }
+        }
+        if (customAgent != null) {
+            sb.appendLine("You are ${customAgent.name}, the ${customAgent.title} on this team.")
+            sb.appendLine()
         }
         sb.appendLine(systemPrompt)
         sb.appendLine()

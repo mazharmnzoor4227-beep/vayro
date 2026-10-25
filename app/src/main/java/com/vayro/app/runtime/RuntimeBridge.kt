@@ -6,6 +6,7 @@ import com.vayro.app.model.ProviderProfile
 import com.vayro.app.model.ProjectKind
 import com.vayro.app.model.RuntimeEvent
 import com.vayro.app.model.ToolRequest
+import com.vayro.app.security.PermissionLevel
 import kotlinx.coroutines.flow.Flow
 
 data class RuntimeLaunchConfig(
@@ -18,8 +19,17 @@ interface RuntimeBridge {
     val events: Flow<RuntimeEvent>
     /** True only when restarting startSession can resume the provider-owned conversation safely. */
     val supportsSessionRecovery: Boolean get() = false
-    suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile, clientSessionId: String? = null): String
+    suspend fun startSession(projectId: String, projectSlug: String, projectKind: ProjectKind, prompt: String, conversationHistory: List<ChatMessage>, provider: ProviderProfile, clientSessionId: String? = null, chatId: String? = null): String
     suspend fun respondToApproval(request: ToolRequest, approved: Boolean)
+    /**
+     * Level-aware approval: bridges whose launch gate records grants
+     * (Antigravity, DeepSeek Harness) override this so a Chat approval is
+     * recorded as a CHAT grant instead of being downgraded to SESSION.
+     * Default keeps the old behavior for bridges without a launch gate.
+     */
+    suspend fun respondToApprovalWithLevel(request: ToolRequest, approved: Boolean, level: PermissionLevel) {
+        respondToApproval(request, approved)
+    }
     suspend fun stopSession(sessionId: String)
     suspend fun stopActiveSession()
     suspend fun undoLastChanges(projectId: String): Boolean

@@ -194,6 +194,18 @@ fun inferredDshApiForUrl(baseUrl: String): String {
 
 /** Resolves the protocol DeepSeek Harness will actually use for this saved profile. */
 fun providerProtocolForAgent(profile: ProviderProfile, agent: AgentKind): ProviderProtocol {
+    // upstream a2b5ec61: a Custom API profile carries its own gateway protocol in
+    // dshApi, and the setup picker now lets any agent choose it. Honor it
+    // for every agent; previously only DeepSeek Harness read it, so a
+    // Claude Code Custom profile always validated as anthropic-messages
+    // even when the user pointed it at an OpenAI-compatible endpoint.
+    if (profile.kind == ProviderKind.CUSTOM) {
+        return when (profile.dshApi) {
+            "openai-completions" -> ProviderProtocol.OPENAI_CHAT
+            "openai-responses" -> ProviderProtocol.OPENAI_RESPONSES
+            else -> ProviderProtocol.ANTHROPIC_GATEWAY
+        }
+    }
     if (agent != AgentKind.DEEPSEEK_HARNESS || profile.kind !in DSH_PROTOCOL_PROVIDERS) {
         return profile.kind.protocol
     }

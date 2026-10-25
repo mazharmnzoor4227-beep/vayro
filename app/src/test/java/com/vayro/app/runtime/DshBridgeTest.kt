@@ -259,7 +259,11 @@ class AgentProviderPresetTest {
     }
 
     @Test
-    fun deepSeekHarnessValidationUsesSelectedCustomProtocol() {
+    fun customProtocolChoiceAppliesToEveryAgent() {
+        // upstream a2b5ec61: a Custom API profile's picked gateway protocol is
+        // honored on every agent. Previously Claude Code ignored the pick
+        // and always validated as anthropic-messages, which 404d on
+        // OpenAI-compatible endpoints such as NVIDIA.
         val profile = ProviderProfile(
             ProviderKind.CUSTOM,
             baseUrl = "https://api.example.com/v1",
@@ -267,7 +271,9 @@ class AgentProviderPresetTest {
             dshApi = "openai-completions",
         )
         assertEquals(ProviderProtocol.OPENAI_CHAT, providerProtocolForAgent(profile, AgentKind.DEEPSEEK_HARNESS))
-        assertEquals(ProviderProtocol.ANTHROPIC_GATEWAY, providerProtocolForAgent(profile, AgentKind.CLAUDE_CODE))
+        assertEquals(ProviderProtocol.OPENAI_CHAT, providerProtocolForAgent(profile, AgentKind.CLAUDE_CODE))
+        val anthropicProfile = profile.copy(dshApi = "anthropic-messages")
+        assertEquals(ProviderProtocol.ANTHROPIC_GATEWAY, providerProtocolForAgent(anthropicProfile, AgentKind.CLAUDE_CODE))
     }
 
     @Test

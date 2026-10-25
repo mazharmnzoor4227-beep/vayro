@@ -27,7 +27,7 @@ val hasUploadSigning = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { !it.isNullOrBlank() }
-val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.54"
+val appVersionName = providers.gradleProperty("appVersionName").orNull ?: "3.2.55"
 val runtimeReleaseBaseUrl =
     "https://github.com/mazharmnzoor4227-beep/vayro/releases/download/v$appVersionName"
 val appUpdateManifestUrl =
@@ -86,7 +86,7 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 94
+        versionCode = 95
         versionName = appVersionName
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
 
@@ -211,7 +211,14 @@ tasks.register("playReadinessCheck") {
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2025.02.00"))
-    implementation("androidx.core:core-ktx:1.15.0")
+    // Crashlytics mitigation for the Api34Impl.getActionScrollInDirection
+    // NoSuchFieldError: no app code calls that API-34-only accessibility
+    // field; the crash comes from the androidx.core shim the Compose runtime
+    // triggers under an accessibility service. Bumping core to the newest
+    // stable release moves that shim forward. This is a mitigation, NOT a
+    // proven fix: the single event has no full stack, so it is confirmed
+    // only by TalkBack repro plus Crashlytics monitoring after release.
+    implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

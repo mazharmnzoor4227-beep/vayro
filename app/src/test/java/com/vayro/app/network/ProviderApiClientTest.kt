@@ -27,6 +27,49 @@ class ProviderApiClientTest {
     }
 
     @Test
+    fun notFoundForDiscoveredModelMeansWrongPathNotMissingModel() {
+        // upstream a2b5ec61: the model came from discovery, so it exists. A 404
+        // for it means the request path is not served for this protocol.
+        val failure = ProviderApiClient().classifyNotFound(
+            model = "deepseek-ai/deepseek-v4.1-flash",
+            discoveredModels = listOf(DiscoveredModel("deepseek-ai/deepseek-v4.1-flash")),
+            responseBody = "{\"detail\":\"Not Found\"}",
+        )
+        assertEquals("Endpoint error", failure.label)
+        assertTrue(failure.message.contains("gateway protocol"))
+        assertFalse(failure.message.contains("not found on this provider"))
+    }
+
+    @Test
+    fun notFoundWithModelComplaintMeansUnknownModel() {
+        // upstream a2b5ec61: the model was never discovered and the provider body
+        // complains about the model, so the model itself is unknown.
+        val failure = ProviderApiClient().classifyNotFound(
+            model = "made-up-model",
+            discoveredModels = listOf(DiscoveredModel("real-model")),
+            responseBody = "{\"error\":{\"message\":\"model not found: made-up-model\"}}",
+        )
+        assertEquals("Model error", failure.label)
+        assertTrue(failure.message.contains("available models list"))
+    }
+
+    @Test
+    fun notFoundMessagesDifferBetweenPathAndModel() {
+        val pathFailure = ProviderApiClient().classifyNotFound(
+            model = "known-model",
+            discoveredModels = listOf(DiscoveredModel("known-model")),
+            responseBody = "",
+        )
+        val modelFailure = ProviderApiClient().classifyNotFound(
+            model = "unknown-model",
+            discoveredModels = emptyList(),
+            responseBody = "{\"error\":\"model not found\"}",
+        )
+        assertFalse(pathFailure.message == modelFailure.message)
+        assertFalse(pathFailure.label == modelFailure.label)
+    }
+
+    @Test
     fun openRouterProbeIncludesRequestedProviderOrder() {
         val body = JSONObject(
             ProviderApiClient().validationBody(

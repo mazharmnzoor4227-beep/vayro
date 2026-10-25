@@ -260,15 +260,23 @@ class AppFactoryCoordinator(
         val bp = host.state().appFactoryBlueprint
         val projectDir = targetDirectory ?: host.state().activeProject?.let { workspaceRootFor(it) } ?: File(host.appContext.filesDir, "projects/${bp?.name?.lowercase()?.replace(" ", "_") ?: "app"}")
 
-        val (newCode, newName) = SigningAndVersionManager.bumpVersion(projectDir, bumpType)
-        host.updateState { state ->
-            val updatedBp = state.appFactoryBlueprint?.let {
-                it.copy(buildConfig = it.buildConfig.copy(versionCode = newCode, versionName = newName))
+        // Crashlytics ENOENT fix: a missing/unwritable project folder used to
+        // throw out of this click handler uncaught. Surface it as a message.
+        try {
+            val (newCode, newName) = SigningAndVersionManager.bumpVersion(projectDir, bumpType)
+            host.updateState { state ->
+                val updatedBp = state.appFactoryBlueprint?.let {
+                    it.copy(buildConfig = it.buildConfig.copy(versionCode = newCode, versionName = newName))
+                }
+                state.copy(
+                    appFactoryBlueprint = updatedBp,
+                    appFactoryMessage = "Bumped version to $newName (code $newCode)"
+                )
             }
-            state.copy(
-                appFactoryBlueprint = updatedBp,
-                appFactoryMessage = "Bumped version to $newName (code $newCode)"
-            )
+        } catch (e: Exception) {
+            host.updateState {
+                it.copy(appFactoryMessage = "Could not save version: project folder is missing or unavailable (${e.message}). Create or open the project and try again.")
+            }
         }
     }
 

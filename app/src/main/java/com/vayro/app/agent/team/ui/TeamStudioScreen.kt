@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Engineering
@@ -71,6 +72,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -118,6 +120,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun TeamStudioScreen(
     orchestrator: AgentTeamOrchestrator,
+    agentStore: com.vayro.app.data.CustomTeamAgentStore? = null,
+    projects: List<com.vayro.app.model.Project> = emptyList(),
     onClose: () -> Unit = {}
 ) {
     val sessionState by orchestrator.sessionState.collectAsState()
@@ -126,6 +130,18 @@ fun TeamStudioScreen(
     val scope = rememberCoroutineScope()
     var selectedTab by remember { mutableIntStateOf(0) }
     var inputGoal by remember { mutableStateOf(sessionState.activeGoal.ifBlank { "Build robust offline mobile feature with testing and CI" }) }
+    val customAgents by remember(agentStore) {
+        agentStore?.agents ?: kotlinx.coroutines.flow.MutableStateFlow(emptyList<com.vayro.app.agent.team.model.CustomTeamAgent>())
+    }.collectAsState()
+    var suggestedAgentIds by remember { mutableStateOf(setOf<String>()) }
+    var boundProjectId by remember { mutableStateOf<String?>(null) }
+    val suggestedAgents = remember(inputGoal, customAgents) {
+        if (inputGoal.isBlank() || customAgents.isEmpty()) emptyList()
+        else customAgents.filter { com.vayro.app.agent.team.model.customAgentMatchesGoal(it, inputGoal) }
+    }
+    LaunchedEffect(suggestedAgents) {
+        suggestedAgentIds = suggestedAgents.map { it.id }.toSet()
+    }
 
     val tabs = listOf("Roster", "Task DAG", "Comms", "Blackboard", "Reviews")
 
@@ -189,7 +205,8 @@ fun TeamStudioScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "10 Specialized Autonomous Agents",
+                                text = if (customAgents.isEmpty()) "10 Specialized Autonomous Agents"
+                                else "${10 + customAgents.size} Agents (${customAgents.size} custom)",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -230,6 +247,75 @@ fun TeamStudioScreen(
                     shape = RoundedCornerShape(8.dp)
                 )
                 Spacer(Modifier.height(8.dp))
+                if (projects.isNotEmpty()) {
+                    Text(
+                        text = "Run in:",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = boundProjectId == null,
+                            onClick = { boundProjectId = null },
+                            label = { Text("New team workspace", fontSize = 12.sp) },
+                            leadingIcon = if (boundProjectId == null) {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                            } else null
+                        )
+                        projects.forEach { project ->
+                            val selected = boundProjectId == project.id
+                            FilterChip(
+                                selected = selected,
+                                onClick = { boundProjectId = if (selected) null else project.id },
+                                label = { Text(project.name, fontSize = 12.sp) },
+                                leadingIcon = if (selected) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (suggestedAgents.isNotEmpty()) {
+                    Text(
+                        text = "Suggested agents for this goal:",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        suggestedAgents.forEach { agent ->
+                            val selected = suggestedAgentIds.contains(agent.id)
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    suggestedAgentIds = if (selected) suggestedAgentIds - agent.id
+                                    else suggestedAgentIds + agent.id
+                                },
+                                label = { Text(agent.name, fontSize = 12.sp) },
+                                leadingIcon = if (selected) {
+                                    { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                                } else null
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -242,7 +328,14 @@ fun TeamStudioScreen(
                             if (inputGoal.isNotBlank()) {
                                 scope.launch {
                                     if (sessionState.isRunning) orchestrator.cancelRealRun()
-                                    orchestrator.planProject(inputGoal)
+                                    val chosen = customAgents.filter { suggestedAgentIds.contains(it.id) }
+                                    val chosenProject = projects.firstOrNull { it.id == boundProjectId }
+                                    orchestrator.bindProject(
+                                        chosenProject?.let {
+                                            com.vayro.app.agent.team.runtime.TeamProjectBinding(it.id, it.slug, it.name, it.kind)
+                                        }
+                                    )
+                                    orchestrator.planProject(inputGoal, chosen)
                                     runCatching { orchestrator.autoRunAllReal() }
                                         .onFailure { orchestrator.reportError(it.message ?: "Plan run failed.") }
                                 }
@@ -372,7 +465,7 @@ fun TeamStudioScreen(
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             when (selectedTab) {
-                0 -> TeamRosterTab(orchestrator = orchestrator)
+                0 -> TeamRosterTab(orchestrator = orchestrator, agentStore = agentStore, projects = projects)
                 1 -> TeamDagTab(orchestrator = orchestrator)
                 2 -> TeamCommsTab(orchestrator = orchestrator)
                 3 -> TeamBlackboardTab(orchestrator = orchestrator)
@@ -386,16 +479,42 @@ fun TeamStudioScreen(
  * Tab 1: Team Roster with all 10 specialized agent roles.
  */
 @Composable
-private fun TeamRosterTab(orchestrator: AgentTeamOrchestrator) {
+private fun TeamRosterTab(
+    orchestrator: AgentTeamOrchestrator,
+    agentStore: com.vayro.app.data.CustomTeamAgentStore?,
+    projects: List<com.vayro.app.model.Project>
+) {
     val sessionState by orchestrator.sessionState.collectAsState()
     val liveTasks by orchestrator.liveTasks.collectAsState()
     val usages = orchestrator.budgetTracker.getAllRoleUsages()
     var selectedRole by remember { mutableStateOf<TeamRole?>(null) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var editingAgent by remember { mutableStateOf<com.vayro.app.agent.team.model.CustomTeamAgent?>(null) }
+    var customizingRole by remember { mutableStateOf<TeamRole?>(null) }
+    val customAgents by remember(agentStore) {
+        agentStore?.agents ?: kotlinx.coroutines.flow.MutableStateFlow(emptyList<com.vayro.app.agent.team.model.CustomTeamAgent>())
+    }.collectAsState()
+    val overrides by remember(agentStore) {
+        agentStore?.overrides ?: kotlinx.coroutines.flow.MutableStateFlow(emptyMap<TeamRole, com.vayro.app.agent.team.model.BuiltinAgentOverride>())
+    }.collectAsState()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        if (agentStore != null) {
+            item {
+                OutlinedButton(
+                    onClick = { showCreateDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Create custom agent", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
         items(TeamRole.entries) { role ->
             val isActive = sessionState.activeRole == role
             // Latest live task for this role (running now or most recent finished).
@@ -533,6 +652,19 @@ private fun TeamRosterTab(orchestrator: AgentTeamOrchestrator) {
                         if (permissions.canCommitGit) ChipTag("Git Release")
                         if (permissions.canApproveReviews) ChipTag("Review Sign-off")
                     }
+                    if (overrides.containsKey(role) && agentStore != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ChipTag("Customized")
+                            TextButton(onClick = { customizingRole = role }) {
+                                Text("Edit customization", fontSize = 11.sp)
+                            }
+                        }
+                    }
 
                     if (usage != null && usage.tokensUsed > 0L) {
                         Spacer(Modifier.height(6.dp))
@@ -544,6 +676,25 @@ private fun TeamRosterTab(orchestrator: AgentTeamOrchestrator) {
                         )
                     }
                 }
+            }
+        }
+
+        if (agentStore != null && customAgents.isNotEmpty()) {
+            item {
+                Text(
+                    text = "Custom agents (${customAgents.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+            items(customAgents) { agent ->
+                CustomAgentCard(
+                    agent = agent,
+                    projects = projects,
+                    onEdit = { editingAgent = agent },
+                    onToggleEnabled = { agentStore.setEnabled(agent.id, !agent.isEnabled) }
+                )
             }
         }
     }
@@ -563,9 +714,54 @@ private fun TeamRosterTab(orchestrator: AgentTeamOrchestrator) {
             AgentDetailSheet(
                 role = role,
                 live = live,
-                orchestrator = orchestrator
+                orchestrator = orchestrator,
+                onCustomize = if (agentStore != null) ({ customizingRole = role; selectedRole = null }) else null,
+                isCustomized = overrides.containsKey(role)
             )
         }
+    }
+
+    if (showCreateDialog && agentStore != null) {
+        CustomAgentEditorDialog(
+            projects = projects,
+            onDismiss = { showCreateDialog = false },
+            onSave = { agent ->
+                agentStore.save(agent)
+                showCreateDialog = false
+            }
+        )
+    }
+    val agentToEdit = editingAgent
+    if (agentToEdit != null && agentStore != null) {
+        CustomAgentEditorDialog(
+            existing = agentToEdit,
+            projects = projects,
+            onDismiss = { editingAgent = null },
+            onSave = { agent ->
+                agentStore.save(agent)
+                editingAgent = null
+            },
+            onDelete = { agent ->
+                agentStore.remove(agent.id)
+                editingAgent = null
+            }
+        )
+    }
+    val roleToCustomize = customizingRole
+    if (roleToCustomize != null && agentStore != null) {
+        BuiltinAgentCustomizeDialog(
+            role = roleToCustomize,
+            existing = overrides[roleToCustomize],
+            onDismiss = { customizingRole = null },
+            onSave = { override ->
+                agentStore.saveOverride(override)
+                customizingRole = null
+            },
+            onReset = {
+                agentStore.clearOverride(roleToCustomize)
+                customizingRole = null
+            }
+        )
     }
 }
 
@@ -597,10 +793,130 @@ private fun PulsingDot() {
  * streaming output, stats, and produced artifacts.
  */
 @Composable
+@Composable
+private fun CustomAgentCard(
+    agent: com.vayro.app.agent.team.model.CustomTeamAgent,
+    projects: List<com.vayro.app.model.Project>,
+    onEdit: () -> Unit,
+    onToggleEnabled: () -> Unit
+) {
+    Card(
+        onClick = onEdit,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        )
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = agent.name,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = MaterialTheme.colorScheme.tertiaryContainer
+                            ) {
+                                Text(
+                                    text = "CUSTOM",
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = agent.title,
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Switch(
+                    checked = agent.isEnabled,
+                    onCheckedChange = { onToggleEnabled() }
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = agent.description,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val p = agent.permissions
+                if (p.canWriteCode) ChipTag("Code Edit")
+                if (p.canRunTerminal) ChipTag("Terminal")
+                if (p.canAccessNetwork) ChipTag("Network")
+                if (p.canCommitGit) ChipTag("Git Release")
+                if (p.canApproveReviews) ChipTag("Review Sign-off")
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = if (agent.boundProjectIds.isEmpty()) "All projects"
+                else {
+                    val names = projects.filter { agent.boundProjectIds.contains(it.id) }.map { it.name }
+                    if (names.isEmpty()) "${agent.boundProjectIds.size} projects"
+                    else names.take(3).joinToString(", ") + if (names.size > 3) " +${names.size - 3}" else ""
+                },
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
 private fun AgentDetailSheet(
     role: TeamRole,
     live: LiveTaskInfo?,
-    orchestrator: AgentTeamOrchestrator
+    orchestrator: AgentTeamOrchestrator,
+    onCustomize: (() -> Unit)? = null,
+    isCustomized: Boolean = false
 ) {
     val sessionState by orchestrator.sessionState.collectAsState()
     val usages = orchestrator.budgetTracker.getAllRoleUsages()
@@ -682,6 +998,20 @@ private fun AgentDetailSheet(
                     color = if (isRunning) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Medium
                 )
+                if (onCustomize != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (isCustomized) ChipTag("Customized")
+                        TextButton(onClick = onCustomize) {
+                            Text(
+                                if (isCustomized) "Edit customization" else "Customize agent",
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
                 // Which engine actually ran it: when the role's wired engine
                 // was unusable, a fallback (e.g. Antigravity for a Claude
                 // Code task) ran it instead. Shown so the fallback is visible.

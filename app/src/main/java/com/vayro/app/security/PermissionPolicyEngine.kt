@@ -30,9 +30,21 @@ enum class PermissionCategory {
 enum class PermissionLevel {
     ONCE,
     SESSION,
+    CHAT,
     PROJECT,
     ALWAYS,
     DENY
+}
+
+/**
+ * Stable key for a conversation-scoped (CHAT) grant: one chat inside one
+ * project. Null/blank parts mean "no conversation identity", which never
+ * matches a grant, so a Chat approval without a known chat degrades to a
+ * single approval instead of leaking into another conversation.
+ */
+fun chatGrantKey(projectSlug: String?, chatId: String?): String? {
+    if (projectSlug.isNullOrBlank() || chatId.isNullOrBlank()) return null
+    return "$projectSlug::$chatId"
 }
 
 data class PermissionRequest(
@@ -40,7 +52,8 @@ data class PermissionRequest(
     val target: String,
     val command: String? = null,
     val sessionId: String? = null,
-    val projectId: String? = null
+    val projectId: String? = null,
+    val chatId: String? = null
 )
 
 data class PermissionDecision(
@@ -75,6 +88,14 @@ class PermissionPolicyEngine(
 
     // Single-use grants: sessionId -> Category -> List of target patterns
     private val onceGrants = ConcurrentHashMap<String, ConcurrentHashMap<PermissionCategory, MutableSet<String>>>()
+
+    // Conversation grants: chatGrantKey(projectSlug, chatId) -> Category -> List of target patterns.
+    // Narrower than a project grant (one chat only, never another chat or
+    // project) and wider than a session grant (a fresh task run inside the
+    // same chat gets a fresh sessionId, so session grants never survive it).
+    // Persisted like project policies so an app restart inside the same
+    // conversation does not re-prompt.
+    private val chatGrants = ConcurrentHashMap<String, ConcurrentHashMap<PermissionCategory, MutableSet<String>>>()
 
     // Project grants: projectId -> Category -> PermissionLevel
     private val projectPolicies = ConcurrentHashMap<String, ConcurrentHashMap<PermissionCategory, PermissionLevel>>()
@@ -219,7 +240,7 @@ class PermissionPolicyEngine(
                 request.category == PermissionCategory.FILE_DELETE
 
         if (isFileOp && isSensitivePath(request.target).isSensitive) {
-            val hasSecretsGrant = checkScopeGrant(PermissionCategory.SECRETS, request.target, request.projectId, request.sessionId)
+            val hasSecretsGrant = checkScopeGrant(PermissionCategory.SECRETS, request.target, request.projectId, request.sessionId, request.chatId)
             if (!hasSecretsGrant) {
                 val decision = PermissionDecision(
                     allowed = false,
@@ -297,6 +318,27 @@ class PermissionPolicyEngine(
                     sessionId = request.sessionId,
                     projectId = request.projectId,
                     level = PermissionLevel.SESSION
+                )
+            )
+            return decision
+        }
+
+        // 6b. Check CHAT (conversation) grants. These outlive a single task
+        // run inside the same chat but never apply to another chat or
+        // project, because the key carries both the project slug and the
+        // chat id. Explicit DENY above still wins over a chat grant.
+        if (request.chatId != null && isChatGranted(request.chatId, request.category, request.target)) {
+            val decision = PermissionDecision(allowed = true, level = PermissionLevel.CHAT, reason = "Allowed via conversation grant")
+            auditLogger.log(
+                SecurityAuditEntry(
+                    category = request.category,
+                    action = "EVALUATE_CHAT",
+                    target = request.target,
+                    decision = AuditDecision.ALLOWED,
+                    reason = decision.reason,
+                    sessionId = request.sessionId,
+                    projectId = request.projectId,
+                    level = PermissionLevel.CHAT
                 )
             )
             return decision
@@ -381,10 +423,11 @@ class PermissionPolicyEngine(
     fun getAllGlobalPolicies(): Map<PermissionCategory, PermissionLevel> = globalPolicies.toMap()
     fun getProjectPolicy(projectId: String, category: PermissionCategory): PermissionLevel? = projectPolicies[projectId]?.get(category)
 
-    private fun checkScopeGrant(category: PermissionCategory, target: String, projectId: String?, sessionId: String?): Boolean {
+    private fun checkScopeGrant(category: PermissionCategory, target: String, projectId: String?, sessionId: String?, chatId: String? = null): Boolean {
         if (globalPolicies[category] == PermissionLevel.ALWAYS) return true
         if (projectId != null && (projectPolicies[projectId]?.get(category) == PermissionLevel.ALWAYS || projectPolicies[projectId]?.get(category) == PermissionLevel.PROJECT)) return true
         if (sessionId != null && isSessionGranted(sessionId, category, target)) return true
+        if (chatId != null && isChatGranted(chatId, category, target)) return true
         return false
     }
 
@@ -399,7 +442,8 @@ class PermissionPolicyEngine(
         level: PermissionLevel,
         targetPattern: String = "*",
         projectId: String? = null,
-        sessionId: String? = null
+        sessionId: String? = null,
+        chatId: String? = null
     ) {
         when (level) {
             PermissionLevel.ONCE -> {
@@ -414,6 +458,14 @@ class PermissionPolicyEngine(
                     val map = sessionGrants.computeIfAbsent(sessionId) { ConcurrentHashMap() }
                     val set = map.computeIfAbsent(category) { ConcurrentHashMap.newKeySet() }
                     set.add(targetPattern)
+                }
+            }
+            PermissionLevel.CHAT -> {
+                if (chatId != null) {
+                    val map = chatGrants.computeIfAbsent(chatId) { ConcurrentHashMap() }
+                    val set = map.computeIfAbsent(category) { ConcurrentHashMap.newKeySet() }
+                    set.add(targetPattern)
+                    persistPolicies()
                 }
             }
             PermissionLevel.PROJECT -> {
@@ -445,6 +497,28 @@ class PermissionPolicyEngine(
         onceGrants.remove(sessionId)
     }
 
+    fun revokePermission(category: PermissionCategory, projectId: String? = null, sessionId: String? = null, chatId: String? = null) {
+        if (sessionId != null) {
+            sessionGrants[sessionId]?.remove(category)
+            onceGrants[sessionId]?.remove(category)
+        }
+        if (chatId != null) {
+            chatGrants[chatId]?.remove(category)
+        }
+        if (projectId != null) {
+            projectPolicies[projectId]?.remove(category)
+        }
+        if (sessionId == null && chatId == null && projectId == null) {
+            globalPolicies.remove(category)
+        }
+        persistPolicies()
+    }
+
+    /** Drops every conversation grant for one chat (e.g. when the chat is deleted). */
+    fun clearChatPermissions(chatId: String) {
+        if (chatGrants.remove(chatId) != null) persistPolicies()
+    }
+
 
     private fun consumeOnceGrant(sessionId: String, category: PermissionCategory, target: String): Boolean {
         val patterns = onceGrants[sessionId]?.get(category) ?: return false
@@ -454,6 +528,11 @@ class PermissionPolicyEngine(
             return true
         }
         return false
+    }
+
+    private fun isChatGranted(chatId: String, category: PermissionCategory, target: String): Boolean {
+        val patterns = chatGrants[chatId]?.get(category) ?: return false
+        return patterns.any { patternMatches(it, target) }
     }
 
     private fun isSessionGranted(sessionId: String, category: PermissionCategory, target: String): Boolean {
@@ -484,6 +563,21 @@ class PermissionPolicyEngine(
                         val lvl = runCatching { PermissionLevel.valueOf(globals.getString(key)) }.getOrNull()
                         if (cat != null && lvl != null) {
                             globalPolicies[cat] = lvl
+                        }
+                    }
+                    val chats = root.optJSONObject("chats")
+                    chats?.keys()?.forEach { chatKey ->
+                        val chatObj = chats.getJSONObject(chatKey)
+                        val map = chatGrants.computeIfAbsent(chatKey) { ConcurrentHashMap() }
+                        chatObj.keys().forEach { catKey ->
+                            val cat = runCatching { PermissionCategory.valueOf(catKey) }.getOrNull()
+                            val patterns = runCatching { chatObj.getJSONArray(catKey) }.getOrNull()
+                            if (cat != null && patterns != null) {
+                                val set = map.computeIfAbsent(cat) { ConcurrentHashMap.newKeySet() }
+                                for (i in 0 until patterns.length()) {
+                                    set.add(patterns.getString(i))
+                                }
+                            }
                         }
                     }
                     val projects = root.optJSONObject("projects")
@@ -519,6 +613,18 @@ class PermissionPolicyEngine(
                     projects.put(projId, projObj)
                 }
                 root.put("projects", projects)
+
+                val chats = JSONObject()
+                chatGrants.forEach { (chatKey, map) ->
+                    val chatObj = JSONObject()
+                    map.forEach { (cat, patterns) ->
+                        val arr = JSONArray()
+                        patterns.forEach { arr.put(it) }
+                        chatObj.put(cat.name, arr)
+                    }
+                    chats.put(chatKey, chatObj)
+                }
+                root.put("chats", chats)
 
                 SafeFileOps.atomicWriteText(file, root.toString())
             }

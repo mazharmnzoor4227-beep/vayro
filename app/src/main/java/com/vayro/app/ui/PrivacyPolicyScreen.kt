@@ -150,7 +150,7 @@ fun PrivacyPolicyScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(scrollState)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
         ) {
             MarkdownText(
                 markdown = PRIVACY_POLICY_MARKDOWN.trimIndent(),

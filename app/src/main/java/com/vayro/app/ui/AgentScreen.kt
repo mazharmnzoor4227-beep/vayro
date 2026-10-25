@@ -126,6 +126,7 @@ import com.vayro.app.network.ModelDiscoveryResult
 import com.vayro.app.runtime.AntigravityAuthStatus
 import com.vayro.app.ui.theme.PocketBlue
 import com.vayro.app.ui.theme.PocketOrange
+import com.vayro.app.ui.theme.PocketGreen
 import kotlinx.coroutines.launch
 
 private data class KeyConnectionStatus(
@@ -378,11 +379,11 @@ fun AgentScreen(
             antigravityTesting -> Triple(PocketOrange, "Testing…", PocketOrange.copy(alpha = 0.13f))
             state.antigravityAuth.status != AntigravityAuthStatus.SIGNED_IN || antigravityHelloFailed ->
                 Triple(MaterialTheme.colorScheme.error, "Attention", MaterialTheme.colorScheme.error.copy(alpha = 0.12f))
-            else -> Triple(Color(0xFF58C9A3), "Online", Color(0xFF58C9A3).copy(alpha = 0.13f))
+            else -> Triple(PocketGreen, "Online", PocketGreen.copy(alpha = 0.13f))
         }
     } else {
         when (state.apiPingStatus) {
-            ApiPingStatus.OK -> Triple(Color(0xFF58C9A3), "Online", Color(0xFF58C9A3).copy(alpha = 0.13f))
+            ApiPingStatus.OK -> Triple(PocketGreen, "Online", PocketGreen.copy(alpha = 0.13f))
             ApiPingStatus.FAILED -> Triple(MaterialTheme.colorScheme.error, "Attention", MaterialTheme.colorScheme.error.copy(alpha = 0.12f))
             ApiPingStatus.PINGING -> Triple(PocketOrange, "Testing…", PocketOrange.copy(alpha = 0.13f))
             ApiPingStatus.IDLE -> Triple(MaterialTheme.colorScheme.onSurfaceVariant, "Not tested", MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
@@ -934,7 +935,7 @@ fun AgentScreen(
                                 }
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
-                                    color = if (isSelected) Color.White else Color.Transparent,
+                                    color = if (isSelected) MaterialTheme.colorScheme.surfaceContainerHighest else Color.Transparent,
                                     border = if (isHeroTab && !isSelected) BorderStroke(1.dp, PocketOrange.copy(alpha = 0.6f)) else null,
                                     modifier = Modifier
                                         .size(56.dp)
@@ -963,7 +964,7 @@ fun AgentScreen(
                                                 "Your API",
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                                 fontSize = 11.sp,
-                                                color = if (isHeroTab) PocketOrange else if (isSelected) Color(0xFF111111) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                color = if (isHeroTab) PocketOrange else if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1,
                                             )
                                         }
@@ -1195,7 +1196,9 @@ fun AgentScreen(
                         },
                         onBaseUrl = {
                             baseUrl = it
-                            if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind == ProviderKind.CUSTOM) {
+                            // upstream a2b5ec61: infer the gateway protocol from the
+                            // URL for Custom API on every agent.
+                            if (selectedKind == ProviderKind.CUSTOM) {
                                 dshApi = inferredDshApiForUrl(it)
                             }
                             models = emptyList()
@@ -1463,7 +1466,7 @@ private fun AgentAntigravityCard(
                                         modifier = Modifier
                                             .size(28.dp)
                                             .background(
-                                                if (account.isActive) Color(0xFF34A853).copy(alpha = 0.15f)
+                                                if (account.isActive) PocketGreen.copy(alpha = 0.15f)
                                                 else MaterialTheme.colorScheme.surfaceVariant,
                                                 CircleShape,
                                             ),
@@ -1473,7 +1476,7 @@ private fun AgentAntigravityCard(
                                             Icon(
                                                 imageVector = Icons.Default.Check,
                                                 contentDescription = "Active account",
-                                                tint = Color(0xFF34A853),
+                                                tint = PocketGreen,
                                                 modifier = Modifier.size(16.dp),
                                             )
                                         } else {
@@ -1575,11 +1578,11 @@ private fun AgentAntigravityCard(
                     Box(
                         modifier = Modifier
                             .size(34.dp)
-                            .background(Color(0xFF34A853).copy(alpha = 0.14f), RoundedCornerShape(10.dp))
-                            .border(1.dp, Color(0xFF34A853).copy(alpha = 0.3f), RoundedCornerShape(10.dp)),
+                            .background(PocketGreen.copy(alpha = 0.14f), RoundedCornerShape(10.dp))
+                            .border(1.dp, PocketGreen.copy(alpha = 0.3f), RoundedCornerShape(10.dp)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("G", color = Color(0xFF34A853), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("G", color = PocketGreen, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
@@ -1596,7 +1599,7 @@ private fun AgentAntigravityCard(
                         Text(
                             if (auth.status == AntigravityAuthStatus.SIGNED_IN) "Connected with Google" else "Required for Antigravity",
                             fontSize = 11.sp,
-                            color = if (auth.status == AntigravityAuthStatus.SIGNED_IN) Color(0xFF2E9D72) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (auth.status == AntigravityAuthStatus.SIGNED_IN) PocketGreen else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     if (auth.status == AntigravityAuthStatus.SIGNED_IN) {
@@ -1878,7 +1881,7 @@ private fun AgentAntigravityCard(
                         Icon(
                             if (state.apiPingStatus == ApiPingStatus.FAILED) Icons.Default.Warning else Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else Color(0xFF2E9D72),
+                            tint = if (state.apiPingStatus == ApiPingStatus.FAILED) MaterialTheme.colorScheme.error else PocketGreen,
                             modifier = Modifier.size(14.dp),
                         )
                         Spacer(Modifier.width(7.dp))
@@ -2004,7 +2007,7 @@ private fun GeminiApiModeSection(
                         Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = null,
-                            tint = Color(0xFF2E9D72),
+                            tint = PocketGreen,
                             modifier = Modifier.size(14.dp),
                         )
                         Spacer(Modifier.width(7.dp))
@@ -2244,7 +2247,9 @@ private fun AgentProviderCard(
                                 )
                             }
                         }
-                        if (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS && !selectedKind.fixedProtocol) {
+                        // upstream a2b5ec61: same picker fix as setup. Custom API
+                        // shows the gateway protocol picker on every agent.
+                        if ((selectedKind == ProviderKind.CUSTOM || (state.agentKind == AgentKind.DEEPSEEK_HARNESS && selectedKind in DSH_PROTOCOL_PROVIDERS)) && !selectedKind.fixedProtocol) {
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 Text("Gateway protocol", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(5.dp))
@@ -2337,7 +2342,7 @@ private fun AgentProviderCard(
                         fontSize = 10.sp,
                         lineHeight = 14.sp,
                         color = when (keyStatus.successful) {
-                            true -> Color(0xFF2E9D72)
+                            true -> PocketGreen
                             false -> MaterialTheme.colorScheme.error
                             null -> MaterialTheme.colorScheme.onSurfaceVariant
                         },
@@ -2390,7 +2395,7 @@ private fun AgentProviderCard(
                                 keyStatus?.let {
                                     Row(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (it.successful == null) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.5.dp)
-                                        else Icon(if (it.successful) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (it.successful) Color(0xFF2E9D72) else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                                        else Icon(if (it.successful) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (it.successful) PocketGreen else MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(7.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(it.message, fontSize = 10.sp, lineHeight = 14.sp, color = if (it.successful == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2512,7 +2517,7 @@ private fun PremiumSummaryRow(
                 fontSize = 11.sp,
                 color = when {
                     error -> MaterialTheme.colorScheme.error
-                    positive -> Color(0xFF2E9D72)
+                    positive -> PocketGreen
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 // Medium: the subtitle stayed capped at 2 lines even when
@@ -3194,7 +3199,7 @@ private fun CatalogProviderCard(
                 if (connected) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            Modifier.size(8.dp).background(Color(0xFF58C9A3), CircleShape),
+                            Modifier.size(8.dp).background(PocketGreen, CircleShape),
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
@@ -3319,7 +3324,7 @@ private fun CatalogProviderCard(
                     message,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
-                    color = if (statusOk) Color(0xFF58C9A3) else MaterialTheme.colorScheme.error,
+                    color = if (statusOk) PocketGreen else MaterialTheme.colorScheme.error,
                 )
             }
             statusDetail?.let { detail ->

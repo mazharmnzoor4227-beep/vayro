@@ -323,7 +323,7 @@ fun ProductOnboardingScreen(
                                     pagerState.animateScrollToPage(pagerState.currentPage - 1)
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(52.dp),
                             shape = RoundedCornerShape(12.dp),
                         ) {
                             Text("Previous", fontSize = 13.sp)
@@ -341,7 +341,7 @@ fun ProductOnboardingScreen(
                                 }
                             }
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).height(52.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,

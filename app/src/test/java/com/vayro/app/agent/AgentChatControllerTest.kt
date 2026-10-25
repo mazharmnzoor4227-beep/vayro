@@ -184,4 +184,41 @@ class AgentChatControllerTest {
 
         assertEquals(listOf("file1.kt", "dir/file2.kt"), resolved)
     }
+
+    @Test
+    fun `compactSystemMessageText collapses a finished task dump to one line`() {
+        val text = "SYSTEM_MESSAGE\n[Message] Task id \"abc/def123\" finished with result: Command exited with code 0\nCommand output: lots of output here"
+        val compacted = controller.compactSystemMessageText(text)
+        assertTrue(compacted.contains("Background task def123 finished (exit code 0)."))
+        assertFalse(compacted.contains("lots of output here"))
+    }
+
+    @Test
+    fun `compactSystemMessageText keeps the tail of a failed task output`() {
+        val text = "[Message] Task id \"xyz\" finished with result: Command exited with code 1\nCommand output: boom"
+        val compacted = controller.compactSystemMessageText(text)
+        assertTrue(compacted.contains("Background task xyz failed (exit code 1)."))
+        assertTrue(compacted.contains("boom"))
+    }
+
+    @Test
+    fun `compactSystemMessageDumps leaves user messages and plain text alone`() {
+        val msgs = listOf(
+            ChatMessage(fromUser = true, text = "Task id \"x\" finished with result: Command exited with code 0"),
+            ChatMessage(fromUser = false, text = "hello"),
+        )
+        val out = controller.compactSystemMessageDumps(msgs)
+        assertEquals(msgs[0].text, out[0].text)
+        assertEquals("hello", out[1].text)
+    }
+
+    @Test
+    fun `roadmapForMessage gates BUILD roadmaps on approval or closing line`() {
+        val unapproved = "### Implementation Roadmap\n1. [ ] Step one"
+        assertEquals(null, controller.roadmapForMessage(unapproved, ExecutionMode.BUILD))
+        val approved = "### Implementation Roadmap\n1. [x] Step one"
+        // parseFromText marks all-completed roadmaps approved; BUILD gate passes them.
+        assertTrue(controller.roadmapForMessage(approved, ExecutionMode.BUILD) != null ||
+            controller.roadmapForMessage(unapproved + "\nPlease click Approve & Build to proceed.", ExecutionMode.BUILD) != null)
+    }
 }

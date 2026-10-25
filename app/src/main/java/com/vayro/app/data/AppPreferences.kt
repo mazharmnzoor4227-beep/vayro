@@ -265,6 +265,16 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("execution_mode", ExecutionMode.UNIFIED.name) ?: ExecutionMode.UNIFIED.name
         set(value) { preferences.edit().putString("execution_mode", value).commit() }
 
+    /**
+     * Identity keys of completion-banner events the user (or the 3-second
+     * auto-dismiss) has already acknowledged. Persisted so a dismissed
+     * "Verified & Completed" banner can never reappear for the same finished
+     * task after an app restart. See completionEventKeys in ProjectSessionState.
+     */
+    var acknowledgedBannerEventKeys: Set<String>
+        get() = preferences.getStringSet("acknowledged_banner_event_keys", emptySet())?.toSet() ?: emptySet()
+        set(value) { preferences.edit().putStringSet("acknowledged_banner_event_keys", value).commit() }
+
     var agentBrowserDriveEnabled: Boolean
         get() = preferences.getBoolean("agent_browser_drive_enabled", true)
         set(value) { preferences.edit().putBoolean("agent_browser_drive_enabled", value).commit() }
@@ -309,7 +319,10 @@ class AppPreferences(private val context: Context) {
         // as unconfigured so DeepSeek opens on its own official provider.
         val legacyClaudeDefaultInDeepSeek = agent == AgentKind.DEEPSEEK_HARNESS &&
             storedKind == ProviderKind.ANTHROPIC &&
-            !vault.contains(ProviderKind.ANTHROPIC.name) &&
+            // A keystore failure degrades to "no saved secret", never a throw:
+            // loadProvider runs on the UI thread during agent switches, and a
+            // vault throw there used to kill the app on the agent tap.
+            !runCatching { vault.contains(ProviderKind.ANTHROPIC.name) }.getOrDefault(false) &&
             storedBaseUrl == ProviderKind.ANTHROPIC.defaultBaseUrl &&
             storedModel == ProviderKind.ANTHROPIC.defaultModel
         val kind = when {
@@ -348,7 +361,7 @@ class AppPreferences(private val context: Context) {
                 kind.defaultBaseUrl
             },
             model = model,
-            hasSecret = vault.contains(kind.name),
+            hasSecret = runCatching { vault.contains(kind.name) }.getOrDefault(false),
             dshApi = if (useStoredValues) {
                 preferences.getString("${sourcePrefix}dsh_api", defaultDshApiForProvider(kind))
                     ?: defaultDshApiForProvider(kind)
@@ -622,7 +635,7 @@ class AppPreferences(private val context: Context) {
         if (!file.exists()) return emptyList()
         return runCatching {
             val arr = JSONArray(file.readText())
-            (0 until arr.length()).map { i ->
+            val loaded = (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
                 ChatMessage(
                     id = obj.getString("id"),
@@ -701,14 +714,13 @@ class AppPreferences(private val context: Context) {
                                 }
                             } ?: emptyList(),
                         )
-                    } ?: if (!obj.optBoolean("fromUser", false) && obj.optString("text").isNotBlank()) {
-                        com.vayro.app.ui.RoadmapParser.parseFromText(
-                            obj.optString("text"),
-                            runCatching { ExecutionMode.valueOf(preferences.getString("execution_mode", ExecutionMode.UNIFIED.name) ?: ExecutionMode.UNIFIED.name) }.getOrDefault(ExecutionMode.UNIFIED),
-                        )
-                    } else null,
+                    },
                 )
             }
+            com.vayro.app.ui.RoadmapParser.attachParsedRoadmaps(
+                loaded,
+                runCatching { ExecutionMode.valueOf(preferences.getString("execution_mode", ExecutionMode.UNIFIED.name) ?: ExecutionMode.UNIFIED.name) }.getOrDefault(ExecutionMode.UNIFIED),
+            )
         // Crash fix (2026-10-13): a persisted transcript could contain two messages
         // with the same id (two "interrupted-<sessionId>" rows). The chat
         // LazyColumn keys by message id, and a duplicate key throws

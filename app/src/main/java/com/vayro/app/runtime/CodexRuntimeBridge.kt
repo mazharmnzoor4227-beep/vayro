@@ -130,6 +130,7 @@ class CodexRuntimeBridge(
         conversationHistory: List<ChatMessage>,
         provider: ProviderProfile,
         clientSessionId: String?,
+        chatId: String? = null,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = clientSessionId ?: UUID.randomUUID().toString()
         val startedAt = System.currentTimeMillis()

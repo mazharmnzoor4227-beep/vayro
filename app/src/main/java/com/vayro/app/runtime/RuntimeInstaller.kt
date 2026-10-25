@@ -141,6 +141,20 @@ class RuntimeInstaller(private val context: Context) {
     }
 
     /**
+     * Stricter than [isInstalled]: the core must not only exist, it must be
+     * launchable — initializeExisting() requires node and git to be
+     * EXECUTABLE, while isInstalled() only requires them to exist. A core
+     * with stripped exec bits passes isInstalled() yet fails every launch;
+     * Retry must send such a core to a repair install, never back into
+     * initializeExisting().
+     */
+    fun isCoreLaunchable(): Boolean = startupRetryRoute(
+        installed = isInstalled(),
+        nodeExecutable = File(rootfs, "usr/local/bin/node").canExecute(),
+        gitExecutable = File(rootfs, "usr/bin/git").canExecute(),
+    ) == StartupRetryRoute.INITIALIZE_EXISTING
+
+    /**
      * One-shot cleanup for devices that already extracted a tarball built on
      * macOS without the `--no-mac-metadata` flag. Such bundles contain
      * `._filename` AppleDouble metadata files that crash Python 3.8 when it
@@ -162,6 +176,36 @@ class RuntimeInstaller(private val context: Context) {
             proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so"),
             rootfs = rootfs,
         )
+    }
+
+    /**
+     * Crashlytics fix: same as [installedRuntime] but null instead of throwing
+     * when the core is not fully installed. UI paths must use this and route
+     * the user to repair (via ensureInstalled) instead of crashing on a
+     * partially installed core. The throwing accessor stays only for install
+     * flows that just proved installation in the same call chain.
+     */
+    fun installedRuntimeOrNull(): InstalledRuntime? =
+        if (isInstalled()) InstalledRuntime(
+            proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so"),
+            rootfs = rootfs,
+        ) else null
+
+    /**
+     * Names the actual failed check(s) behind an incomplete core, so UI
+     * messages can say what is missing instead of a generic "setup is
+     * incomplete". Mirrors the [isInstalled] conjuncts one by one.
+     */
+    fun missingCoreChecks(): List<String> = buildList {
+        if (!ensureRootfsCompatibilityLinks()) add("Runtime filesystem layout is damaged")
+        if (!File(context.applicationInfo.nativeLibraryDir, "libproot.so").canExecute()) add("PRoot launcher is unavailable")
+        if (!File(rootfs, "usr/bin/bash").exists()) add("Core runtime files are missing")
+        if (rootfsMarker.readTextOrNull() != ROOTFS_VERSION) add("Core runtime version is out of date")
+        if (!File(rootfs, "usr/local/bin/node").exists()) add("Node.js is missing from the core runtime")
+        val legacyLanguageTools = languageToolsMarker.readTextOrNull() == LANGUAGE_TOOLS_VERSION
+        val coreToolsReady = File(rootfs, "usr/bin/git").exists() && isSupportedCoreToolsVersion()
+        if (!legacyLanguageTools && !coreToolsReady) add("Core tools are missing or out of date")
+        if (!coreReadyMarker.exists()) add("Core runtime setup did not finish")
     }
 
     fun secureCredentialRoot(): File = File(context.filesDir, "secure-credentials").apply { mkdirs() }
@@ -225,6 +269,24 @@ class RuntimeInstaller(private val context: Context) {
         ) { "Unsupported architecture: Kodex requires an ARM64 device or ARM64 emulator" }
         val proot = File(context.applicationInfo.nativeLibraryDir, "libproot.so")
         require(proot.canExecute()) { "The embedded PRoot launcher is unavailable" }
+
+        // Repair a core whose binaries lost their exec bits (interrupted
+        // extraction, backup/restore round-trip). Without this, such a core
+        // passes isInstalled() yet fails initializeExisting() forever, and
+        // Retry never re-enters setup. When the bits cannot be restored,
+        // drop the rootfs marker so the extraction below rebuilds the core
+        // from the bundle (offline: embedded, online: re-downloaded); the
+        // staged swap keeps a backup, and agents/stacks reinstall after,
+        // exactly as on a rootfs version upgrade.
+        val coreBinaries = listOf(
+            File(rootfs, "usr/bin/bash"),
+            File(rootfs, "usr/local/bin/node"),
+            File(rootfs, "usr/bin/git"),
+        )
+        repairCoreExecBits(coreBinaries)
+        if (coreBinaries.any { it.exists() && !it.canExecute() }) {
+            rootfsMarker.delete()
+        }
 
         if (!File(rootfs, "usr/bin/bash").exists() || rootfsMarker.readTextOrNull() != ROOTFS_VERSION) {
             onProgress(RuntimeInstallProgress("Preparing the private development runtime", 0.03f))

@@ -78,13 +78,34 @@ class ApiKeyVault(context: Context) {
     }
 
     private fun putEncrypted(storageId: String, secret: String) {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
-        val encrypted = cipher.doFinal(secret.toByteArray(Charsets.UTF_8))
-        preferences.edit()
-            .putString("$storageId.iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString("$storageId.value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
-            .commit()
+        // A key invalidated by a lock-screen/biometric change throws when it is
+        // *used*, not when it is loaded, so a single retry after dropping the
+        // dead key is what turns a permanent save crash-loop into a fresh save.
+        // Previously stored secrets under an invalidated key are unrecoverable
+        // by definition; the retry lets the user save a new key instead of
+        // force-stopping on every Continue tap (issues #6, #7).
+        var attempt = 0
+        while (true) {
+            try {
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+                val encrypted = cipher.doFinal(secret.toByteArray(Charsets.UTF_8))
+                preferences.edit()
+                    .putString("$storageId.iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+                    .putString("$storageId.value", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+                    .commit()
+                return
+            } catch (error: Exception) {
+                if (attempt == 0 && shouldRecreateKeystoreKey(error)) {
+                    runCatching {
+                        KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
+                    }
+                    attempt++
+                } else {
+                    throw error
+                }
+            }
+        }
     }
 
     fun contains(providerId: String): Boolean = get(providerId) != null
@@ -153,7 +174,17 @@ class ApiKeyVault(context: Context) {
 
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (keyStore.getKey(alias, null) as? SecretKey)?.let { return it }
+        try {
+            (keyStore.getKey(alias, null) as? SecretKey)?.let { return it }
+        } catch (error: Exception) {
+            // An invalidated key must be dropped so a fresh one can be created;
+            // any other keystore failure still propagates to the caller.
+            if (shouldRecreateKeystoreKey(error)) {
+                runCatching { keyStore.deleteEntry(alias) }
+            } else {
+                throw error
+            }
+        }
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").run {
             init(
                 KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
@@ -169,3 +200,13 @@ class ApiKeyVault(context: Context) {
 data class ApiKeyInfo(val id: String, val name: String, val isActive: Boolean = false)
 
 data class ApiKeyCredential(val id: String, val name: String, val secret: String, val isActive: Boolean)
+
+/**
+ * True when a keystore failure means the stored key itself is unusable and must
+ * be replaced instead of failing every save. The Android invalidated-key
+ * exception is matched by class name so this stays loadable on the JVM (unit
+ * tests), where android.security.keystore does not exist.
+ */
+internal fun shouldRecreateKeystoreKey(error: Throwable): Boolean =
+    error is java.security.UnrecoverableKeyException ||
+        error.javaClass.name == "android.security.keystore.KeyPermanentlyInvalidatedException"

@@ -125,6 +125,29 @@ internal fun resolveEffectiveKind(
     return AgentResolution.Unusable(reasons.joinToString("; "))
 }
 
+internal data class TeamSessionIdentity(
+    val projectId: String,
+    val projectSlug: String,
+    val projectKind: ProjectKind,
+)
+
+internal fun resolveTeamSessionIdentity(goal: String, binding: TeamProjectBinding?): TeamSessionIdentity {
+    if (binding != null) {
+        return TeamSessionIdentity(binding.projectId, binding.projectSlug, binding.projectKind)
+    }
+    val goalHash = sha1Hex(goal)
+    return TeamSessionIdentity(
+        projectId = "team-${goalHash.take(12)}",
+        projectSlug = "team-${goalHash.take(8)}",
+        projectKind = ProjectKind.PROJECT,
+    )
+}
+
+private fun sha1Hex(input: String): String {
+    val digest = MessageDigest.getInstance("SHA-1").digest(input.toByteArray(Charsets.UTF_8))
+    return digest.joinToString("") { "%02x".format(it) }
+}
+
 /** How much streamed output is kept per live task for the drill-down view. */
 private const val OUTPUT_TAIL_CHARS = 2000
 
@@ -173,9 +196,9 @@ private const val LIVE_EMIT_THROTTLE_MS = 400L
  *   sane default; raising it risks OOM kills and thermal throttling.
  * - Each parallel agent spawns its own CLI process (node/python), so expect
  *   roughly N x single-agent memory/CPU while a stage runs.
- * - The agent works in a dedicated team workspace under [workspaceBaseDir]
- *   (one directory per team goal). A projectDir bound on the orchestrator is
- *   currently always null; binding an existing project directory is future work.
+ * - Unbound runs work in a dedicated team workspace under [workspaceBaseDir]
+ *   (one directory per team goal). A run bound to an existing project via
+ *   [TeamProjectBinding] executes in that project's real workspace instead.
  * - A user-initiated chat session uses the shared MainViewModel bridges, which
  *   are different instances from team bridges, so manual chats no longer
  *   clobber team runs (and vice versa).
@@ -282,10 +305,15 @@ class RealTeamAgentExecutor(
         // true parallelism with the other agents running right now.
         val bridge = bridgeFactory(effectiveKind)
 
-        val goalHash = sha1Hex(context.goal).take(12)
-        val projectId = "team-$goalHash"
-        val projectSlug = "team-${goalHash.take(8)}"
-        val workspace = File(workspaceBaseDir, projectId).apply { mkdirs() }
+        val identity = resolveTeamSessionIdentity(context.goal, context.projectBinding)
+        val projectId = identity.projectId
+        val projectSlug = identity.projectSlug
+        val workspace = if (context.projectBinding != null) {
+            runCatching { File(installer.installedRuntime().rootfs, "workspace/$projectSlug") }
+                .getOrElse { File(workspaceBaseDir, projectId) }
+        } else {
+            File(workspaceBaseDir, projectId)
+        }.apply { mkdirs() }
         val prompt = buildPrompt(task, context)
 
         registerLive(task, context, startedAt, LiveTaskStatus.RUNNING, "", 0L, null, effectiveKind)
@@ -393,7 +421,7 @@ class RealTeamAgentExecutor(
             bridge.startSession(
                 projectId = projectId,
                 projectSlug = projectSlug,
-                projectKind = ProjectKind.PROJECT,
+                projectKind = identity.projectKind,
                 prompt = prompt,
                 conversationHistory = emptyList(),
                 provider = provider,
@@ -519,6 +547,12 @@ class RealTeamAgentExecutor(
         sb.appendLine()
         sb.appendLine("You are the ${context.role.title} on an autonomous engineering team.")
         sb.appendLine("Team goal: ${context.goal}")
+        context.projectBinding?.let { binding ->
+            sb.appendLine(
+                "This run is bound to the existing project '${binding.projectName}'. " +
+                    "Work within its current codebase and conventions; do not scaffold a new project."
+            )
+        }
         sb.appendLine("Your task: ${task.title}")
         if (task.description.isNotBlank()) sb.appendLine("Details: ${task.description}")
         if (task.affectedFiles.isNotEmpty()) {
@@ -574,8 +608,4 @@ class RealTeamAgentExecutor(
         }
     }
 
-    private fun sha1Hex(input: String): String {
-        val digest = MessageDigest.getInstance("SHA-1").digest(input.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }
-    }
 }
