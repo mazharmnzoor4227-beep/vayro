@@ -859,8 +859,6 @@ fun PocketDevApp(
             onOpenAppFactory = { openStudio(OverlayScreen.APP_FACTORY) },
             onOpenTeamStudio = { openStudio(OverlayScreen.TEAM_STUDIO) },
             onOpenCloudHybrid = { openStudio(OverlayScreen.CLOUD_HYBRID) },
-            onOpenAllProjects = { navigator.openAllProjects() },
-            onOpenDiagnostics = { navigator.openDiagnostics() },
             onOpenMarketplace = { navigator.openMarketplace() },
             onPushToGitHubRequest = startGitPush,
         )
@@ -902,6 +900,8 @@ fun PocketDevApp(
             onOpenTeamStudio = { openStudio(OverlayScreen.TEAM_STUDIO) },
             onOpenCloudHybrid = { openStudio(OverlayScreen.CLOUD_HYBRID) },
             onOpenGitHubStudio = { navigator.openGitHubStudio() },
+            onOpenAllProjects = { navigator.openAllProjects() },
+            onOpenDiagnostics = { navigator.openDiagnostics() },
         )
     }
     // Root app-update dialog (U1): composed at the very end so it opens
