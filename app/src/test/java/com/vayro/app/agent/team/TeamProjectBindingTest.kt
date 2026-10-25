@@ -18,10 +18,15 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.util.Collections
 
 class TeamProjectBindingTest {
+
+    @get:Rule
+    val tempFolder = TemporaryFolder()
 
     private fun approvingValidator() = TeamRoleValidator(
         testSuiteRunner = { TestSuiteResult(ran = true, passed = 10, failed = 0, skipped = 0, note = "exit=0") },
@@ -81,6 +86,7 @@ class TeamProjectBindingTest {
         val orchestrator = AgentTeamOrchestrator(
             teamExecutor = capturingExecutor(captured),
             teamValidator = approvingValidator(),
+            projectDir = tempFolder.root,
         )
         orchestrator.bindProject(
             TeamProjectBinding(projectId = "proj-9", projectSlug = "billing-api", projectName = "Billing API")
@@ -99,6 +105,7 @@ class TeamProjectBindingTest {
         val orchestrator = AgentTeamOrchestrator(
             teamExecutor = capturingExecutor(captured),
             teamValidator = approvingValidator(),
+            projectDir = tempFolder.root,
         )
         orchestrator.planProject("Build a notes app")
         val report = orchestrator.autoRunAllReal()
@@ -113,6 +120,7 @@ class TeamProjectBindingTest {
         val orchestrator = AgentTeamOrchestrator(
             teamExecutor = capturingExecutor(captured),
             teamValidator = approvingValidator(),
+            projectDir = tempFolder.root,
         )
         orchestrator.bindProject(TeamProjectBinding("a-id", "a-app", "A App"))
         orchestrator.planProject("First goal")
