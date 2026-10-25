@@ -273,6 +273,9 @@ private fun GateOrb(sizeDp: Int = 54) {
         ),
         label = "gate-orb-phase",
     )
+    // Theme success token, read in composable scope: the DrawScope below
+    // is not a @Composable context, so it cannot read PocketGreen itself.
+    val successGreen = PocketGreen
     Canvas(Modifier.size(sizeDp.dp)) {
         val cx = size.width / 2f
         val cy = size.height / 2f
@@ -281,7 +284,7 @@ private fun GateOrb(sizeDp: Int = 54) {
             val angle = (i / 12f) * (2.0 * PI).toFloat()
             val pulse = 0.5f + 0.5f * sin(t + i * 0.75f).toFloat()
             drawCircle(
-                color = PocketGreen.copy(alpha = 0.3f + pulse * 0.7f),
+                color = successGreen.copy(alpha = 0.3f + pulse * 0.7f),
                 radius = (1.3f + pulse * 1.6f).dp.toPx(),
                 center = Offset(cx + ring * cos(angle), cy + ring * sin(angle)),
             )

@@ -384,7 +384,7 @@ class AntigravityRuntimeBridge(
         conversationHistory: List<ChatMessage>,
         provider: ProviderProfile,
         clientSessionId: String?,
-        chatId: String? = null,
+        chatId: String?,
     ): String = withContext(Dispatchers.IO + NonCancellable) {
         val sessionId = clientSessionId ?: UUID.randomUUID().toString()
         // Conversation key for Chat grants: the same chat across task runs

@@ -211,6 +211,227 @@ class AgentTeamOrchestrator(
     }
 
     /**
+     * Enforces the real-execution contract: the orchestrator only runs with a
+     * real [TeamAgentExecutor] wired. Without one it fails loudly instead of
+     * simulating output.
+     */
+    fun requireRealExecution() {
+        if (teamExecutor == null) {
+            throw IllegalStateException(
+                "Multi-agent mode requires a TeamAgentExecutor: no real executor is wired. " +
+                    "Pass a real executor; simulated execution does not exist."
+            )
+        }
+    }
+
+    init {
+        // Register default agent engines and configurations for all 10 roles
+        TeamRole.entries.forEach { role ->
+            val kind = when (role) {
+                TeamRole.MANAGER, TeamRole.ARCHITECT, TeamRole.CODE_REVIEWER -> AgentKind.CLAUDE_CODE
+                TeamRole.SECURITY_REVIEWER, TeamRole.DEVOPS_ENGINEER -> AgentKind.ANTIGRAVITY
+                else -> AgentKind.ANTIGRAVITY
+            }
+            roleInstances[role] = kind
+            roleConfigs[role] = TeamRoleConfig(
+                role = role,
+                defaultAgentKind = kind,
+                permissions = TeamRolePermissions.forRole(role)
+            )
+        }
+
+        // Synchronize Blackboard changes into session state
+        blackboard.subscribe { _ ->
+            syncState()
+        }
+
+        // Synchronize CommBus messages into session state
+        commBus.subscribe { _ ->
+            syncState()
+        }
+
+        // Mirror live parallel-execution state into the session: the UI reads
+        // activeTaskCount to show "N agents running".
+        observerScope.launch {
+            liveTasks.collect { tasks ->
+                val running = tasks.count { it.value.status == LiveTaskStatus.RUNNING }
+                _sessionState.update { it.copy(activeTaskCount = running) }
+            }
+        }
+    }
+
+    /**
+     * Decomposes a user goal into an interconnected 10-role engineering DAG.
+     */
+    fun planProject(userGoal: String): List<TeamTask> =
+        planProject(userGoal, customAgents = emptyList())
+
+    /**
+     * Plans the project DAG, then appends one task per suggested custom agent.
+     * Custom agent tasks specialize their base role and run with the agent's
+     * own instructions and permissions.
+     */
+    fun planProject(userGoal: String, customAgents: List<CustomTeamAgent>): List<TeamTask> {
+        blackboard.clear()
+        commBus.clear()
+        gatekeeper.clear()
+        budgetTracker.reset()
+
+        val managerTaskId = UUID.randomUUID().toString()
+        val architectTaskId = UUID.randomUUID().toString()
+        val dbTaskId = UUID.randomUUID().toString()
+        val backendTaskId = UUID.randomUUID().toString()
+        val uiTaskId = UUID.randomUUID().toString()
+        val devTaskId = UUID.randomUUID().toString()
+        val testerTaskId = UUID.randomUUID().toString()
+        val secTaskId = UUID.randomUUID().toString()
+        val codeReviewTaskId = UUID.randomUUID().toString()
+        val devopsTaskId = UUID.randomUUID().toString()
+
+        val tasks = listOf(
+            TeamTask(
+                id = managerTaskId,
+                title = "Sprint Planning & Goal Decomposition",
+                description = "Define scope, milestones, and deliverable targets for: $userGoal",
+                assignedRole = TeamRole.MANAGER,
+                priority = TeamTaskPriority.CRITICAL,
+                dependencies = emptyList(),
+                affectedFiles = listOf("docs/sprint_plan.md")
+            ),
+            TeamTask(
+                id = architectTaskId,
+                title = "System Architecture & API Contracts",
+                description = "Produce system blueprint, module boundaries, and interface contracts.",
+                assignedRole = TeamRole.ARCHITECT,
+                priority = TeamTaskPriority.CRITICAL,
+                dependencies = listOf(managerTaskId),
+                affectedFiles = listOf("docs/adr_001.md", "core/contract.kt")
+            ),
+            TeamTask(
+                id = dbTaskId,
+                title = "Database Schemas & Data Model Design",
+                description = "Construct database schemas, Room entities, and migration definitions.",
+                assignedRole = TeamRole.DATABASE_ENGINEER,
+                priority = TeamTaskPriority.HIGH,
+                dependencies = listOf(architectTaskId),
+                affectedFiles = listOf("db/schema.sql", "db/entity.kt")
+            ),
+            TeamTask(
+                id = backendTaskId,
+                title = "Backend Service & Data Pipeline Logic",
+                description = "Develop business endpoints, repository layer, and network services.",
+                assignedRole = TeamRole.BACKEND_ENGINEER,
+                priority = TeamTaskPriority.HIGH,
+                dependencies = listOf(architectTaskId, dbTaskId),
+                affectedFiles = listOf("backend/service.kt", "backend/repository.kt")
+            ),
+            TeamTask(
+                id = uiTaskId,
+                title = "Compose Screen UI & Responsive Layouts",
+                description = "Build Material 3 user interfaces, design tokens, and state bindings.",
+                assignedRole = TeamRole.UI_ENGINEER,
+                priority = TeamTaskPriority.HIGH,
+                dependencies = listOf(architectTaskId),
+                affectedFiles = listOf("ui/screen.kt", "ui/components.kt")
+            ),
+            TeamTask(
+                id = devTaskId,
+                title = "Fullstack Integration & Feature Implementation",
+                description = "Integrate UI components with backend repositories and state models.",
+                assignedRole = TeamRole.DEVELOPER,
+                priority = TeamTaskPriority.HIGH,
+                dependencies = listOf(backendTaskId, uiTaskId),
+                affectedFiles = listOf("app/feature.kt", "app/viewmodel.kt")
+            ),
+            TeamTask(
+                id = testerTaskId,
+                title = "Automated Unit & Integration Test Suite",
+                description = "Author test cases covering happy paths, error states, and edge conditions.",
+                assignedRole = TeamRole.TESTER,
+                priority = TeamTaskPriority.HIGH,
+                dependencies = listOf(devTaskId),
+                affectedFiles = listOf("test/FeatureUnitTest.kt")
+            ),
+            TeamTask(
+                id = secTaskId,
+                title = "Security Audit & Risk Assessment",
+                description = "Scan source code for leaks, unsafe inputs, and permission flaws.",
+                assignedRole = TeamRole.SECURITY_REVIEWER,
+                priority = TeamTaskPriority.HIGH,
+                dependencies = listOf(devTaskId),
+                affectedFiles = listOf("docs/security_audit.md")
+            ),
+            TeamTask(
+                id = codeReviewTaskId,
+                title = "Code Quality & Architectural Review Gate",
+                description = "Perform comprehensive code review, SOLID enforcement, and peer sign-off.",
+                assignedRole = TeamRole.CODE_REVIEWER,
+                priority = TeamTaskPriority.CRITICAL,
+                dependencies = listOf(testerTaskId, secTaskId),
+                affectedFiles = listOf("docs/code_review.md")
+            ),
+            TeamTask(
+                id = devopsTaskId,
+                title = "CI/CD & Release Build Packaging",
+                description = "Configure build sanity scripts, verify Gradle tasks, and package artifact.",
+                assignedRole = TeamRole.DEVOPS_ENGINEER,
+                priority = TeamTaskPriority.MEDIUM,
+                dependencies = listOf(codeReviewTaskId),
+                affectedFiles = listOf("build.gradle.kts", ".github/workflows/ci.yml")
+            )
+        )
+
+        scheduler.setTasks(tasks)
+
+        val customTasks = customAgents.filter { it.isEnabled }.map { agent ->
+            TeamTask(
+                title = "${agent.name}: ${userGoal.take(60)}",
+                description = agent.description,
+                assignedRole = agent.baseRole,
+                assignedCustomAgentId = agent.id,
+                priority = TeamTaskPriority.MEDIUM,
+                dependencies = listOf(architectTaskId),
+                affectedFiles = emptyList()
+            )
+        }
+        if (customTasks.isNotEmpty()) {
+            scheduler.setTasks(tasks + customTasks)
+            customTasks.forEach { task ->
+                val agent = customAgents.first { it.id == task.assignedCustomAgentId }
+                commBus.sendMessage(
+                    fromRole = TeamRole.MANAGER,
+                    toRole = task.assignedRole,
+                    type = TeamMessageType.HANDOFF,
+                    content = "Custom agent '${agent.name}' added to this run (suggested for this goal).",
+                    taskId = task.id
+                )
+            }
+        }
+
+        // Publish project blueprint into Shared Blackboard
+        blackboard.publishArtifact(
+            TeamArtifact(
+                title = "System Architecture Blueprint: $userGoal",
+                type = ArtifactType.ADR,
+                authorRole = TeamRole.MANAGER,
+                content = "High-level architectural blueprint decomposing '$userGoal' into 10 synchronized roles.",
+                tags = setOf("architecture", "init", "sprint-1")
+            )
+        )
+
+        // Publish kickoff announcement into Communication Bus
+        commBus.sendMessage(
+            fromRole = TeamRole.MANAGER,
+            toRole = null,
+            type = TeamMessageType.BROADCAST,
+            content = "Project goal accepted: '$userGoal'. Initialized 10 engineering tasks across team DAG."
+        )
+
+        syncState(userGoal = userGoal, isRunning = true, activeRole = TeamRole.MANAGER, lastError = null)
+        return tasks + customTasks
+    }
+
+    /**
      * Executes the next READY task through the real agent runtime (Milestone 10).
      *
      * The task genuinely executes via [teamExecutor]: real output, genuine

@@ -100,6 +100,7 @@ class CustomAgentBridgeStopTest {
                         prompt = "hi",
                         conversationHistory = listOf(ChatMessage(fromUser = true, text = "hi")),
                         provider = provider,
+                        chatId = null,
                     )
                 }
             }

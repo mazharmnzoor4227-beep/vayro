@@ -859,6 +859,8 @@ fun PocketDevApp(
             onOpenAppFactory = { openStudio(OverlayScreen.APP_FACTORY) },
             onOpenTeamStudio = { openStudio(OverlayScreen.TEAM_STUDIO) },
             onOpenCloudHybrid = { openStudio(OverlayScreen.CLOUD_HYBRID) },
+            onOpenAllProjects = { navigator.openAllProjects() },
+            onOpenDiagnostics = { navigator.openDiagnostics() },
             onOpenMarketplace = { navigator.openMarketplace() },
             onPushToGitHubRequest = startGitPush,
         )
@@ -2589,6 +2591,8 @@ private fun RootScreenHost(
     onOpenTeamStudio: () -> Unit = {},
     onOpenCloudHybrid: () -> Unit = {},
     onOpenGitHubStudio: () -> Unit = {},
+    onOpenAllProjects: () -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
     onHomeSend: (String) -> Unit = {},
     onHomeAttach: (List<Uri>) -> Unit = {},
     onShowAppUpdate: () -> Unit = {},
@@ -2944,7 +2948,7 @@ private fun RootScreenHost(
                     onOpenTeamStudio = onOpenTeamStudio,
                     onOpenCloudHybrid = onOpenCloudHybrid,
                     onOpenChatHome = { screen = RootScreen.CHAT_HOME },
-                    onOpenAllProjects = { navigator.openAllProjects() },
+                    onOpenAllProjects = onOpenAllProjects,
                 )
                 RootScreen.AGENT -> AgentScreen(
                     listState = providersListState,
@@ -3235,7 +3239,7 @@ private fun RootScreenHost(
                     onToggleFreeMode = viewModel::setFreeModeEnabled,
                     onUpdateAllToolsAndSkills = { viewModel.autoUpdateToolsAndSkills(force = true) },
                     onOpenPrivacyPolicy = { showPrivacyPolicy = true },
-                    onOpenDiagnostics = { navigator.openDiagnostics() },
+                    onOpenDiagnostics = onOpenDiagnostics,
                     authViewModel = authViewModel,
                     onNavigateToAuth = onNavigateToAuth,
                     onBackupWorkspaces = { viewModel.backupAllWorkspaces() },
@@ -6315,11 +6319,11 @@ private fun WorkspaceScreen(
                     onToggleScratchpad = onToggleScratchpad,
                     onAddRoadmapComment = onAddRoadmapComment,
                     onApproveAndBuildRoadmap = onApproveAndBuildRoadmap,
-                    onEnsureMessageRoadmap = viewModel::ensureMessageRoadmap,
+                    onEnsureMessageRoadmap = viewModel?.let { it::ensureMessageRoadmap } ?: {},
                     orchestratorSnapshot = state.orchestratorSnapshot,
                     lastTaskOutcome = state.lastTaskOutcome,
                     acknowledgedBannerEventKeys = state.acknowledgedBannerEventKeys,
-                    onDismissTaskOutcome = viewModel::dismissTaskOutcome,
+                    onDismissTaskOutcome = viewModel?.let { it::dismissTaskOutcome } ?: {},
                     onRollbackToBaseline = onRollbackToBaseline,
                     emergencyKillSwitchActive = state.emergencyKillSwitchActive,
                     onResetEmergencyKillSwitch = onResetEmergencyKillSwitch,
@@ -10711,6 +10715,7 @@ private fun AttachMenuRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AllProjectsScreen(
     projects: List<Project>,

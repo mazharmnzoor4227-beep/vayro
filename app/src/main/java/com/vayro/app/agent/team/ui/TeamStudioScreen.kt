@@ -72,6 +72,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -793,7 +794,6 @@ private fun PulsingDot() {
  * streaming output, stats, and produced artifacts.
  */
 @Composable
-@Composable
 private fun CustomAgentCard(
     agent: com.vayro.app.agent.team.model.CustomTeamAgent,
     projects: List<com.vayro.app.model.Project>,
@@ -911,6 +911,7 @@ private fun CustomAgentCard(
     }
 }
 
+@Composable
 private fun AgentDetailSheet(
     role: TeamRole,
     live: LiveTaskInfo?,

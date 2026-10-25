@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -63,6 +64,7 @@ private enum class LogSource(val label: String) {
 
 private const val MAX_LINES = 800
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiagnosticsLogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
